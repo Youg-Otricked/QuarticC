@@ -2175,7 +2175,6 @@ class LLVMCompiler {
             }
             if (method.params[i - 1].type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
         }
-        if (isHeader) return nullptr;
         llvm::Function* currentTarget = fn;
         if (!method.modifiers.empty()) {
             std::string implName = "_impl_" + specializedName;
@@ -2369,7 +2368,6 @@ class LLVMCompiler {
             }
             if (it->type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
         }
-        if (isHeader) return nullptr;
         currentFunction = fn;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", fn);
         builder->SetInsertPoint(entry);

@@ -10,16 +10,14 @@ int main() {
 ```
 
 Docs are [here](https://youg-otricked.github.io/QuarticC/).
-Book coming soon.
+Book is [here](https://youg-otricked.github.io/QCBook/).
 
 **More Powerful Than Explosives™**/j
 
-C⁴ combines explicitness and simplicity to produce readable code, improving both DX and UX. Code should still make sense next week, even to the person who wrote it.
-
----
-
 ## What is QuarticC?
-C⁴ is a compiled, statically typed C-style systems programming language, focusing on no global scope polution and clean code while still giving you minute control.
+
+C⁴ is a compiled, statically typed C-style systems programming language, focused on no global scope pollution and keeping code clean while still giving you minute control.
+Whether your codebase is 100 or 100,000 lines long, code should still make sense next week, even to the person who wrote it.
 
 ---
 
@@ -35,7 +33,7 @@ Install the binaries from GitHub, use the [Package & Version Manager](https://gi
 
 #### Dependencies
 
-You must have `clang` installed. (Obviously, it's a clang project) 
+You must have `clang` installed. (Obviously, it's a clang project)
 
 ---
 
@@ -73,7 +71,7 @@ qc [flags]
 
 QuarticC uses the following versioning scheme:
 `cMa.Mo.MiP`
-, where `c` is critical, for massive additions, such as the compiler being added, `Ma` being major versions, tracking large collections of features, `Mo` being moderate versions, tracking collections of similar features, `Mi` being minor versions, which track individual feature milestones within the current moderate version's theme, and `P` being the patch version. 
+, where `c` is critical, for massive additions, such as the compiler being added, `Ma` being major versions, tracking large collections of features, `Mo` being moderate versions, tracking collections of similar features, `Mi` being minor versions, which track individual feature milestones within the current moderate version's theme, and `P` being the patch version.
 For the version
 `x1.2.34`
 `c` = `x`
@@ -100,6 +98,7 @@ be in development simultaneously.
 Minor (Mi) is always a single decimal digit (0-9). Once a minor version reaches 9, the next release increments the moderate version instead.
 
 Unlike semantic versioning, QuarticC versions describe the scale and category of language evolution rather than API compatibility.
+
 # Development Status
 
 Current Version: x1.0.49 = "I actually fixed try catch"
@@ -134,42 +133,43 @@ Concepts as constraints must start with `proves`
 
 ## Feature Roadmap
 
-| Category            | Feature                                                                | Status      |
-| ------------------- | ---------------------------------------------------------------------- | ----------- |
-| **Core Logic**      | Variables & Types (`int`, `float`, `double`, `string`, `char`, `bool`) | Done        |
-|                     | Constants (`const`) & `auto` Inference                                 | Done        |
-|                     | Long and Short types                                                   | Done        |
-| **Operators**       | Standard Math & Expressions (includes `#^` power operator)             | Done        |
-|                     | Control Flow (`if/else`, `switch`, `while`, `for`, `foreach`)          | Done        |
-| **Functions**       | Functions with Default Parameters                                      | Done        |
-|                     | Lambdas & Higher-Order Functions                                       | Done        |
-|                     | **Native Multi-Return Values**                                         | Done        |
-| **Data Structures** | Arrays (with `.length` member)                                         | Done        |
-|                     | Spread Syntax for Arrays (`@`)                                         | Done        |
-|                     | Enums                                                                  | Done        |
-| **Advanced**        | Structs, Classes, & Namespaces                                         | Done        |
-|                     | Union Types (TypeScript-style)                                         | Done        |
-|                     | Advanced OOP & Operator Overloading                                    | Done        |
-|                     | Manual Memory Management                                               | Done        |
-| **System**          | F-Strings (Python-style interpolation)                                 | Done        |
-|                     | Random Number Generation                                               | Done        |
-|                     | Stdlib Part 1 & 2                                                      | Done        |
-| **Future**          | Stdlib Part 3                                                          | Planned     |
-|                     | Inline ASM                                                             | Done        |
-|                     | Generics                                                               | Done        |
-|                     |     Classes                                                            | Done        |
-|                     |     Structs                                                            | Done        |
-|                     |     Unions                                                             | Done        |
-|                     |     Functions & Methods                                                | Done        |
-|                     | Variadic Generic Arguments                                             | Planned     |
-|                     | `restrict`, `out`, `inout`, `volatile`                                 | Done        |
-|                     | Extern                                                                 | Done        |
-|                     | Bitwise Logic                                                          | Done        |
-|                     | Really fancy operator overloads                                        | Done        |
-|                     | Try/Catch and `throw`                                                  | Done        |
-|                     | Error message quality and helpfulness upgrade                          | Done        |
+| Category            | Feature                                                                | Status  |
+| ------------------- | ---------------------------------------------------------------------- | ------- |
+| **Core Logic**      | Variables & Types (`int`, `float`, `double`, `string`, `char`, `bool`) | Done    |
+|                     | Constants (`const`) & `auto` Inference                                 | Done    |
+|                     | Long and Short types                                                   | Done    |
+| **Operators**       | Standard Math & Expressions (includes `#^` power operator)             | Done    |
+|                     | Control Flow (`if/else`, `switch`, `while`, `for`, `foreach`)          | Done    |
+| **Functions**       | Functions with Default Parameters                                      | Done    |
+|                     | Lambdas & Higher-Order Functions                                       | Done    |
+|                     | **Native Multi-Return Values**                                         | Done    |
+| **Data Structures** | Arrays (with `.length` member)                                         | Done    |
+|                     | Spread Syntax for Arrays (`@`)                                         | Done    |
+|                     | Enums                                                                  | Done    |
+| **Advanced**        | Structs, Classes, & Namespaces                                         | Done    |
+|                     | Union Types (TypeScript-style)                                         | Done    |
+|                     | Advanced OOP & Operator Overloading                                    | Done    |
+|                     | Manual Memory Management                                               | Done    |
+| **System**          | F-Strings (Python-style interpolation)                                 | Done    |
+|                     | Random Number Generation                                               | Done    |
+|                     | Stdlib Part 1 & 2                                                      | Done    |
+| **Future**          | Stdlib Part 3                                                          | Planned |
+|                     | Inline ASM                                                             | Done    |
+|                     | Generics                                                               | Done    |
+|                     | Classes                                                                | Done    |
+|                     | Structs                                                                | Done    |
+|                     | Unions                                                                 | Done    |
+|                     | Functions & Methods                                                    | Done    |
+|                     | Variadic Generic Arguments                                             | Planned |
+|                     | `restrict`, `out`, `inout`, `volatile`                                 | Done    |
+|                     | Extern                                                                 | Done    |
+|                     | Bitwise Logic                                                          | Done    |
+|                     | Really fancy operator overloads                                        | Done    |
+|                     | Try/Catch and `throw`                                                  | Done    |
+|                     | Error message quality and helpfulness upgrade                          | Done    |
 
 See the full list of remaining features in the [roadmap](https://github.com/Youg-Otricked/QuarticC/blob/master/roadmap.md).
+
 # Contributing
 
 If you want to contribute to C^4, fork the repository, make your changes, and open a pull request.
@@ -191,6 +191,7 @@ clean     Code cleanup, refactoring, or technical debt
 errors    Changes to diagnostics, warnings, or error handling / adding more errors, warnings, notes, help, suggestions, etc
 fix       Bug fixes
 ```
+
 For example:
 
 ```text
@@ -200,6 +201,7 @@ clean(compiler): simplify type checking
 fix(codegen): handle missing returns in main
 improve(lexer): reduce tokenization overhead
 ```
+
 If your commit is about multiple catagorys, comma-seperate.
 
 ```text
@@ -207,17 +209,20 @@ errors(warnings),feat(cli-flags): added warnings & -W flags
 ```
 
 But at least make your commits sensical. Unlike mine
-```commit 
+
+```commit
 FINALLY IM DONE WHY DID THAT TAKE 5 DAYS AAGHAGAHGAH IT WORKS
 ```
+
 Please don't.
 If you forgot something in a previous commit, i like to use
+
 ```text
 oops(README): forgot to re-add readme.md
 ```
 
 ---
- 
+
 ## License
 
 MIT License - See [LICENSE](./LICENSE.txt) for details
@@ -239,14 +244,13 @@ qif (qb && qtrue /* evaluates to both */) {
 
 ---
 
-
 ## Manual Memory Management
 
 ```cpp
 int main() {
     int* ptr = `malloc(sizeof "int");
     *ptr = 42;
-    `qout("%p", ptr); 
+    `qout("%p", ptr);
     `free(ptr);
 }
 ```
@@ -280,18 +284,20 @@ namespace y { /* ... */ }
 Want to learn more? Check out the [docs for it](https://youg-otricked.github.io/QuarticC/include.html).
 
 ---
+
 ## Why QuarticC?
 
-| **Feature**                 | **C++**              | **Zig**          | **Rust**         | **QuarticC**        |
-| --------------------------- | -------------------- | ---------------- | ---------------- | ------------------- |
-| **Total Runtime**           | Medium               | Medium           | Medium           | Medium              |
-| **Compile Time (relative)** | Slow                 | Medium           | Medium           | Medium              |
-| **Runtime**                 | Fast                 | Medium           | Medium           | Fast                |
-| **Memory safety**           | Manual               | GPA              | Borrow checker   | Manual              |
-| **Multi-return**            | Structs              | Tuples           | Tuples           | **Native**          |
-| **Generics**                | Templates + Concepts | Type as Argument | Trait Based      | Constraint-Based    |
+| **Feature**                 | **C++**              | **Zig**              | **Rust**       | **QuarticC**     | **C**                           |
+| --------------------------- | -------------------- | -------------------- | -------------- | ---------------- | ------------------------------- |
+| **Comp + Run**              | Medium               | Fast                 | Medium-Slow    | Medium-Fast      | Fastest                         |
+| **Compile Time (relative)** | Slow                 | Fast (Direct-to-ASM) | (Really) Slow  | Medium           | Fastest                         |
+| **Runtime**                 | Fast                 | Fast                 | Fast           | Fast             | Fast                            |
+| **Memory safety**           | Manual               | GPA                  | Borrow checker | Manual           | Manual                          |
+| **Multi-return**            | Structs              | Tuples               | Tuples         | **Native**       | Structs                         |
+| **Generics**                | Templates + Concepts | Type as Argument     | Trait Based    | Constraint-Based | No (Macro Hell does not count.) |
+| **Memory Control**          | Yes                  | Yes                  | Ehhh           | Yes              | Yes                             |
 
-Based on the last reliable benchmark results, QuarticC showed performance in the same general range as C++, while offering a similar set of quality-of-life improvements found in languages such as Zig.According to most recent benchmarks, in tested cases C^4 runs either at a similar or faster speed than C++, with equal or faster compiles. 
+Based on the last reliable benchmark results, QuarticC showed performance in the same general range as C++, while offering a similar set of quality-of-life improvements found in languages such as Zig.According to most recent benchmarks, in tested cases C^4 runs either at a similar or faster speed than C++, with equal or faster compiles.
 
 ---
 
@@ -299,34 +305,36 @@ Based on the last reliable benchmark results, QuarticC showed performance in the
 
 QuarticC has unusual naming conventions:
 
-| **Type**                               | **Convention**         | **Why?**                                                                                                                     |
-| -------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **Variables**                          | `snake_case`           | It's familiar to Python devs who changed their ways, C++, C, Zig, Go, and Rust devs.                                         |
-| **Functions**                          | `camelCase`            | It allows for instant knowledge between if an identifier is a var, or function (lambdas use var casing, not function casing) |
-| **User Types**                         | `PascalCase`           | It is common across basically every programming language.                                                                    |
-| **Constants**                          | `SCREAMING_SNAKE_CASE` | Same as above.                                                                                                               |
-| **Private Member Variables**           | `__snake_case`         | Variable case prepended with __. Most underscores.                                                                           |
-| **Protected Member Variables**         | `_snake_case`          | Less underscores.                                                                                                            |
-| **Protected Methods**                  | `__camelCase`          | Unique casing, more underscores.                                                                                             |
-| **Private Methods**                    | `camel_Snake_Case`     | Function casing, more underscores.                                                                                           |
-| **Namespaces**                         | `PascalCase`           | Same as user types.                                                                                                          |
-| **Namespaces Not Meant For Inclusion** | `Pascal_Snake_Case`    | Unique casing style, more underscores, you have to be trying to include this.                                                |
-| **Global Scope Functions**             | `camel_Snake_Case`     | Unique casing style, more underscores, similarity to private methods is intentional, because global scope cannot be included.|
-| **Methods Used By Compiler**           | `_camelCase`           | Different from everything else. (these methods are iterators and stuff. Methods you define and compiler uses)                | 
-| **Compiler Reserved**                  | `_qc_, __qc_ and qc_`  | Unique, hard to use accidently                                                                                               |
-| **Compiler Intrinsics**                | \` + `snake_case`      | Unique, impossible to use accidently                                                                                         |
+| **Type**                               | **Convention**         | **Why?**                                                                                                                      |
+| -------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Variables**                          | `snake_case`           | It's familiar to Python devs who changed their ways, C++, C, Zig, Go, and Rust devs.                                          |
+| **Functions**                          | `camelCase`            | It allows for instant knowledge between if an identifier is a var, or function (lambdas use var casing, not function casing)  |
+| **User Types**                         | `PascalCase`           | It is common across basically every programming language.                                                                     |
+| **Constants**                          | `SCREAMING_SNAKE_CASE` | Same as above.                                                                                                                |
+| **Private Member Variables**           | `__snake_case`         | Variable case prepended with __. Most underscores.                                                                            |
+| **Protected Member Variables**         | `_snake_case`          | Less underscores.                                                                                                             |
+| **Protected Methods**                  | `__camelCase`          | Unique casing, more underscores.                                                                                              |
+| **Private Methods**                    | `camel_Snake_Case`     | Function casing, more underscores.                                                                                            |
+| **Namespaces**                         | `PascalCase`           | Same as user types.                                                                                                           |
+| **Namespaces Not Meant For Inclusion** | `Pascal_Snake_Case`    | Unique casing style, more underscores, you have to be trying to include this.                                                 |
+| **Global Scope Functions**             | `camel_Snake_Case`     | Unique casing style, more underscores, similarity to private methods is intentional, because global scope cannot be included. |
+| **Methods Used By Compiler**           | `_camelCase`           | Different from everything else. (these methods are iterators and stuff. Methods you define and compiler uses)                 |
+| **Compiler Reserved**                  | `_qc_, __qc_ and qc_`  | Unique, hard to use accidently                                                                                                |
+| **Compiler Intrinsics**                | \` + `snake_case`      | Unique, impossible to use accidently                                                                                          |
 
 Max line size is around 120 _relative to your starting indentation_, tabs or spaces, lf newlines, comments are `//`, doc comments are `///`, and top-level doc comments are `//!`. File paths are unquoted, everything other than main should go in a namespace when applicable, and namespaces should fit the following rules:
 
-1. Namespaces should do one thing well, similar to the UNIX philosophy, 
+1. Namespaces should do one thing well, similar to the UNIX philosophy,
 2. Namespaces should have either:
 
         1. one type or group of tightly related types such as bigints and their core helpers,
         2. above + namespaces containing extra helpers
         3. helper functions / utility functions (think a `Math` namespace with log, cos...)
         4. OR anything if directly mapping  C/C++/Zig/Rust code to C^4
+
 3. Types in namespaces should have short names: The namespace should have the longer name
-        e.g.
+   e.g.
+
 ```qc
 namespace Array {
     class Arr<T, int S = 0> {
@@ -334,16 +342,20 @@ namespace Array {
     }
 }
 ```
+
 Pointer asterisks bind to the type rather than the variable. The final * belongs to the declarator, unless it's a function return type. Then it's all on the type.
+
 ```
 int** *x;
 int* ptr_add(int *p) ...
 ```
+
 Files are `kebab-case`. This is optional.
 QuarticC naming conventions are designed to make code readable without requiring the reader to inspect library code. Names should provide immediate context.
 My rule: `RTFM` once, not `RTMSCE5S` (Read The Manual and Source Code Every 5 Seconds), and these conventions make things hard to forget or mis-type, unlike C/C++ where every library uses entirely different conventions.
 
 Example:
+
 ```
 namespace Network {
     class Client {
@@ -359,6 +371,7 @@ namespace Not_Embezzeling { // Intentionally formatted as a non-inclusion namesp
     ..
 }
 ```
+
 ## Ideals
 
 QuarticC follows four core rules:
@@ -371,6 +384,7 @@ QuarticC follows four core rules:
 ## Compiler Architecture
 
 QuarticC uses a classic multi-pass compilation pipeline:
+
 1. **Lexical Analysis / Preprocessing:** Custom lexer converts text to tokens in one loop.
 2. **AST Parsing:** Recursive descent parser generating a strongly typed Abstract Syntax Tree.
 3. **Type Checking & Semantic Analysis:** Resolves user-defined types, namespaces, and TypeScript-style union types. The unique thing is that this pass is _merged with the compilation/codegen phase_
@@ -414,6 +428,7 @@ int main() {
 ## C interop and inline ASM
 
 Extern "C" is the only supported extern style, and thus no string is needed to say where you are externing to.
+
 ```cpp
 extern:
 int add(int a, int b) {
@@ -421,7 +436,9 @@ int add(int a, int b) {
 }
 :extern
 ```
+
 Extern is only for _externalizing_ api. To use _foreign_ code, you must put it in a `foreign` block.
+
 ```cpp
 foreign:
 int do_some_c_stuff(int x);
@@ -429,18 +446,21 @@ int do_some_c_stuff(int x);
 ```
 
 ---
+
 The QuarticC inline ASM syntax is like a simplified version of the GCC syntax:
 
 ```cpp
 inline(R"(
 mov rax, 1
-mov rdi, 1 
-mov rsi, $0r ; argument 1 (Hello, World!) 
+mov rdi, 1
+mov rsi, $0r ; argument 1 (Hello, World!)
 mov rdx, $1r ; argument 2 (14)
 syscall
-)"/* your inline asm string */, "Hello, World", 14, "~{rax,rdi,rsi,rdx}" /* clobbers */);  
+)"/* your inline asm string */, "Hello, World", 14, "~{rax,rdi,rsi,rdx}" /* clobbers */);
 ```
-You can also use AT&T ASM syntax by making sure the first 5 characters of your ASM string are 
+
+You can also use AT&T ASM syntax by making sure the first 5 characters of your ASM string are
+
 ```asm
 ; ATT
 ```
@@ -450,7 +470,8 @@ You can also use AT&T ASM syntax by making sure the first 5 characters of your A
 QuarticC has 4 special (non-`const`) storage modifiers.
 
 1. `volatile`
-Volatile means the compiler won't optimize it. It can be used before variable declarations, or on function definitions. On methods, it must go after the access modifier and `final`, and before the return type.
+   Volatile means the compiler won't optimize it. It can be used before variable declarations, or on function definitions. On methods, it must go after the access modifier and `final`, and before the return type.
+
 ```
 volatile void infinite_time() {
     while(true) {
@@ -458,19 +479,23 @@ volatile void infinite_time() {
     return;
 }
 ```
+
 2. `restrict`
 
 `restrict` tells the compiler that this pointer is the exclusive access path to the referenced memory. Other unrelated pointers must not access the same memory in a way that violates the restrict contract. This allows more aggressive optimization.
 
 Example:
+
 ```qc
 void doSomePointer(int *restrict ptr, int *other) {
     *ptr = 10;
     *other = 20; // Undefined behavior if other points to the same memory as ptr
 }
 ```
+
 3. `out`
-Out tells the compiler that this parameter is write-only, and this memory address will not be copied. It also only exists for optimization purposes.
+   Out tells the compiler that this parameter is write-only, and this memory address will not be copied. It also only exists for optimization purposes.
+
 ```qc
 void writeOnly(out int p) {
     p = 123; // OK
@@ -478,8 +503,10 @@ void writeOnly(out int p) {
     int *x = &p; // ILLEGAL also.
 }
 ```
+
 4. `inout`
-Inout tells the compiler that this parameter will be read and written from, but its address will not be copied.
+   Inout tells the compiler that this parameter will be read and written from, but its address will not be copied.
+
 ```qc
 void rw(inout int p) {
     p = 123; // OK
@@ -491,6 +518,7 @@ void rw(inout int p) {
 ## Variadic arguments
 
 QuarticC variadic arguments look like this:
+
 ```cpp
 int add_all(...args) {
     int res = 0;
@@ -500,11 +528,13 @@ int add_all(...args) {
     return res;
 }
 ```
+
 `args` is a variadic argument (hence the `...`), which can be passed any number of parameters.
 `is_empty` is a runtime compiler intrinsic that takes a variadic arg-list and returns whether it is empty.
 `next` is a runtime compiler intrinsic that takes a variadic arg-list and the expected type and returns the next element in the arg list cast to that type.
 
 You may use C-Style variadic arguments too, but _only in foreign blocks_.
+
 ```cpp
 foreign:
 void printf(char* fmt, ...);
@@ -516,20 +546,24 @@ void printf(char* fmt, ...);
 QuarticC has all the standard bitwise logic operators; however, it has a non-standard XOR and Right-Shift token.
 The Bitwise XOR operator in C^4 is `$`. It is `$` because ^ and ^^ are already used tokens, and C^4 avoids repeating tokens to improve quick readability.
 The same logic applies for right-shift: `|>` is the right-shift token, because it allows the parser to immediately determine:
+
 ```
 Node<Vector<X>> // Is this RSHIFT or ending generics?
 ```
+
 This is easy to determine (because it would be illegal for rshift to be there); however, using this non-normal rshift operator allows it to be instant because:
+
 ```
 Node<Vector<X>> // This is unrelated to RSHIFT
 ```
+
 QuarticC also has a special operator for _logical_ right shift: :>. This is because it allows avoiding constantly casting between signed and unsigned integer types, unlike C++'s "arithmetic if signed, logical if unsigned"
 
 2 more unique bitwise things QuarticC does:
 
 1. Built-in rotations: `<<<` and `|>>` and `LROT` and `RROT`, allowing 1 instruction rotations instead of 6+.
-2. + and - have lower priority than shifts. `3 << 3 + 2 == 26`. This is because the shift expression `l << r` is equivalent to `l * 2 ^ r`. If r was 2 + 2, that would be `l * 2 ^ 2 + 2`, which would be l * 4 + 2.
-   
+2. - and - have lower priority than shifts. `3 << 3 + 2 == 26`. This is because the shift expression `l << r` is equivalent to `l * 2 ^ r`. If r was 2 + 2, that would be `l * 2 ^ 2 + 2`, which would be l * 4 + 2.
+
 ## Inheritance
 
 All methods are virtual. If you want to use polymorphism, inherited methods MUST be defined in the same order as the parent class, and new methods must be defined after.
@@ -537,6 +571,7 @@ All methods are virtual. If you want to use polymorphism, inherited methods MUST
 ## Generics
 
 QuarticC generics have simple syntax:
+
 ```
 class C<T> {
     T x;
@@ -547,55 +582,74 @@ int main() {
     C<int> thing = C();
 }
 ```
+
 Generics are allowed on `struct`s, `class`es, `concept`s, unions, aliases, functions, and methods.
 The unique thing about QuarticC's generics is its constraint system:
 The constraint system follows this syntax:
+
 ```
 <T([constraint]:[[!]<[typename]'|'...>]>
 ```
+
 Main constraints are as follows:
+
 ```
 usertype: non-primitive type
 primitive: primitive type
 pointer: any pointer type
 numeric: any numeric type
 ```
+
 So
+
 ```
 <T(numeric:)>
 ```
+
 Can be any numeric type.
 The subconstraint system is like this:
+
 ```
 <T(:!int|string)>
 ```
+
 This means "T can be any type other than int or string".
 The ! means not anything in this set, and the type|type means these types.
 QuarticC also has non-type generic parameters.
+
 ```
 <int S> // S is a non-type generic parameter (a compile time int)
 ```
 
-In Rust, 
+In Rust,
+
 ```
 <T(numeric:)>
 ```
+
 Would be
+
 ```
 <T: std::ops::Add<Output = T> + std::ops::Sub<Output = T> + std::ops::Mul<Output = T> + std::ops::Div<Output = T> + PartialOrd + Copy>
 ```
+
 And in C++, it would be
+
 ```
 template <typename T>
 requires std::is_arithmetic_v<T>
 T
 ```
+
 or in old SFINAE C++
+
 ```
 template <typename T, typename = std::enable_if_t<std::is_arithmetic_v<T>>>
 T
 ```
+
 And in Zig:
+
 ```
 ...(comptime T: type, ...) ... {
     switch (@typeInfo(T)) {
@@ -609,17 +663,22 @@ And in Zig:
 
 Iterators work as follows:
 The class you want to iterate must define the following method:
+
 ```qc
 MyIterator _begin() // Returns an iterator to the beginning of the class
 
 ```
+
 `_end` is optional, and returns an iterator to the end of the class.
 The iterator itself MUST define the following 2 methods:
+
 ```qc
 bool _atEnd() // Returns true if there is nothing left to iterate
 T _next() // Returns the current value then moves to the next
 ```
+
 and may define the following recommended extra methods:
+
 ```qc
 bool _atStart() // Returns true if the iterator is currently at index 0
 T _prev() // Returns the element at current index -- and decrements current index
@@ -633,6 +692,7 @@ MyIterator<T> _drop(int n) // returns a iterator skipping the first n elements
 ```
 
 Example:
+
 ```qc
 class ArrayIterator<T> {
     T* data;
@@ -651,7 +711,7 @@ class ArrayIterator<T> {
             return this.data[this.current_index++];
         }
         return this.data[this.current_index];
-    } 
+    }
     bool _atStart() {
         return this.current_index <= 0;
     }
@@ -701,6 +761,7 @@ class Array<T, int S = 0> {
 ```
 
 The standard library collections have iterators in the structure of this:
+
 ```qc
 namespace Array
     namespace Iterator {
@@ -721,6 +782,7 @@ namespace Array
 
 C^4 supports both `try`/`catch` exception handling and multireturn/unions for error handling. You are encouraged to use both, or combine them where appropriate. Just document if you throw or not.
 Example:
+
 ```qc
 int main() {
     try {
@@ -730,7 +792,9 @@ int main() {
     }
 }
 ```
+
 Or for union-based:
+
 ```qc
 struct myerror {
     ...
@@ -742,6 +806,7 @@ MyResult myThing() {
 ```
 
 Nested try/catch blocks are not allowed becuase they just obfuscate what your code is doing without adding any new functionality.
+
 ## Defer
 
 C^4 has `defer`, like Go and Zig.
@@ -752,6 +817,7 @@ This behavior is intentional: making `defer` participate in stack unwinding woul
 ## Concepts
 
 C^4's concepts are like a combination of Typescript interfaces, Rust traits, and C++ concepts.
+
 ```qc
 concept Printable {
     1_of {
@@ -819,7 +885,9 @@ int main() {
 ```
 
 ---
+
 ## Self Hosted Runtime
+
 There is currently an unknown bug with the self-hosted runtime.
 
 # Benchmarks
@@ -916,5 +984,5 @@ Math
 Utils
 OSInterop
 ```
-  Made by [Luca Fazio](https://github.com/Youg-Otricked)
 
+Made by [Luca Fazio](https://github.com/Youg-Otricked)

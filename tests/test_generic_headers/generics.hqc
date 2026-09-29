@@ -1,0 +1,10 @@
+#nomain
+namespace Core {
+    struct Mine<T> {
+        T thing;
+    }
+    void i_do_generic_nonsense<T>(Mine<T> thing) {
+        `qout("Body generated with in headers");
+    }
+    void non_generic();
+}

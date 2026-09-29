@@ -614,7 +614,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
     for (size_t i = 0; i < slotOrder.size(); i++) { vtableSlotIndex[mangled_class_name][slotOrder[i]] = i; }
     auto* arrTy = llvm::ArrayType::get(llvm::PointerType::get(context, 0), vtableFuncs.size());
     auto* vtableInit = llvm::ConstantArray::get(arrTy, vtableFuncs);
-    auto* vtable = getOrCreateVtable(mangled_class_name + "_vtable", arrTy, isHeader || classInfo.baseFile.ends_with(".hqc") ? nullptr : vtableInit);
+    auto* vtable = getOrCreateVtable(mangled_class_name + "_vtable", arrTy, vtableInit);
     vtables[mangled_class_name] = vtable;
     for (size_t methodIdx = 0; methodIdx < classInfo.classMethods.size(); methodIdx++) {
         auto& method = classInfo.classMethods[methodIdx];
