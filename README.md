@@ -101,8 +101,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.0.50 = "I actually fixed try catch"
-Next Version: x1.0.5 = "Probably tagged enums"
+Current Version: x1.0.6 = "Generics in headers."
+Next Version: x1.1.0 = "Probably tagged enums"
 
 # Current Version Highlights
 
@@ -131,6 +131,10 @@ Self parameter is now a pointer.
 This now requires explicit dereference (must use `->` instead of `.`)
 Concepts as constraints must start with `proves`
 
+# Upcoming Deprecations:
+
+Jagged arrays will be deprecated at version x1.1.0.
+
 ## Feature Roadmap
 
 | Category            | Feature                                                                | Status  |
@@ -143,7 +147,7 @@ Concepts as constraints must start with `proves`
 | **Functions**       | Functions with Default Parameters                                      | Done    |
 |                     | Lambdas & Higher-Order Functions                                       | Done    |
 |                     | **Native Multi-Return Values**                                         | Done    |
-| **Data Structures** | Arrays (with `.length` member)                                         | Done    |
+| **Data Structures** | Arrays                                                                 | Done    |
 |                     | Spread Syntax for Arrays (`@`)                                         | Done    |
 |                     | Enums                                                                  | Done    |
 | **Advanced**        | Structs, Classes, & Namespaces                                         | Done    |

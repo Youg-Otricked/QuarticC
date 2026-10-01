@@ -66,6 +66,18 @@ struct ExceptionHandlerInfo {
 };
 class LLVMCompiler {
   public:
+    std::string to_snake_case(std::string_view name, bool scream) {
+        std::string result;
+        result.reserve(name.size());
+        for (size_t i = 0; i < name.size(); ++i) {
+            unsigned char c = static_cast<unsigned char>(name[i]);
+            if (!name.contains("_") && c != std::tolower(c) && i != 0) {
+                result += '_';
+            }
+            result += static_cast<char>(scream ? std::toupper(c) : std::tolower(c));
+        }
+        return result;
+    }
     std::string to_pascal_case(std::string_view name) {
         std::string result;
         result.reserve(name.size());
@@ -89,12 +101,22 @@ class LLVMCompiler {
         }
         return result;
     }
+    void add_var_warning(std::string name, Position& pos, bool scream) {
+        std::string converted = to_snake_case(name, scream);
+        if (converted != name) {
+            warn("var-casing", pos, (scream ? ("Constant '" + name + "' is not in SCREAMING_SNAKE_CASE") : ("Variable '" + name + "' is not in snake_case.")), "QC-WC01");
+            if (getWarningLevel("var-casing") != run::WarningLevel::Disabled && getWarningLevel("var-casing") != run::WarningLevel::None) {
+                cg_help(pos, "Consider '" + converted + "' instead.", converted);
+                cg_insight(scream ? "C^4 uses SCREAMING_SNAKE_CASE for constants as it is common across almost all languages." : "C^4 uses snake_case for variables because it is distinct from all of the other casing conventions allowing quick discerning between functions and variables.");
+            }
+        }
+    }
     void add_type_warning(std::string name, Position& pos) {
         std::string converted = to_pascal_case(name);
-        if (converted != name) { 
-            warn("type-casing", pos, "Usertype '" + name + "' is not in PascalCase.", "QC-WC01"); 
+        if (converted != name) {
+            warn("type-casing", pos, "Usertype '" + name + "' is not in PascalCase.", "QC-WC01");
             if (getWarningLevel("type-casing") != run::WarningLevel::Disabled && getWarningLevel("type-casing") != run::WarningLevel::None) {
-                cg_help(pos,  "Consider '" + converted + "' instead.");
+                cg_help(pos, "Consider '" + converted + "' instead.", converted);
                 cg_insight("C^4 uses PascalCase for user types because that is the standard casing for almost every programming language.");
             }
         }
@@ -105,7 +127,7 @@ class LLVMCompiler {
                                                   "implicit-int-float", "constant-condition"};
     const std::unordered_set<std::string> extra = {"large-by-value",  "float-equal",       "auto",       "shadow",
                                                    "implicit-extend", "array-param-decay", "empty-body", "empty-catch"};
-    const std::unordered_set<std::string> pedantic = {"struct-like-class", "type-casing"};
+    const std::unordered_set<std::string> pedantic = {"struct-like-class", "type-casing", "var-casing"};
     run::WarningLevel getWarningLevel(const std::string& warningClass) {
         auto level = config.warnings[warningClass];
         if (level != run::WarningLevel::Disabled) return level;
@@ -183,13 +205,13 @@ class LLVMCompiler {
     bool is_main;
     void cg_warn(const Position& pos, const std::string& msg, std::string code = "");
     void cg_error(const Position& pos, const std::string& msg, std::string code = "");
-    void cg_note(const Position& pos, const std::string& msg) {
+    void cg_note(const Position& pos, const std::string& msg, bool context = false) {
         if (errors.empty()) return;
-        errors.back().notes.emplace_back(pos, msg);
+        errors.back().notes.emplace_back(pos, msg, context);
     }
-    void cg_help(const Position& pos, const std::string& msg) {
+    void cg_help(const Position& pos, const std::string& msg, std::optional<std::string> replacement = std::nullopt) {
         if (errors.empty()) return;
-        errors.back().helps.emplace_back(pos, msg);
+        errors.back().helps.emplace_back(pos, msg, std::move(replacement));
     }
     void cg_insight(const std::string& msg) {
         if (errors.empty()) return;
@@ -908,6 +930,7 @@ class LLVMCompiler {
             Token modTok = node->modifiers[i];
             if (!modifiers.count(modTok.value)) {
                 cg_error(modTok.pos, "unknown modifier '" + modTok.value + "'", "QC-S112");
+                addTypeNotes(modTok.value, modTok.pos, UserTypeKind::Modifier);
                 return nullptr;
             }
             ModifierInfo& modInfo = modifiers[modTok.value];
@@ -1677,12 +1700,13 @@ class LLVMCompiler {
         }
         return nullptr;
     }
-    void addTypeNotes(const std::string& typeName, Position pos) {
+    void addTypeNotes(const std::string& typeName, Position pos, std::optional<UserTypeKind> search_type = std::nullopt) {
         std::vector<std::string> types;
         std::string current = getCurrentNamespace();
         while (true) {
             std::string prefix = current.empty() ? "" : current + "::";
-            for (auto& [name, _] : userTypes) {
+            for (auto& [name, info] : userTypes) {
+                if (search_type && info.kind != *search_type) continue;
                 if (!name.starts_with(prefix)) continue;
                 std::string relative = name.substr(prefix.size());
                 types.push_back(relative);
@@ -1707,6 +1731,102 @@ class LLVMCompiler {
                 note += "`" + matches[i].second + "`";
             }
             note += "?";
+            cg_note(pos, note);
+        }
+    }
+    void addMethodNotes(const std::string& className, const std::string& methodName, const std::vector<std::string>& args, Position pos) {
+        auto& methods = userTypes[baseTypeName(className)].classMethods;
+        struct Candidate {
+            int score;
+            ClassMethodInfo* method;
+        };
+        std::vector<Candidate> candidates;
+        for (auto& method : methods) {
+            if (method.name_tok.value != methodName) continue;
+            int score = 0;
+            size_t argCount = args.size();
+            size_t paramCount = method.params.size();
+            score -= std::abs((int)argCount - (int)paramCount) * 5;
+            size_t count = std::min(argCount, paramCount);
+            for (size_t i = 0; i < count; i++) {
+                llvm::Type* argTy = llvmTypeFor(args[i]);
+                llvm::Type* paramTy = llvmTypeFor(method.params[i].type.value);
+                if (argTy == paramTy) {
+                    score += 3;
+                } else if ((argTy->isIntegerTy() || argTy->isFloatTy() || argTy->isDoubleTy()) &&
+                           (paramTy->isIntegerTy() || paramTy->isFloatTy() || paramTy->isDoubleTy())) {
+                    score += 1;
+                } else if (argTy->isPointerTy() && paramTy->isPointerTy()) {
+                    score += 1;
+                } else {
+                    score -= 3;
+                }
+            }
+            candidates.push_back({score, &method});
+        }
+        if (candidates.empty()) return;
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
+        if (candidates[0].score > 0) { cg_note(pos, "closest matching overload: " + candidates[0].method->print()); }
+        if (candidates.size() <= 5) {
+            std::string note = "available overloads:";
+            for (auto& candidate : candidates) { note += "\n  - " + candidate.method->print(); }
+            cg_note(pos, note);
+        } else {
+            std::string note = "other overloads";
+            size_t shown = 0;
+            for (auto& candidate : candidates) {
+                if (shown >= 3) break;
+                note += "\n  - " + candidate.method->print();
+                shown++;
+            }
+            cg_note(pos, note);
+        }
+    }
+    void addMethodNotes(const std::string& className, const std::string& methodName, const std::vector<llvm::Value*>& args, Position pos) {
+        auto& methods = userTypes[baseTypeName(className)].classMethods;
+        struct Candidate {
+            int score;
+            ClassMethodInfo* method;
+        };
+        std::vector<Candidate> candidates;
+        for (auto& method : methods) {
+            if (method.name_tok.value != methodName) continue;
+            int score = 0;
+            size_t argCount = args.size();
+            size_t paramCount = method.params.size();
+            score -= std::abs((int)argCount - (int)paramCount) * 5;
+            size_t count = std::min(argCount, paramCount);
+            for (size_t i = 0; i < count; i++) {
+                llvm::Type* argTy = args[i]->getType();
+                llvm::Type* paramTy = llvmTypeFor(method.params[i].type.value);
+                if (argTy == paramTy) {
+                    score += 3;
+                } else if ((argTy->isIntegerTy() || argTy->isFloatTy() || argTy->isDoubleTy()) &&
+                           (paramTy->isIntegerTy() || paramTy->isFloatTy() || paramTy->isDoubleTy())) {
+                    score += 1;
+                } else if (argTy->isPointerTy() && paramTy->isPointerTy()) {
+                    score += 1;
+                } else {
+                    score -= 3;
+                }
+            }
+            candidates.push_back({score, &method});
+        }
+        if (candidates.empty()) return;
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
+        if (candidates[0].score > 0) { cg_note(pos, "closest matching overload: " + candidates[0].method->print()); }
+        if (candidates.size() <= 5) {
+            std::string note = "available overloads:";
+            for (auto& candidate : candidates) { note += "\n  - " + candidate.method->print(); }
+            cg_note(pos, note);
+        } else {
+            std::string note = "other overloads";
+            size_t shown = 0;
+            for (auto& candidate : candidates) {
+                if (shown >= 3) break;
+                note += "\n  - " + candidate.method->print();
+                shown++;
+            }
             cg_note(pos, note);
         }
     }
@@ -2763,23 +2883,23 @@ class LLVMCompiler {
                 if (failed && !block.second.has_value()) {
                     if (requiredCount >= 0) {
                         cg_error(proof.proverName.pos, "failed to prove concept " + conceptName + " for type " + mapKey, "QC-C019");
-                        cg_note(block.first.constraint.pos, "due to this constraint block");
+                        cg_note(block.first.constraint.pos, "due to this constraint block", true);
                         cg_note(block.first.constraint.pos,
                                 (isAtLeast ? "less than " + std::to_string(requiredCount) + " constraints were fulfilled"
                                            : "the amount of fulfilled constraints was not equal to " + std::to_string(requiredCount)) +
                                     " (amount of fulfilled constraints: " + std::to_string(passedConstraints.size()) + ")");
                         cg_note(proof.proverName.pos, "failed constraints were:");
                         for (auto& [failedConstraintPos, additionalMessage] : failedConstraints) {
-                            cg_note(failedConstraintPos, additionalMessage.has_value() ? ("    " + additionalMessage.value()) : "");
+                            cg_note(failedConstraintPos, additionalMessage.has_value() ? ("    " + additionalMessage.value()) : "", true);
                         }
                         cg_note(proof.proverName.pos, "passed constraints were:");
-                        for (auto& passedConstraintPos : passedConstraints) { cg_note(passedConstraintPos, ""); }
+                        for (auto& passedConstraintPos : passedConstraints) { cg_note(passedConstraintPos, "", true); }
                     } else {
                         cg_error(proof.proverName.pos, "failed to prove concept " + conceptName + " for type " + mapKey, "QC-C019");
-                        cg_note(block.first.constraint.pos, "due to this constraint block");
+                        cg_note(block.first.constraint.pos, "due to this constraint block", true);
                         cg_note(proof.proverName.pos, "failed constraints were:");
                         for (auto& [failedConstraintPos, additionalMessage] : failedConstraints) {
-                            cg_note(failedConstraintPos, additionalMessage.has_value() ? ("    " + additionalMessage.value()) : "");
+                            cg_note(failedConstraintPos, additionalMessage.has_value() ? ("    " + additionalMessage.value()) : "", true);
                         }
                     }
                 }
@@ -2891,6 +3011,7 @@ class LLVMCompiler {
             auto [conceptInfo, exists] = genericiseOrFindConcept(resolveTypeName(conceptName, false));
             if (!exists) {
                 cg_error(proof.conceptName.pos, "Unknown concept '" + conceptName + "'", "QC-C020");
+                addTypeNotes(conceptName, proof.conceptName.pos, UserTypeKind::Concept);
                 continue;
             }
             std::unordered_set<std::string> additionalProofNames;
@@ -3016,24 +3137,24 @@ class LLVMCompiler {
                 if (failed && !block.second.has_value()) {
                     if (requiredCount >= 0) {
                         cg_error(proof.proverName.pos, "failed to prove concept " + conceptName + " for type " + mapKey, "QC-C019");
-                        cg_note(block.first.constraint.pos, "due to this constraint block");
+                        cg_note(block.first.constraint.pos, "due to this constraint block", true);
                         cg_note(block.first.constraint.pos,
                                 (isAtLeast ? "less than " + std::to_string(requiredCount) + " constraints were fulfiled"
                                            : "the amount of fulfiled constraints was not equal to " + std::to_string(requiredCount)) +
                                     "(amount of fulfilled constraints: " + std::to_string(passedConstraints.size()) + ")");
                         cg_note(proof.proverName.pos, "failed constraints were:");
                         for (auto& [failedConstraintPos, additionalMessage] : failedConstraints) {
-                            cg_note(failedConstraintPos, additionalMessage.has_value() ? ("    " + additionalMessage.value()) : "");
+                            cg_note(failedConstraintPos, additionalMessage.has_value() ? ("    " + additionalMessage.value()) : "", true);
                         }
                         cg_note(proof.proverName.pos, "passed constraints were:");
-                        for (auto& passedConstraintPos : passedConstraints) { cg_note(passedConstraintPos, ""); }
+                        for (auto& passedConstraintPos : passedConstraints) { cg_note(passedConstraintPos, "", true); }
 
                     } else {
                         cg_error(proof.proverName.pos, "failed to prove concept " + conceptName + " for type " + mapKey, "QC-C019");
-                        cg_note(block.first.constraint.pos, "due to this constraint block");
+                        cg_note(block.first.constraint.pos, "due to this constraint block", true);
                         cg_note(proof.proverName.pos, "failed constraints were:");
                         for (auto& [failedConstraintPos, additionalMessage] : failedConstraints) {
-                            cg_note(failedConstraintPos, additionalMessage.has_value() ? ("    " + additionalMessage.value()) : "");
+                            cg_note(failedConstraintPos, additionalMessage.has_value() ? ("    " + additionalMessage.value()) : "", true);
                         }
                     }
                 }

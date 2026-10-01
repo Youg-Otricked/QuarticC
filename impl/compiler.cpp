@@ -136,6 +136,7 @@ bool LLVMCompiler::fulfillsGenericConstraints(std::vector<GenericType> generics,
         if (genericParams.size() <= i) {
             if (generic.defaultValue.empty()) {
                 cg_error(pos, "too few generic params", "QC-G006");
+                cg_note(pos, "expected " + std::to_string(genericParams.size()) + ", got " + std::to_string(i) + ".");
                 return false;
             }
         }
@@ -177,6 +178,7 @@ bool LLVMCompiler::fulfillsGenericConstraints(std::vector<GenericType> generics,
                     std::string resolvedConcept = resolveTypeName(conceptName, false);
                     if (!concepts.count(resolvedConcept)) {
                         cg_error(pos, "concept " + conceptName + " is not defined", "QC-C009");
+                        addTypeNotes(conceptName, pos, UserTypeKind::Concept);
                         return false;
                     }
                     std::string base = baseTypeName(typeName);
@@ -323,6 +325,7 @@ bool LLVMCompiler::fulfillsGenericConstraints(std::vector<GenericType> generics,
             if (genericParams.size() <= i) {
                 if (generic.defaultValue.empty()) {
                     cg_error(pos, "too few generic params", "QC-G006");
+                    cg_note(pos, "expected " + std::to_string(genericParams.size()) + ", got " + std::to_string(i) + ".");
                     return false;
                 }
             }
@@ -762,6 +765,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                 Token modTok = method.modifiers[i];
                 if (!modifiers.count(modTok.value)) {
                     cg_error(modTok.pos, "unknown modifier '" + modTok.value + "'", "QC-S112");
+                    addTypeNotes(modTok.value, modTok.pos, UserTypeKind::Modifier);
                     continue;
                 }
                 ModifierInfo& modInfo = modifiers[modTok.value];
@@ -1025,6 +1029,7 @@ void LLVMCompiler::generateClass(const std::string& mapKey, const UserTypeInfo& 
         auto base_it = userTypes.find(baseTypeName(info.baseClassName));
         if (base_it != userTypes.end() && base_it->second.is_final_class) {
             cg_error(info.pos, "cannot inherit from final class '" + info.baseClassName + "'", "QC-S113");
+            cg_note(base_it->second.pos, "declared here", true);
             return;
         }
     }
@@ -1141,7 +1146,8 @@ void LLVMCompiler::generateClass(const std::string& mapKey, const UserTypeInfo& 
         warn("struct-like-class", info.pos, "class has no access control, parent classes, or methods", "QC-W020");
         if (getWarningLevel("struct-like-class") != run::WarningLevel::Disabled && getWarningLevel("struct-like-class") != run::WarningLevel::None) {
             cg_help(info.pos, "consider using a struct instead");
-            cg_insight("to keep code sensical and avoid unnecessary data or abstraction, C^4 structs remain POD and C^4 classes should only be used when they require non-POD behavior.");
+            cg_insight("to keep code sensical and avoid unnecessary data or abstraction, C^4 structs remain POD and C^4 classes should only be used "
+                       "when they require non-POD behavior.");
         }
     }
     if (classTypes[mapKey]->isOpaque()) { classTypes[mapKey]->setBody(fieldTypes); }
@@ -1153,9 +1159,7 @@ void LLVMCompiler::createUserTypes() {
         if (info.namespace_path.empty()) { return name; }
         return info.namespace_path + "::" + name;
     };
-    for (auto& [mapKey, info] : userTypes) {
-        add_type_warning(mapKey, info.pos);
-    }
+    for (auto& [mapKey, info] : userTypes) { add_type_warning(mapKey, info.pos); }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Concept) {
             if (!info.generics.empty()) {
@@ -1371,6 +1375,7 @@ void LLVMCompiler::createUserTypes() {
                 res.onUse = bodyNode;
             } else {
                 cg_error(hookTok.pos, "unknown modifier handler '" + hookTok.value + "'", "QC-S114");
+                cg_note(hookTok.pos, "valid modifier handlers are on_call, on_return and on_use");
                 return;
             }
         }
@@ -1573,7 +1578,7 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
             std::string rType = getExpressionType((*bin)->right_node);
             if (!userTypes.count(lType) || userTypes[lType].kind != UserTypeKind::Concept) {
                 cg_error(get_pos((*bin)->left_node), "No such concept `" + lType + "`", "QC-C018");
-                if (!userTypes.count(lType)) addTypeNotes(lType, get_pos((*bin)->left_node));
+                if (!userTypes.count(lType)) addTypeNotes(lType, get_pos((*bin)->left_node), UserTypeKind::Concept);
                 return nullptr;
             }
             return builder->getInt1(std::ranges::any_of(userTypes[lType].provees, [&](const ConceptProvee& provedConcept) {
@@ -3154,6 +3159,7 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
 }
 llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
     std::string name = (*va)->var_name_tok.value;
+    add_var_warning(name, (*va)->var_name_tok.pos, (*va)->is_const);
     std::string qcType = (*va)->type_tok.value;
     bool isVolatile = false;
     if (qcType.starts_with("volatile ")) {
@@ -3464,8 +3470,10 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             if (!(*arrLit)->type.empty()) {
                 if (buildMangledName(qcType, genericParams) != fixMangling(resolveTypeName((*arrLit)->type, false))) {
                     cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*arrLit), "got type " + fixMangling(resolveTypeName((*arrLit)->type, false)) + ", expected " +
-                                                  buildMangledName(qcType, genericParams));
+                    cg_note(get_pos(*arrLit),
+                            "got type " + fixMangling(resolveTypeName((*arrLit)->type, false)) + ", expected " +
+                                buildMangledName(qcType, genericParams),
+                            true);
                     return nullptr;
                 }
             }
@@ -3507,8 +3515,10 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             if (!(*mapLit)->struct_type.empty()) {
                 if (buildMangledName(qcType, genericParams) != fixMangling(resolveTypeName((*mapLit)->struct_type, false))) {
                     cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*mapLit), "got type " + fixMangling(resolveTypeName((*mapLit)->struct_type, false)) + ", expected " +
-                                                  buildMangledName(qcType, genericParams));
+                    cg_note(get_pos(*mapLit),
+                            "got type " + fixMangling(resolveTypeName((*mapLit)->struct_type, false)) + ", expected " +
+                                buildMangledName(qcType, genericParams),
+                            true);
                     return nullptr;
                 }
             }
@@ -3626,7 +3636,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             if (!(*arrLit)->type.empty()) {
                 if (qcType != fixMangling(resolveTypeName((*arrLit)->type, true))) {
                     cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*arrLit), "got type " + fixMangling(resolveTypeName((*arrLit)->type, true)) + ", expected " + qcType);
+                    cg_note(get_pos(*arrLit), "got type " + fixMangling(resolveTypeName((*arrLit)->type, true)) + ", expected " + qcType, true);
                     return nullptr;
                 }
             }
@@ -3682,7 +3692,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             if (!(*mapLit)->struct_type.empty()) {
                 if (qcType != fixMangling(resolveTypeName((*mapLit)->struct_type, true))) {
                     cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*mapLit), "got type " + fixMangling(resolveTypeName((*mapLit)->struct_type, true)) + ", expected " + qcType);
+                    cg_note(get_pos(*mapLit), "got type " + fixMangling(resolveTypeName((*mapLit)->struct_type, true)) + ", expected " + qcType,
+                            true);
                     return nullptr;
                 }
             }
@@ -3868,6 +3879,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 volatileVars[fullName] = isVolatile;
             } else {
                 cg_error((*va)->var_name_tok.pos, "no valid operator[]= method found on class " + qcType, "QC-S140");
+                addMethodNotes(qcType, "operator[]=", {len}, (*va)->var_name_tok.pos);
                 return nullptr;
             }
             auto vtableIt = vtables.find(qcType);
@@ -4511,6 +4523,7 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                                 return emitMethodCall(opMethod, lhsAlloc, {rhsVal, len}, "operator[]=");
                             }
                             cg_error((*asn)->op_tok.pos, "class " + className + " has no valid matching operator[]=", "QC-S159");
+                            addMethodNotes(className, "operator[]=", {len}, (*asn)->op_tok.pos);
                             return nullptr;
                         }
                     }
@@ -4861,6 +4874,7 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
                 size = dl.getTypeAllocSize(ty);
             } else {
                 cg_error(t->getPos(), "unknown type `" + t->tok.value + "`", "QC-T041");
+                addTypeNotes(t->tok.value, t->getPos());
                 return nullptr;
             }
         } else {
@@ -5196,6 +5210,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                     ClassMethodInfo* info = findMethodInfo(className, "operator()", argTypes);
                     if (!info) {
                         cg_error(get_pos(*callPtr), "no matching operator() overload for class " + className, "QC-O002");
+                        addMethodNotes(className, "operator()", argTypes, get_pos(*callPtr));
                         return nullptr;
                     }
                     MethodCallNode* n = methodCallFromCall(*callPtr, "operator()");
@@ -5214,6 +5229,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                     llvm::Function* opMethod = findMethodOverload(className, "operator()", args);
                     if (!opMethod) {
                         cg_error(get_pos(*callPtr), "no matching operator() overload for class " + className, "QC-O002");
+                        addMethodNotes(className, "operator()", args, get_pos(*callPtr));
                         return nullptr;
                     }
                     return emitMethodCall(opMethod, v, args, "operator()");
@@ -6938,6 +6954,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 ClassMethodInfo* info = findMethodInfo(className, "operator()", argTypes);
                 if (!info) {
                     cg_error(get_pos(*callPtr), "no matching operator() overload for class " + className, "QC-O002");
+                    addMethodNotes(className, "operator()", argTypes, get_pos(&call));
                     return nullptr;
                 }
                 MethodCallNode* n = methodCallFromCall(*callPtr, "operator()");
@@ -6956,6 +6973,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 llvm::Function* opMethod = findMethodOverload(className, "operator()", args);
                 if (!opMethod) {
                     cg_error(get_pos(*callPtr), "no matching operator() overload for class " + className, "QC-O002");
+                    addMethodNotes(className, "operator()", args, get_pos(&call));
                     return nullptr;
                 }
                 return emitMethodCall(opMethod, v, args, "operator()");
@@ -7124,6 +7142,7 @@ llvm::Value* LLVMCompiler::emitArrAcc(ArrayAccessNode* arrAcc) {
         llvm::Value* ref = emitVirtualOrDirectCall(ptrTy, "operator[]", obj, {idx});
         if (!ref) {
             cg_error(get_pos(arrAcc), ptrTy + " does not have operator[]", "QC-S240");
+            addMethodNotes(ptrTy, "operator[]", {idx}, get_pos(arrAcc));
             return nullptr;
         }
         return ref;
@@ -9943,6 +9962,7 @@ void LLVMCompiler::emitStmt(AnyNode node) {
                 llvm::Value* ref = emitVirtualOrDirectCall(ptrTy, "operator[]", obj, {idx});
                 if (!ref) {
                     cg_error(get_pos(arrAcc->base), ptrTy + " does not have operator[]", "QC-S240");
+                    addMethodNotes(ptrTy, "operator[]", {idx}, get_pos(arrAcc->base));
                     return;
                 }
                 llvm::Value* val = emitExpr(arrAssign->value);

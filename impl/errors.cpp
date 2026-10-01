@@ -1,7 +1,7 @@
 #include "errors.h"
-#include <iostream>
 std::string Note::as_string() const {
     std::string result;
+    if (!context) return "= note: " + message;
     result += "note: ";
     result += message;
     result += "\n";
@@ -27,7 +27,15 @@ std::string Help::as_string() const {
     result += ":";
     result += std::to_string(pos.column + 1);
     result += "\n";
-    result += pos.string(0);
+    if (replacement) {
+        std::string source = pos.string(0);
+        source.replace(
+            pos.column + source.find(" | ") + 3,
+            pos.length,
+            *replacement
+        );
+        result += source;
+    }
     return result;
 }
 std::string Insight::as_string() const {

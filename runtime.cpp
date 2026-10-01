@@ -24,12 +24,6 @@ bool qc_readdir(DIR* dir, char* buffer, size_t size) {
 int qc_closedir(DIR* dir) {
     return closedir(dir);
 }
-int __qc_llvm_ver() { // self hosted
-    return 22;
-}
-void __qc_release_notes() { // self hosted
-    printf("Made arrays more useable");
-}
 void* qc_malloc(size_t size) {
     return malloc(size);
 } // self hosted

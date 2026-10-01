@@ -1,23 +1,6 @@
 #nomain
 extern:
 ///////////////////
-// METADATA //////
-/////////////////
-string __qc_version() {
-    return "x0.18.3";
-}
-int __qc_llvm_ver() {
-    return 21;
-}
-void __qc_release_notes() {
-    `inline(R"(
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, $0r
-    mov rdx, 63
-    )", "Added generic functions & methods, deprecated `auto` functions\n", "~{rax}~{rdi}~{rsi}~{rdx}");
-}
-///////////////////
 // VARIADICS /////
 /////////////////
 struct qc_variadic {
@@ -1424,90 +1407,5 @@ char qc_to_char_from_string(string str) {
         return str[0];
     }
     return '\0';
-}
-//////////////////
-// JAGGED ARRAY /
-////////////////
-addr_t qc_sizeof_type(int elem_type) {
-    switch (elem_type) {
-    case 0: return sizeof "int";
-    case 1: return sizeof "float";
-    case 2: return sizeof "double";
-    case 3: return sizeof "char";
-    case 4: return sizeof "bool";
-    case 5: return sizeof "qbool";
-    case 6: return sizeof "char*";
-    default: return 4a;
-    }
-}
-struct qc_jagged_array {
-    void** data;
-    int* sizes;
-    int count;
-    int elem_type;
-    int depth;
-};
-qc_jagged_array* qc_create_jagged_array(int count, int elem_type, int depth) {
-    qc_jagged_array* arr = `malloc(sizeof "qc_jagged_array");
-    arr->data = `malloc(count * sizeof "void*");
-    arr->sizes = `malloc(count * sizeof "int");
-    arr->count = count;
-    arr->elem_type = elem_type;
-    arr->depth = depth;
-    return arr;
-}
-
-void qc_set_jagged_element(qc_jagged_array* arr, int idx, void* elem, int size) {
-    arr->data[idx] = elem;
-    arr->sizes[idx] = size;
-}
-void qc_free_jagged_array(qc_jagged_array* arr) {
-    if (arr->depth > 0) {
-        for (int i = 0; i < arr->count; i++) { qc_free_jagged_array(arr->data[i]); }
-    } else {
-        for (int i = 0; i < arr->count; i++) { `free(arr->data[i]); }
-    }
-    `free(arr->data);
-    `free(arr->sizes);
-    `free(arr);
-}
-void* qc_jagged_array_get(qc_jagged_array* arr, int* indices, int num_indices) {
-    if (num_indices == 0 || !arr) { return nullptr; }
-    int idx = indices[0];
-    if (idx < 0 || idx >= arr->count) { return nullptr; }
-    if (arr->depth == 0) {
-        if (num_indices == 1) {
-            return arr->data[idx];
-        } else {
-            int elem_idx = indices[1];
-            if (elem_idx < 0 || elem_idx >= arr->sizes[idx]) { return nullptr; }
-            char* row = arr->data[idx];
-            return row + (elem_idx * qc_sizeof_type(arr->elem_type));
-        }
-    } else if (arr->depth == 1) {
-        char* row = arr->data[idx];
-        if (num_indices == 1) {
-            return row;
-        } else {
-            int elem_idx = indices[1];
-            if (elem_idx < 0 || elem_idx >= arr->sizes[idx]) { return nullptr; }
-            return row + (elem_idx * qc_sizeof_type(arr->elem_type));
-        }
-    } else {
-        qc_jagged_array* sub = arr->data[idx];
-        if (!sub) return nullptr;
-        return qc_jagged_array_get(sub, indices + 1, num_indices - 1);
-    }
-}
-void* qc_create_leaf_row(int size, int elem_type) {
-    int elem_size = qc_sizeof_type(elem_type);
-    int total = size * elem_size;
-    void* row = `malloc(total);
-    return row;
-}
-void qc_set_leaf_element(void* row, int idx, void* value, int elem_type) {
-    char* r = row;
-    void* dest = r + (idx * qc_sizeof_type(elem_type));
-    __qc_memcpy(dest, value, qc_sizeof_type(elem_type));
 }
 :extern

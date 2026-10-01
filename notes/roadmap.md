@@ -36,10 +36,12 @@
 - alloca builtin
 - unreachable
 - panic, assume
+- reflection, ^^ changes purposes
+- _ unsued variable
+
 TOP PRIORITY:
-1. Generics in header
 2. Tuples + Destruturing
-1. Function Pointers
+1. Function Pointers, prefhab better syntax than C-style. Maybe just allow passing a &function to a lambda
 1. Tagged enums, match (can only extract tags in match)
 3. CQB
 4. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
