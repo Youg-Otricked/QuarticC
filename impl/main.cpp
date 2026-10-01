@@ -690,7 +690,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 if (!errs.empty()) {
                     for (auto& err : errs)
                         diagnostics.push_back(
-                            {new CTError(err.details, err.pos, err.is_warning, err.error_name, err.notes), err.is_warning ? "Warning" : "Error"});
+                            {new CTError(err.details, err.pos, err.is_warning, err.error_name, err.notes, err.helps, err.insights), err.is_warning ? "Warning" : "Error"});
                     break;
                 }
                 db_sigs[filepath] = comp.functionSignatures;
@@ -722,7 +722,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             }
             std::string message = "Program exited with code: 0";
             if (error_found) { message = "Program exited with code: 1"; }
-            if (!diagnostics.empty()) { return Mer{ast, resp, message, diagnostics}; }
+            if (!diagnostics.empty() && error_found) { return Mer{ast, resp, message, diagnostics}; }
             std::error_code EC;
             llvm::raw_fd_ostream out(ll_file, EC, llvm::sys::fs::OF_Text);
             if (EC) {

@@ -40,7 +40,7 @@ TOP PRIORITY:
 1. Generics in header
 2. Tuples + Destruturing
 1. Function Pointers
-1. Tagged enums, match
+1. Tagged enums, match (can only extract tags in match)
 3. CQB
 4. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
 5. Metadata

@@ -101,7 +101,7 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.0.49 = "I actually fixed try catch"
+Current Version: x1.0.50 = "I actually fixed try catch"
 Next Version: x1.0.5 = "Probably tagged enums"
 
 # Current Version Highlights

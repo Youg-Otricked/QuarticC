@@ -678,7 +678,6 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                 }
             }
         }
-        if (isHeader || classInfo.baseFile.ends_with(".hqc")) continue;
         if (!fn || !fn->empty()) continue;
         std::string methodName = fn->getName().str();
         llvm::Function* currentTarget = fn;
@@ -1138,8 +1137,13 @@ void LLVMCompiler::generateClass(const std::string& mapKey, const UserTypeInfo& 
         };
     collectFields(mapKey, {});
     if (fieldTypes.empty()) { fieldTypes.push_back(builder->getInt8Ty()); }
-    if (noParent && noAccess && noMethods)
-        warn("struct-like-class", info.pos, "class has no access control, parent classes, or methods; consider using a struct instead", "QC-W020");
+    if (noParent && noAccess && noMethods) {
+        warn("struct-like-class", info.pos, "class has no access control, parent classes, or methods", "QC-W020");
+        if (getWarningLevel("struct-like-class") != run::WarningLevel::Disabled && getWarningLevel("struct-like-class") != run::WarningLevel::None) {
+            cg_help(info.pos, "consider using a struct instead");
+            cg_insight("to keep code sensical and avoid unnecessary data or abstraction, C^4 structs remain POD and C^4 classes should only be used when they require non-POD behavior.");
+        }
+    }
     if (classTypes[mapKey]->isOpaque()) { classTypes[mapKey]->setBody(fieldTypes); }
     namespaceStack = oldNamespaceStack;
 }
@@ -1149,6 +1153,9 @@ void LLVMCompiler::createUserTypes() {
         if (info.namespace_path.empty()) { return name; }
         return info.namespace_path + "::" + name;
     };
+    for (auto& [mapKey, info] : userTypes) {
+        add_type_warning(mapKey, info.pos);
+    }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Concept) {
             if (!info.generics.empty()) {
@@ -1182,6 +1189,19 @@ void LLVMCompiler::createUserTypes() {
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Class) {
+            if (!info.baseClassName.empty()) {
+                auto parentIfo = userTypes.find(baseTypeName(resolveTypeName(info.baseClassName)));
+                if (parentIfo != userTypes.end()) {
+                    UserTypeInfo parentInfo = parentIfo->second;
+                    std::unordered_set<std::string> parentFields;
+                    for (const auto& field : parentInfo.classFields) { parentFields.insert(field.name); }
+                    for (const auto& field : info.classFields) {
+                        if (!field.isStatic && parentFields.contains(field.name)) {
+                            cg_error(info.pos, "Parent field " + field.name + " redeclared in child class.", "QC-CS02");
+                        }
+                    }
+                }
+            }
             if (!info.generics.empty()) {
                 genericClasses[mapKey] = true;
                 continue;
@@ -1322,14 +1342,13 @@ void LLVMCompiler::createUserTypes() {
                 if (method.params[i - 1].type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
             }
             classMethods[mapKey][method.name_tok.value].push_back(fn);
-            if (isHeader || info.baseFile.ends_with(".hqc")) { continue; }
             vtableFuncs.push_back(fn);
             slotOrder.push_back(methodName);
         }
         for (size_t i = 0; i < slotOrder.size(); i++) { vtableSlotIndex[mapKey][slotOrder[i]] = i; }
         auto* arrTy = llvm::ArrayType::get(llvm::PointerType::get(context, 0), vtableFuncs.size());
         auto* vtableInit = llvm::ConstantArray::get(arrTy, vtableFuncs);
-        auto* vtable = getOrCreateVtable(mapKey + "_vtable", arrTy, isHeader || info.baseFile.ends_with(".hqc") ? nullptr : vtableInit);
+        auto* vtable = getOrCreateVtable(mapKey + "_vtable", arrTy, vtableInit);
         vtables[mapKey] = vtable;
         namespaceStack = oldNamespaceStack;
     }
@@ -3443,9 +3462,9 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         if (auto arrLit = std::get_if<ArrayLiteralNode*>(&(*va)->value_node)) {
             llvm::StructType* structTy = genericiseOrFindStruct(buildMangledName(qcType, genericParams));
             if (!(*arrLit)->type.empty()) {
-                if (buildMangledName(qcType, genericParams) != fixMangling(resolveTypeName((*arrLit)->type, true))) {
+                if (buildMangledName(qcType, genericParams) != fixMangling(resolveTypeName((*arrLit)->type, false))) {
                     cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*arrLit), "got type " + fixMangling(resolveTypeName((*arrLit)->type, true)) + ", expected " +
+                    cg_note(get_pos(*arrLit), "got type " + fixMangling(resolveTypeName((*arrLit)->type, false)) + ", expected " +
                                                   buildMangledName(qcType, genericParams));
                     return nullptr;
                 }
@@ -3486,9 +3505,9 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         } else if (auto mapLit = std::get_if<MapLiteralNode*>(&(*va)->value_node)) {
             llvm::StructType* structTy = genericiseOrFindStruct(buildMangledName(qcType, genericParams));
             if (!(*mapLit)->struct_type.empty()) {
-                if (buildMangledName(qcType, genericParams) != fixMangling(resolveTypeName((*mapLit)->struct_type, true))) {
+                if (buildMangledName(qcType, genericParams) != fixMangling(resolveTypeName((*mapLit)->struct_type, false))) {
                     cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*mapLit), "got type " + fixMangling(resolveTypeName((*mapLit)->struct_type, true)) + ", expected " +
+                    cg_note(get_pos(*mapLit), "got type " + fixMangling(resolveTypeName((*mapLit)->struct_type, false)) + ", expected " +
                                                   buildMangledName(qcType, genericParams));
                     return nullptr;
                 }
@@ -3546,7 +3565,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             builder->CreateStore(rhs, structAlloc, isVolatile);
             std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
-            varTypes[fullName] = qcType;
+            varTypes[fullName] = buildMangledName(qcType, genericParams);
             volatileVars[fullName] = isVolatile;
             return nullptr;
         }
@@ -5228,7 +5247,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 auto argIt = call.arg_nodes.begin();
                 while (paramIt != funcDef->params.end()) {
                     llvm::Value* argVal;
-                    auto param = *paramIt;
+                    auto param = *paramIt++;
                     if (paramIdx >= call.arg_nodes.size()) {
                         if (param.default_value.has_value()) {
                             AnyNode& defaultRef = const_cast<AnyNode&>(param.default_value.value());
@@ -8284,7 +8303,6 @@ void LLVMCompiler::generateStructReprFunctions() {
         llvm::FunctionType* reprFnTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {structTy}, false);
         llvm::Function* reprFn = module->getFunction(name + "_repr");
         if (!reprFn) reprFn = llvm::Function::Create(reprFnTy, llvm::Function::ExternalLinkage, name + "_repr", module);
-        if (isHeader || info.baseFile.ends_with(".hqc")) continue;
         llvm::BasicBlock* entryBB = llvm::BasicBlock::Create(context, "entry", reprFn);
         builder->SetInsertPoint(entryBB);
         llvm::Value* structArg = reprFn->arg_begin();
@@ -9283,6 +9301,8 @@ void LLVMCompiler::emitStmt(AnyNode node) {
             for (size_t i = 0; i < elifBlocks.size(); i++) {
                 builder->SetInsertPoint(elifBlocks[i].first);
                 llvm::Value* elifCond = emitExpr(if_node->elif_branches[i].first);
+                elifCond = normalizeValue(elifCond, if_node->elif_branches[i].first);
+                elifCond = toTruthiness(elifCond, get_pos(if_node->elif_branches[i].first));
                 comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(elifCond);
                 if (comptimeValue) {
                     warn("constant-condition", get_pos(if_node),
@@ -10531,7 +10551,6 @@ std::vector<CTError> LLVMCompiler::compile(
                 }
             }
             if (!fn || !fn->empty()) continue;
-            if (isHeader || info.baseFile.ends_with(".hqc")) continue;
             llvm::Function* currentTarget = fn;
             std::string methodName = fn->getName().str();
             if (!method.modifiers.empty()) {
@@ -10721,7 +10740,6 @@ std::vector<CTError> LLVMCompiler::compile(
             }
         }
     }
-    if (!errors.empty()) return errors;
     return errors;
 }
 #endif

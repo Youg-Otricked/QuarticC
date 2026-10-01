@@ -1,3 +1,4 @@
+#link<thing>
 #nomain
 namespace Core {
     struct Mine<T> {

@@ -1,4 +1,5 @@
 #include "errors.h"
+#include <iostream>
 std::string Note::as_string() const {
     std::string result;
     result += "note: ";

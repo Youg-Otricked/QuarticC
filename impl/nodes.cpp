@@ -1,46 +1,5 @@
 #include "nodes.h"
 #include <stdexcept>
-AnyNode clone_node(const AnyNode& node) {
-    return std::visit(
-        [](auto arg) -> AnyNode {
-            using T = std::decay_t<decltype(arg)>;
-
-            if constexpr (std::is_same_v<T, NumberNode>) {
-                return NumberNode(arg.tok);
-            } else if constexpr (std::is_same_v<T, StringNode>) {
-                return StringNode(arg.tok);
-            } else if constexpr (std::is_same_v<T, CharNode>) {
-                return CharNode(arg.tok);
-            } else if constexpr (std::is_same_v<T, BoolNode>) {
-                return BoolNode(arg.tok);
-            } else if constexpr (std::is_same_v<T, QBoolNode>) {
-                return QBoolNode(arg.tok);
-            } else if constexpr (std::is_same_v<T, TypeValueNode>) {
-                return TypeValueNode(arg.tok);
-            } else if constexpr (std::is_same_v<T, QInNode>) {
-                return QInNode();
-            } else if constexpr (std::is_same_v<T, NullptrNode>) {
-                return NullptrNode(arg.pos);
-            } else if constexpr (std::is_same_v<T, RefVarDeclNode*>) {
-                return new RefVarDeclNode(arg->type_tok, arg->var_name_tok, arg->target, arg->pos);
-            } else if constexpr (std::is_same_v<T, ModifierNode*>) {
-                return new ModifierNode(arg->modifiers, clone_node(arg->node));
-            } else if constexpr (std::is_same_v<T, VarAccessNode*>) {
-                return new VarAccessNode(arg->var_name_tok);
-            } else if constexpr (std::is_same_v<T, UnaryOpNode*>) {
-                return new UnaryOpNode(arg->op_tok, clone_node(arg->node), arg->is_postfix);
-            } else if constexpr (std::is_same_v<T, PropertyAccessNode*>) {
-                return new PropertyAccessNode(clone_node(*(arg->base)), arg->base_name_tok, arg->property_name);
-            } else if constexpr (std::is_same_v<T, ArrayAccessNode*>) {
-                std::vector<AnyNode> cloned_indices;
-                for (auto& idx : arg->indices) { cloned_indices.push_back(clone_node(idx)); }
-                return new ArrayAccessNode(clone_node(arg->base), cloned_indices);
-            } else {
-                throw std::runtime_error("Cannot clone complex node type");
-            }
-        },
-        node);
-}
 Position get_pos(AnyNode node) {
     return std::visit(
         [](auto& n) -> Position {

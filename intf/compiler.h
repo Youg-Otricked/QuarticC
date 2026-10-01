@@ -1,18 +1,18 @@
 #ifndef COMPILER_H
 #define COMPILER_H
-#include <functional>
-#include <list>
-#include <optional>
-#include <string>
-#include <variant>
-#include <vector>
-#include <unordered_set>
-#include <unordered_map>
-#include <map>
+#include "errors.h"
 #include "main.h"
 #include "nodes.h"
-#include "errors.h"
 #include "token.h"
+#include <functional>
+#include <list>
+#include <map>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <variant>
+#include <vector>
 #ifdef ENABLE_LLVM
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Intrinsics.h>
@@ -66,13 +66,46 @@ struct ExceptionHandlerInfo {
 };
 class LLVMCompiler {
   public:
+    std::string to_pascal_case(std::string_view name) {
+        std::string result;
+        result.reserve(name.size());
+        bool capitalize = true;
+        for (size_t i = 0; i < name.size(); ++i) {
+            unsigned char c = static_cast<unsigned char>(name[i]);
+            if (c == '_') {
+                capitalize = true;
+                continue;
+            }
+            bool word_boundary = i > 0 && std::islower(static_cast<unsigned char>(name[i - 1])) && std::isupper(c);
+            bool acronym_boundary = i > 1 && std::isupper(static_cast<unsigned char>(name[i - 1])) && std::isupper(c) && i + 1 < name.size() &&
+                                    std::islower(static_cast<unsigned char>(name[i + 1]));
+            if (word_boundary || acronym_boundary) { capitalize = true; }
+            if (capitalize) {
+                result += static_cast<char>(std::toupper(c));
+                capitalize = false;
+            } else {
+                result += static_cast<char>(std::tolower(c));
+            }
+        }
+        return result;
+    }
+    void add_type_warning(std::string name, Position& pos) {
+        std::string converted = to_pascal_case(name);
+        if (converted != name) { 
+            warn("type-casing", pos, "Usertype '" + name + "' is not in PascalCase.", "QC-WC01"); 
+            if (getWarningLevel("type-casing") != run::WarningLevel::Disabled && getWarningLevel("type-casing") != run::WarningLevel::None) {
+                cg_help(pos,  "Consider '" + converted + "' instead.");
+                cg_insight("C^4 uses PascalCase for user types because that is the standard casing for almost every programming language.");
+            }
+        }
+    }
     run::RunConfig config;
     const std::unordered_set<std::string> core = {"unreachable-code",   "missing-return",    "null-deref",     "asm-clobber-stack-pointer",
                                                   "fn-conflict",        "fn-redecl",         "default-member", "truncation",
                                                   "implicit-int-float", "constant-condition"};
     const std::unordered_set<std::string> extra = {"large-by-value",  "float-equal",       "auto",       "shadow",
                                                    "implicit-extend", "array-param-decay", "empty-body", "empty-catch"};
-    const std::unordered_set<std::string> pedantic = {"struct-like-class"};
+    const std::unordered_set<std::string> pedantic = {"struct-like-class", "type-casing"};
     run::WarningLevel getWarningLevel(const std::string& warningClass) {
         auto level = config.warnings[warningClass];
         if (level != run::WarningLevel::Disabled) return level;
@@ -1980,6 +2013,10 @@ class LLVMCompiler {
                             for (size_t i = 0; i < args.size(); i++) {
 
                                 llvm::Type* expected = fn->getFunctionType()->getParamType(i + 1);
+                                if (args[i] == nullptr) {
+                                    cg_error(Position(Position::INVALID_FILE_ID, 0, 0, 0), "Failed to emit method arg", "QC-M001");
+                                    return nullptr;
+                                }
                                 llvm::Type* actual = args[i]->getType();
 
                                 if (expected != actual) {
@@ -2522,7 +2559,6 @@ class LLVMCompiler {
         llvm::FunctionType* reprFnTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {structTy}, false);
         llvm::Function* reprFn = module->getFunction(name + "_repr");
         if (!reprFn) reprFn = llvm::Function::Create(reprFnTy, llvm::Function::ExternalLinkage, name + "_repr", module);
-        if (isHeader) return;
         llvm::BasicBlock* entryBB = llvm::BasicBlock::Create(context, "entry", reprFn);
         builder->SetInsertPoint(entryBB);
         llvm::Value* structArg = reprFn->arg_begin();

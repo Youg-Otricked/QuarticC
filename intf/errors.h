@@ -48,9 +48,11 @@ class Insight {
 
 class CTError : public Error {
   public:
-    CTError(std::string d, Position pos, bool is_warning = false, std::string code = "", std::vector<Note> notes = {}) : Error(code, d, pos) {
+    CTError(std::string d, Position pos, bool is_warning = false, std::string code = "", std::vector<Note> notes = {}, std::vector<Help> helps = {}, std::vector<Insight> insights = {}) : Error(code, d, pos) {
         this->is_warning = is_warning;
         this->notes = notes;
+        this->helps = helps;
+        this->insights = insights;
     }
     bool is_warning = false;
     std::vector<Note> notes;

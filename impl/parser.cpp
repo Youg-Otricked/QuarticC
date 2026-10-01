@@ -3050,9 +3050,9 @@ Prs Parser::assignment_expr() {
             case TokenType::BIT_A_EQ: binop_type = TokenType::AMPERSAND; break;
             default: res.failure(new InvalidSyntaxError("QC-S057: Unsupported op for struct fields", op_tok.pos)); return res.to_prs();
             }
-            AnyNode lhsBase = clone_node(*(prop->base));
+            AnyNode lhsBase = *(prop->base);
             if (binop_type == TokenType::EQ) { return res.success(new FieldAssignNode(lhsBase, field, right)); }
-            AnyNode rhsBase = clone_node(*(prop->base));
+            AnyNode rhsBase = *(prop->base);
             auto readProp = new PropertyAccessNode(rhsBase, prop->base_name_tok, field);
             AnyNode readPropNode = readProp;
             Token bin_tok(binop_type, get_token_name(binop_type), op_tok.pos);
@@ -4060,6 +4060,10 @@ Prs Parser::statement() {
             cf.access = access;
             cf.isStatic = is_static;
             cf.defaultValue = default_value;
+            if (std::ranges::any_of(info.classFields, [&](const ClassField &thing) { return thing.name == name_tok.value; })) {
+                res.failure(new InvalidSyntaxError("QC-CS01: Duplicate field in class", this->current_tok.pos));
+                return res.to_prs();
+            }
             info.classFields.push_back(cf);
         }
 
@@ -4214,7 +4218,10 @@ Prs Parser::statement() {
                 return res.to_prs();
             }
             this->advance();
-
+            if (std::ranges::any_of(fields, [&](const StructField &thing) { return thing.name == field_name.value; })) {
+                res.failure(new InvalidSyntaxError("QC-ST01: Duplicate field in struct", this->current_tok.pos));
+                return res.to_prs();
+            }
             fields.push_back({field_name.value, field_type});
         }
         if (this->current_tok.type != TokenType::RBRACE) {

@@ -782,5 +782,4 @@ class InterpEer {
         this->pos = pos;
     }
 };
-AnyNode clone_node(const AnyNode& node);
 #endif
