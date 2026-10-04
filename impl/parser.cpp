@@ -1,7 +1,7 @@
 #include "parser.h"
 #include "lexer.h"
-#include <algorithm>
 #include "shared_globals.h"
+#include <algorithm>
 AnyNode Parser::default_value_for_type(const Token& type_tok, const Position& pos) {
     std::string type = type_tok.value;
     if (type == "short int") return AnyNode{NumberNode(Token(TokenType::SHORT_INT, "0", pos))};
@@ -997,6 +997,92 @@ Prs Parser::try_catch_expr() {
     }
     auto try_catch_node = new TryCatchNode(try_body, catch_bodys, try_tok, try_tok.pos);
     return res.success(try_catch_node);
+}
+Prs Parser::match_stmt() {
+    ParseResult res;
+    if (!(current_tok.type == TokenType::KEYWORD && current_tok.value == "match")) {
+        res.failure(new InvalidSyntaxError("QC-S019: Expected 'match'", current_tok.pos));
+        return res.to_prs();
+    }
+    this->advance();
+    if (current_tok.type != TokenType::LPAREN) {
+        res.failure(new InvalidSyntaxError("QC-S020: Expected '(' after 'match'", current_tok.pos));
+        return res.to_prs();
+    }
+    this->advance();
+    AnyNode value = res.reg(this->text_unops());
+    if (res.error) return res.to_prs();
+    if (current_tok.type != TokenType::RPAREN) {
+        res.failure(new InvalidSyntaxError("QC-S021: Expected ')' after match expression", current_tok.pos));
+        return res.to_prs();
+    }
+    this->advance();
+    if (current_tok.type != TokenType::LBRACE) {
+        res.failure(new InvalidSyntaxError("QC-S022: Expected '{' after match(...)", current_tok.pos));
+        return res.to_prs();
+    }
+    this->advance();
+    std::vector<MatchNode::Section> sections;
+    bool is_enum = false;
+    while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
+        MatchNode::Section section;
+        bool saw_label = true;
+        if (current_tok.value == "default") {
+            this->advance();
+            section.is_default = true;
+        } else {
+            if (is_known_type(this->current_tok.value)) {
+                is_enum = true;
+                std::pair<std::string, std::vector<std::string>> data;
+                std::string type = this->parseTypeString();
+                if (this->current_tok.type != TokenType::DOT) {
+                    res.failure(new InvalidSyntaxError("QC-S301: Expected . after enum name", current_tok.pos));
+                    return res.to_prs();
+                }
+                this->advance();
+                data.first = type + "." + this->current_tok.value;
+                this->advance();
+                if (this->current_tok.type == TokenType::LPAREN) {
+                    this->advance();
+                    while (this->current_tok.type == TokenType::IDENTIFIER) {
+                        data.second.push_back(this->current_tok.value);
+                        this->advance();
+                        if (this->current_tok.type == TokenType::COMMA) this->advance();
+                    } 
+                    if (this->current_tok.type != TokenType::RPAREN) {
+                        res.failure(new InvalidSyntaxError("QC-S302: Expected ) after enum tags", current_tok.pos));
+                        return res.to_prs();
+                    }
+                    this->advance();
+                }
+                section.enum_case = data;
+            } else {
+                AnyNode case_expr = res.reg(this->text_unops());
+                if (res.error) return res.to_prs();
+                section.normal_case = CaseLabel{case_expr};
+            }
+        }
+        std::vector<AnyNode> stmts;
+        if (this->current_tok.type != TokenType::BIG_ARROW) {
+            res.failure(new InvalidSyntaxError("QC-S300: Expected '=>' after match case", current_tok.pos));
+            return res.to_prs();
+        }
+        this->advance();
+        section.body = new StatementsNode({});
+        parse_block_into(section.body, res);
+        if (res.error) return res.to_prs();
+        sections.push_back(section);
+    }
+    if (current_tok.type != TokenType::RBRACE) {
+        res.failure(new InvalidSyntaxError("QC-S025: Expected '}' after match body", current_tok.pos));
+        return res.to_prs();
+    }
+    this->advance();
+    auto mch = new MatchNode();
+    mch->value = value;
+    mch->sections = sections;
+    mch->is_enum = is_enum;
+    return res.success(mch);
 }
 Prs Parser::switch_stmt() {
     ParseResult res;
@@ -3422,6 +3508,7 @@ Prs Parser::statement() {
     if (tok.type == TokenType::KEYWORD && tok.value == "try") { return this->try_catch_expr(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "qif") { return this->qif_expr(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "switch") { return this->switch_stmt(); }
+    if (tok.type == TokenType::KEYWORD && tok.value == "match") { return this->match_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "qswitch") { return this->qswitch_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "while") { return this->while_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "for") { return this->for_stmt(); }
@@ -4060,7 +4147,7 @@ Prs Parser::statement() {
             cf.access = access;
             cf.isStatic = is_static;
             cf.defaultValue = default_value;
-            if (std::ranges::any_of(info.classFields, [&](const ClassField &thing) { return thing.name == name_tok.value; })) {
+            if (std::ranges::any_of(info.classFields, [&](const ClassField& thing) { return thing.name == name_tok.value; })) {
                 res.failure(new InvalidSyntaxError("QC-CS01: Duplicate field in class", this->current_tok.pos));
                 return res.to_prs();
             }
@@ -4218,7 +4305,7 @@ Prs Parser::statement() {
                 return res.to_prs();
             }
             this->advance();
-            if (std::ranges::any_of(fields, [&](const StructField &thing) { return thing.name == field_name.value; })) {
+            if (std::ranges::any_of(fields, [&](const StructField& thing) { return thing.name == field_name.value; })) {
                 res.failure(new InvalidSyntaxError("QC-ST01: Duplicate field in struct", this->current_tok.pos));
                 return res.to_prs();
             }
@@ -4357,6 +4444,11 @@ Prs Parser::statement() {
         Token enum_name = this->current_tok;
         std::string enum_type = "int";
         this->advance();
+        std::vector<GenericType> generics;
+        parseGenerics(generics, res);
+        if (res.error) return res.to_prs();
+        auto saved_generics = this->current_generics;
+        this->current_generics.insert(this->current_generics.end(), generics.begin(), generics.end());
         if (this->current_tok.type == TokenType::COLON) {
             this->advance();
             if (!is_primint_type(this->current_tok)) {
@@ -4383,6 +4475,18 @@ Prs Parser::statement() {
             Token member_name = this->current_tok;
             std::string value = "";
             this->advance();
+            std::vector<std::string> tags;
+            if (this->current_tok.type == TokenType::LPAREN) {
+                while (this->current_tok.type != TokenType::RPAREN && this->current_tok.type != TokenType::EOFT) {
+                    this->advance();
+                    tags.push_back(this->parseTypeString());
+                }
+                if (this->current_tok.type == TokenType::EOFT) {
+                    res.failure(new InvalidSyntaxError("QC-EM02: Unexpected EOF", this->current_tok.pos));
+                    return res.to_prs();
+                }
+                this->advance();
+            }
             if (this->current_tok.type != TokenType::EQ) {
                 if (!can_auto) {
                     res.failure(new InvalidSyntaxError("QC-EM01: Enums may not use implicit value increment after explicit value increment",
@@ -4401,7 +4505,7 @@ Prs Parser::statement() {
                 can_auto = false;
                 this->advance();
             }
-            entries.push_back(EnumEntry{member_name.value, value});
+            entries.push_back(EnumEntry{member_name.value, value, tags});
             if (this->current_tok.type != TokenType::SEMICOLON) {
                 res.failure(new InvalidSyntaxError("QC-S083: Expected ';' after enum member", this->current_tok.pos));
                 return res.to_prs();
@@ -4422,7 +4526,9 @@ Prs Parser::statement() {
         info.baseFile = SourceManager::instance().get(this->current_tok.pos.file_id).filename;
         info.enumEntries = entries;
         info.namespace_path = currentNamespace;
+        info.generics = generics;
         user_types[base_type_name(full_key)] = info;
+        this->current_generics = std::move(saved_generics);
         return res.success(std::monostate{});
     }
     if (tok.type == TokenType::KEYWORD && tok.value == "concept") {

@@ -38,6 +38,7 @@ class NamespaceNode;
 class ForeachNode;
 class QBoolNode;
 class QIfNode;
+class MatchNode;
 class QSwitchNode;
 class ArrayAssignNode;
 class FieldAssignNode;
@@ -53,7 +54,7 @@ using AnyNode = std::variant<std::monostate, NumberNode, StringNode, CharNode, B
                              QSwitchNode*, BreakNode*, UnreachableNode*, WhileNode*, ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*,
                              MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*,
                              PropertyAccessNode*, SpreadNode*, ForeachNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*,
-                             TryCatchNode*, TypeValueNode, DeferNode*, ModifierNode*>;
+                             TryCatchNode*, TypeValueNode, DeferNode*, ModifierNode*, MatchNode*>;
 struct GenericType {
     std::string name;
     bool isVariadic = false;
@@ -197,6 +198,7 @@ struct StructField {
 struct EnumEntry {
     std::string memberName;
     std::string value;
+    std::vector<std::string> tags;
 };
 struct ClassField {
     std::string name;
@@ -441,6 +443,21 @@ class SwitchNode {
     Position getPos() { return get_pos(value); }
     std::string print() { return printAny(value); }
 };
+class MatchNode {
+  public:
+    bool is_enum;
+    AnyNode value;
+    struct Section {
+        std::pair<std::string, std::vector<std::string>> enum_case;
+        CaseLabel normal_case;
+        bool is_default = false;
+        StatementsNode* body;
+    };
+    std::vector<Section> sections;
+    Position getPos() { return get_pos(value); }
+    std::string print() { return printAny(value); }
+};
+
 class QSwitchNode {
   public:
     AnyNode value;
@@ -756,7 +773,7 @@ class NamespaceNode {
 };
 class ParseResult;
 using Prs = std::variant<std::monostate, ParseResult, NumberNode, StringNode, CharNode, BoolNode, BinOpNode*, Error*, UnaryOpNode*, VarAccessNode*,
-                         VarAssignNode*, AssignExprNode*, StatementsNode*, IfNode*, BreakNode*, UnreachableNode*, SwitchNode*, WhileNode*, ForNode*,
+                         VarAssignNode*, AssignExprNode*, StatementsNode*, IfNode*, BreakNode*, UnreachableNode*, SwitchNode*, MatchNode*, WhileNode*, ForNode*,
                          ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*,
                          ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, SpreadNode*, ForeachNode*, QBoolNode, QInNode, QIfNode*,
                          QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, TryCatchNode*, RefVarDeclNode*,

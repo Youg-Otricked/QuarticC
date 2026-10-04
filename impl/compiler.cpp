@@ -120,7 +120,10 @@ llvm::Type* LLVMCompiler::llvmTypeFor(std::string qcType) {
         (genericStructs.find(baseTypeName(type)) != genericStructs.end() && genericStructs[baseTypeName(type)])) {
         return genericiseOrFindStruct(type);
     }
-    if (enumTypes.find(type) != enumTypes.end()) { return enumTypes[type]; }
+    if (enumTypes.find(type) != enumTypes.end() ||
+        (genericEnums.find(baseTypeName(type)) != genericEnums.end() && genericEnums[baseTypeName(type)])) {
+        return genericiseOrFindEnum(type);
+    }
     if (unionTypes.find(type) != unionTypes.end() ||
         (genericUnions.find(baseTypeName(type)) != genericUnions.end() && genericUnions[baseTypeName(type)])) {
         genericiseOrFindUnion(type);
@@ -136,7 +139,7 @@ bool LLVMCompiler::fulfillsGenericConstraints(std::vector<GenericType> generics,
         if (genericParams.size() <= i) {
             if (generic.defaultValue.empty()) {
                 cg_error(pos, "too few generic params", "QC-G006");
-                cg_note(pos, "expected " + std::to_string(genericParams.size()) + ", got " + std::to_string(i) + ".");
+                cg_note(pos, "expected " + std::to_string(generics.size()) + ", got " + std::to_string(genericParams.size()) + ".");
                 return false;
             }
         }
@@ -417,6 +420,8 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             generateClass(base, userTypes.at(base));
         } else if (structTypes.count(resolved) && structTypes.at(resolved)->isOpaque()) {
             generateStruct(base, userTypes.at(base));
+        } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
+            generateEnum(resolved, userTypes.at(resolved));
         }
     }
     std::string mangled_class_name = className + "<";
@@ -526,6 +531,8 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                             generateStruct(resolved, userTypes.at(resolved));
                         } else if (classTypes.count(resolved) && classTypes.at(resolved)->isOpaque()) {
                             generateClass(resolved, userTypes.at(resolved));
+                        } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
+                            generateEnum(resolved, userTypes.at(resolved));
                         }
                     }
                 }
@@ -846,6 +853,8 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
             generateClass(base, userTypes.at(base));
         } else if (structTypes.count(resolved) && structTypes.at(resolved)->isOpaque()) {
             generateStruct(base, userTypes.at(base));
+        } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
+            generateEnum(resolved, userTypes.at(resolved));
         }
     }
     std::string mangled_struct_name = structName + "<";
@@ -894,6 +903,8 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
                     generateStruct(resolved, userTypes.at(resolved));
                 } else if (classTypes.count(resolved) && classTypes.at(resolved)->isOpaque()) {
                     generateClass(resolved, userTypes.at(resolved));
+                } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
+                    generateEnum(resolved, userTypes.at(resolved));
                 }
             }
         }
@@ -909,6 +920,56 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
     this->currentGenericTypeStrings = oldGenericTypeStrings;
     currentNonTypeGenericValues = oldNonTypeGenerics;
     return structTy;
+}
+llvm::StructType* LLVMCompiler::generateGenericEnum(std::string enumName, UserTypeInfo enumInfo, std::vector<std::string> genericParams) {
+    std::string mangled_enum_name = enumName + "<";
+    for (int j = 0; j < enumInfo.generics.size(); j++) {
+        std::string val;
+        if (genericParams.size() <= j) {
+            val = enumInfo.generics[j].defaultValue;
+        } else {
+            val = genericParams[j];
+        }
+        mangled_enum_name += val;
+        if (j != enumInfo.generics.size() - 1) { mangled_enum_name += ","; }
+    }
+    mangled_enum_name += ">";
+    if (inProgressGenerics.count(mangled_enum_name)) return {};
+    if (enumTypes.find(mangled_enum_name) != enumTypes.end()) { return genericiseOrFindEnum(mangled_enum_name); }
+    auto oldNamespaceStack = namespaceStack;
+    namespaceStack.clear();
+    if (!enumInfo.namespace_path.empty()) {
+        size_t start = 0;
+        size_t pos;
+        while ((pos = enumInfo.namespace_path.find("::", start)) != std::string::npos) {
+            namespaceStack.push_back(enumInfo.namespace_path.substr(start, pos - start));
+            start = pos + 2;
+        }
+        namespaceStack.push_back(enumInfo.namespace_path.substr(start));
+    }
+    llvm::StructType* enumTy = getOrCreateStructType(mangled_enum_name);
+    inProgressGenerics.insert(mangled_enum_name);
+    auto oldGenericTypes = this->currentGenericTypes;
+    auto oldGenericTypeStrings = currentGenericTypeStrings;
+    auto oldNonTypeGenerics = currentNonTypeGenericValues;
+    if (!fulfillsGenericConstraints(enumInfo.generics, genericParams, enumInfo.pos)) return nullptr;
+    enumTy->setBody(getLargestDiscriminantType(enumInfo));
+    enumTypes[mangled_enum_name] = enumTy;
+    for (size_t i = 0; i < enumInfo.enumEntries.size(); i++) {
+        auto entry = enumInfo.enumEntries[i];
+        std::string fullName = mangled_enum_name + "." + entry.memberName;
+        for (std::string& tag : entry.tags) {
+            tag = resolveTypeName(substituteGenerics(tag), false);
+        }
+        enumMemberInfo[fullName] = std::make_pair(entry.value, entry.tags);
+    }
+    proveConceptsForTypeInfo(mangled_enum_name, enumInfo);
+    namespaceStack = oldNamespaceStack;
+    inProgressGenerics.erase(mangled_enum_name);
+    this->currentGenericTypes = oldGenericTypes;
+    this->currentGenericTypeStrings = oldGenericTypeStrings;
+    currentNonTypeGenericValues = oldNonTypeGenerics;
+    return enumTy;
 }
 UserTypeInfo LLVMCompiler::generateGenericUnion(std::string unionName, UserTypeInfo unionInfo, std::vector<std::string> genericParams) {
     std::string mangled_union_name = unionName + "<";
@@ -1014,6 +1075,8 @@ void LLVMCompiler::generateStruct(const std::string& mapKey, const UserTypeInfo&
                 generateStruct(resolved, userTypes.at(resolved));
             } else if (classTypes.count(resolved) && classTypes.at(resolved)->isOpaque()) {
                 generateClass(resolved, userTypes.at(resolved));
+            } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
+                generateEnum(resolved, userTypes.at(resolved));
             }
         }
         llvm::Type* ty = llvmTypeFor(field.type);
@@ -1115,6 +1178,8 @@ void LLVMCompiler::generateClass(const std::string& mapKey, const UserTypeInfo& 
                         generateStruct(resolved, userTypes.at(resolved));
                     } else if (classTypes.count(resolved) && classTypes.at(resolved)->isOpaque()) {
                         generateClass(resolved, userTypes.at(resolved));
+                    } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
+                        generateEnum(resolved, userTypes.at(resolved));
                     }
                 }
                 if (field.isStatic) {
@@ -1153,7 +1218,6 @@ void LLVMCompiler::generateClass(const std::string& mapKey, const UserTypeInfo& 
     if (classTypes[mapKey]->isOpaque()) { classTypes[mapKey]->setBody(fieldTypes); }
     namespaceStack = oldNamespaceStack;
 }
-
 void LLVMCompiler::createUserTypes() {
     auto getFullName = [](const std::string& name, const UserTypeInfo& info) {
         if (info.namespace_path.empty()) { return name; }
@@ -1172,11 +1236,19 @@ void LLVMCompiler::createUserTypes() {
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Enum) {
-            enumTypes[mapKey] = llvmTypeFor(info.enumType);
+            if (!info.generics.empty()) {
+                genericEnums[mapKey] = true;
+                continue;
+            }
+            genericEnums[mapKey] = false;
+            enumTypes[mapKey] = getOrCreateStructType(mapKey);
             for (size_t i = 0; i < info.enumEntries.size(); i++) {
-                auto& entry = info.enumEntries[i];
+                auto entry = info.enumEntries[i];
+                for (std::string& tag : entry.tags) {
+                    tag = resolveTypeName(substituteGenerics(tag), false);
+                }
                 std::string fullName = mapKey + "." + entry.memberName;
-                enumMemberInfo[fullName] = entry.value;
+                enumMemberInfo[fullName] = std::make_pair(entry.value, entry.tags);
             }
         }
     }
@@ -1200,7 +1272,7 @@ void LLVMCompiler::createUserTypes() {
                     std::unordered_set<std::string> parentFields;
                     for (const auto& field : parentInfo.classFields) { parentFields.insert(field.name); }
                     for (const auto& field : info.classFields) {
-                        if (!field.isStatic && parentFields.contains(field.name)) {
+                        if (!field.isStatic && field.name != "__vptr" && field.name != "__vptr" && parentFields.contains(field.name)) {
                             cg_error(info.pos, "Parent field " + field.name + " redeclared in child class.", "QC-CS02");
                         }
                     }
@@ -1217,6 +1289,9 @@ void LLVMCompiler::createUserTypes() {
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Class) { generateClass(mapKey, info); }
+    }
+    for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::Enum) { generateEnum(mapKey, info); }
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Union) {
@@ -1472,79 +1547,11 @@ void LLVMCompiler::cg_error(const Position& pos, const std::string& msg, std::st
 void LLVMCompiler::cg_warn(const Position& pos, const std::string& msg, std::string code) {
     errors.emplace_back(msg, pos, true, code);
 }
-llvm::Value* LLVMCompiler::createJaggedArray(AnyNode& literalNode, int elemTypeCode, int depth) {
-    auto arrLit = std::get_if<ArrayLiteralNode*>(&literalNode);
-    if (!arrLit) return nullptr;
-    if (depth == 0) {
-        int rowSize = (*arrLit)->elements.size();
-
-        llvm::Function* createRowFn = module->getFunction("qc_create_leaf_row");
-        if (!createRowFn) {
-            llvm::Type* voidPtrTy = llvm::PointerType::get(context, 0);
-            llvm::FunctionType* fnTy = llvm::FunctionType::get(voidPtrTy, {builder->getInt32Ty(), builder->getInt32Ty()}, false);
-            createRowFn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, "qc_create_leaf_row", module);
-        }
-
-        llvm::Value* row = builder->CreateCall(createRowFn, {builder->getInt32(rowSize), builder->getInt32(elemTypeCode)}, "leaf_row");
-
-        llvm::Function* setLeafFn = module->getFunction("qc_set_leaf_element");
-        if (!setLeafFn) {
-            llvm::Type* voidPtrTy = llvm::PointerType::get(context, 0);
-            llvm::FunctionType* fnTy = llvm::FunctionType::get(builder->getVoidTy(),
-                                                               {voidPtrTy, builder->getInt32Ty(), voidPtrTy, builder->getInt32Ty()}, false);
-            setLeafFn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, "qc_set_leaf_element", module);
-        }
-
-        for (size_t j = 0; j < (*arrLit)->elements.size(); j++) {
-            llvm::Value* elemVal = emitExpr((*arrLit)->elements[j]);
-            if (!elemVal) continue;
-
-            llvm::AllocaInst* tempAlloc = createEntryAlloca("temp_elem", elemVal->getType());
-            builder->CreateStore(elemVal, tempAlloc);
-
-            llvm::Value* elemPtr = builder->CreateBitCast(tempAlloc, llvm::PointerType::get(context, 0));
-
-            builder->CreateCall(setLeafFn, {row, builder->getInt32(j), elemPtr, builder->getInt32(elemTypeCode)});
-        }
-
-        return row;
-    }
-    llvm::Function* createFn = module->getFunction("qc_create_jagged_array");
-    if (!createFn) {
-        llvm::Type* jaggedPtrTy = llvm::PointerType::get(context, 0);
-        llvm::FunctionType* fnTy = llvm::FunctionType::get(jaggedPtrTy, {builder->getInt32Ty(), builder->getInt32Ty(), builder->getInt32Ty()}, false);
-        createFn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, "qc_create_jagged_array", module);
-    }
-
-    int count = (*arrLit)->elements.size();
-    llvm::Value* jaggedArr = builder->CreateCall(createFn, {builder->getInt32(count), builder->getInt32(elemTypeCode), builder->getInt32(depth)},
-                                                 "jagged_arr");
-
-    llvm::Function* setFn = module->getFunction("qc_set_jagged_element");
-    if (!setFn) {
-        llvm::Type* voidPtrTy = llvm::PointerType::get(context, 0);
-        llvm::FunctionType* fnTy = llvm::FunctionType::get(builder->getVoidTy(), {voidPtrTy, builder->getInt32Ty(), voidPtrTy, builder->getInt32Ty()},
-                                                           false);
-        setFn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, "qc_set_jagged_element", module);
-    }
-
-    for (size_t i = 0; i < (*arrLit)->elements.size(); i++) {
-        if (auto subLit = std::get_if<ArrayLiteralNode*>(&(*arrLit)->elements[i])) {
-            llvm::Value* subArr = createJaggedArray((*arrLit)->elements[i], elemTypeCode, depth - 1);
-            int subSize = (*subLit)->elements.size();
-
-            builder->CreateCall(setFn, {jaggedArr, builder->getInt32(i), subArr, builder->getInt32(subSize)});
-        }
-    }
-
-    return jaggedArr;
-}
 LLVMCompiler::LLVMCompiler(std::unordered_map<std::string, UserTypeInfo>& userTys, llvm::Module* mod, llvm::LLVMContext& ctx, bool is_main)
     : userTypes(userTys), context(ctx) {
     module = (mod == nullptr ? new llvm::Module("qc_module", context) : mod);
     builder = new llvm::IRBuilder<>(context);
     pointerSizeBits = module->getDataLayout().getPointerSizeInBits();
-    jaggedArraysStack.push_back({});
     arrayTypeStringsStack.push_back({});
     arrayLengthsStack.push_back({});
     this->is_main = is_main;
@@ -3961,7 +3968,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         return nullptr;
     }
     if (userTypeIt != userTypes.end() && userTypeIt->second.kind == UserTypeKind::Enum) {
-        llvm::Type* enumTy = enumTypes[qcType];
+        llvm::Type* enumTy = genericiseOrFindEnum(resolveTypeName(saved_qc_type, false));
+        if (!enumTy) return nullptr;
         llvm::Value* enumAlloc = getVarAddress(name);
         if (!enumAlloc) enumAlloc = createEntryAlloca(name, enumTy);
         llvm::Value* rhs = emitExpr((*va)->value_node);
@@ -3979,7 +3987,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         }
         std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
         locals[fullName] = llvm::cast<llvm::AllocaInst>(enumAlloc);
-        varTypes[fullName] = qcType;
+        varTypes[fullName] = fixMangling(resolveTypeName(saved_qc_type, false));
         volatileVars[fullName] = isVolatile;
         return nullptr;
     }
@@ -4852,6 +4860,8 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
                     generateStruct(resolved, userTypes.at(resolved));
                 } else if (classTypes.count(resolved) && classTypes.at(resolved)->isOpaque()) {
                     generateClass(resolved, userTypes.at(resolved));
+                } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
+                    generateEnum(resolved, userTypes.at(resolved));
                 }
             }
             llvm::Type* ty = llvmTypeFor(val->tok.value);
@@ -4867,6 +4877,8 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
                     generateStruct(resolved, userTypes.at(resolved));
                 } else if (classTypes.count(resolved) && classTypes.at(resolved)->isOpaque()) {
                     generateClass(resolved, userTypes.at(resolved));
+                } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
+                    generateEnum(resolved, userTypes.at(resolved));
                 }
             }
             llvm::Type* ty = llvmTypeFor(t->tok.value);
@@ -7149,52 +7161,6 @@ llvm::Value* LLVMCompiler::emitArrAcc(ArrayAccessNode* arrAcc) {
     }
     if (auto varAcc = safe_get<VarAccessNode>(arrAcc->base)) {
         std::string name = varAcc->var_name_tok.value;
-        if (hasJaggedArray(name)) {
-            auto jagIt = findJaggedArray(name);
-            llvm::Value* alloc = getVarAddress(name);
-            if (!alloc) {
-                cg_error(get_pos(varAcc), "unknown jagged array: " + name, "QC-S241");
-                return nullptr;
-            }
-
-            llvm::Value* jaggedPtr = builder->CreateLoad(llvm::PointerType::get(context, 0), alloc, "jagged_ptr");
-            llvm::ArrayType* indicesArrTy = llvm::ArrayType::get(builder->getInt32Ty(), arrAcc->indices.size());
-            llvm::AllocaInst* indicesAlloc = createEntryAlloca("indices_arr", indicesArrTy);
-
-            for (size_t i = 0; i < arrAcc->indices.size(); i++) {
-                llvm::Value* indexVal = emitExpr(arrAcc->indices[i]);
-                if (!indexVal) return nullptr;
-
-                std::vector<llvm::Value*> indices = {builder->getInt32(0), builder->getInt32(i)};
-                llvm::Value* idxPtr = builder->CreateInBoundsGEP(indicesArrTy, indicesAlloc, indices);
-                builder->CreateStore(indexVal, idxPtr, resolveVolatileVar(name));
-            }
-            llvm::Function* getFn = module->getFunction("qc_jagged_array_get");
-            if (!getFn) {
-                llvm::Type* voidPtrTy = llvm::PointerType::get(context, 0);
-                llvm::Type* intPtrTy = llvm::PointerType::get(context, 0);
-                llvm::FunctionType* fnTy = llvm::FunctionType::get(voidPtrTy, {voidPtrTy, intPtrTy, builder->getInt32Ty()}, false);
-                getFn = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage, "qc_jagged_array_get", module);
-            }
-
-            std::vector<llvm::Value*> idxIndices = {builder->getInt32(0), builder->getInt32(0)};
-            llvm::Value* indicesPtr = builder->CreateInBoundsGEP(indicesArrTy, indicesAlloc, idxIndices);
-
-            llvm::Value* elemPtr = builder->CreateCall(getFn, {jaggedPtr, indicesPtr, builder->getInt32(arrAcc->indices.size())}, "jagged_elem_ptr");
-            int elemTypeCode = jagIt->second.first;
-            llvm::Type* elemTy = nullptr;
-            switch (elemTypeCode) {
-            case 0: elemTy = builder->getInt32Ty(); break;
-            case 1: elemTy = builder->getFloatTy(); break;
-            case 2: elemTy = builder->getDoubleTy(); break;
-            case 3: elemTy = builder->getInt8Ty(); break;
-            case 4: elemTy = builder->getInt1Ty(); break;
-            case 5: elemTy = builder->getIntNTy(2); break;
-            case 6: elemTy = llvm::PointerType::get(context, 0); break;
-            }
-            llvm::Value* typedPtr = builder->CreateBitCast(elemPtr, llvm::PointerType::get(context, 0));
-            return builder->CreateLoad(elemTy, typedPtr, resolveVolatileVar(name), "jagged_elem");
-        }
         llvm::Value* alloc = getVarAddress(name);
         if (!alloc) {
             cg_error(get_pos(varAcc), "unknown array: " + name, "QC-S242");
@@ -7268,15 +7234,21 @@ llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
     bool isEnum = false;
     if (auto varAccess = std::get_if<VarAccessNode*>(&*(*propAccess)->base)) {
         baseName = (*varAccess)->var_name_tok.value;
-        std::string resolved = resolveTypeName(baseName);
+        std::string resolved = resolveTypeName(baseName, false);
+        llvmTypeFor(resolved);
         auto enumIt = enumTypes.find(resolved);
         if (enumIt != enumTypes.end()) {
             isEnum = true;
             std::string fullName = resolved + "." + propName;
             auto memberIt = enumMemberInfo.find(fullName);
             if (memberIt != enumMemberInfo.end()) {
-                std::string value = memberIt->second;
-                return llvm::ConstantInt::get(enumIt->second, std::stoull(value), userTypes.at(baseTypeName(resolved)).enumType.contains("int"));
+                std::pair<std::string, std::vector<std::string>> values = memberIt->second;
+                llvm::Value* enumVal = llvm::ConstantAggregateZero::get(enumIt->second);
+                enumVal = builder->CreateInsertValue(enumVal,
+                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0), std::stoull(values.first),
+                                                                            userTypes.at(baseTypeName(resolved)).enumType.contains("int")),
+                                                     {0});
+                return enumVal;
             } else {
                 cg_error(get_pos(*varAccess), "enum " + baseName + " has no member " + propName, "QC-S244");
                 std::vector<std::pair<int, std::string>> suggestions;
@@ -7500,6 +7472,62 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
     std::string targetClass = "";
     if (auto varAccess = std::get_if<VarAccessNode*>(&(*call)->base)) {
         std::string varName = (*varAccess)->var_name_tok.value;
+        std::string resolved = resolveTypeName(varName, false);
+        llvmTypeFor(resolved);
+        auto enumIt = enumTypes.find(resolved);
+        if (enumIt != enumTypes.end()) {
+            std::string fullName = resolved + "." + methodName;
+            auto memberIt = enumMemberInfo.find(fullName);
+            if (memberIt != enumMemberInfo.end()) {
+                std::pair<std::string, std::vector<std::string>> values = memberIt->second;
+                llvm::Value* enumVal = llvm::ConstantAggregateZero::get(enumIt->second);
+                enumVal = builder->CreateInsertValue(enumVal,
+                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0), std::stoull(values.first),
+                                                                            userTypes.at(baseTypeName(resolved)).enumType.contains("int")),
+                                                     {0});
+                if ((*call)->args.size() != values.second.size()) {
+                    cg_error(get_pos(*varAccess), "incorrect number of tag values for enum member " + fullName, "QC-EM03");
+                    cg_note(get_pos(*varAccess),
+                            "expected " + std::to_string(values.second.size()) + ", got " + std::to_string((*call)->args.size()));
+                    return nullptr;
+                }
+                for (unsigned int i = 0; i < values.second.size(); i++) {
+                    AnyNode argNode = (*call)->args[i];
+                    if (resolveTypeName(getExpressionType(argNode), false) != resolveTypeName(values.second[i], false)) {
+                        cg_error(get_pos(argNode),
+                                 "type mismatch: expected enum tag type to be " + values.second[i] + ", got " + getExpressionType(argNode));
+                        return nullptr;
+                    }
+                    llvm::Value* arg = emitExpr(argNode);
+                    llvm::Type* storageTy = enumIt->second->getElementType(i + 1);
+                    auto* storageArrTy = llvm::cast<llvm::ArrayType>(storageTy);
+                    llvm::Value* storage = builder->CreateAlloca(storageTy, nullptr, "enum_payload");
+                    builder->CreateStore(llvm::ConstantAggregateZero::get(storageArrTy), storage);
+                    llvm::Value* src = builder->CreateAlloca(arg->getType(), nullptr, "enum_arg");
+                    builder->CreateStore(arg, src);
+                    builder->CreateMemCpyInline(
+                        storage, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
+                        llvm::ConstantInt::get(builder->getInt64Ty(), module->getDataLayout().getTypeStoreSize(arg->getType())));
+                    llvm::Value* payload = builder->CreateLoad(storageTy, storage, "enum_payload");
+                    enumVal = builder->CreateInsertValue(enumVal, payload, {i + 1});
+                }
+                return enumVal;
+            } else {
+                cg_error(get_pos(*varAccess), "enum " + resolved + " has no member " + methodName, "QC-S244");
+                std::vector<std::pair<int, std::string>> suggestions;
+                for (auto& entry : userTypes[resolved].enumEntries) {
+                    int distance = levenshteinDistance(methodName, entry.memberName);
+                    if (distance <= 2) { suggestions.push_back({distance, entry.memberName}); }
+                }
+                std::sort(suggestions.begin(), suggestions.end());
+                if (!suggestions.empty()) {
+                    std::string note = "similar entries:";
+                    for (auto& [distance, name] : suggestions) { note += "\n  - `" + name + "`"; }
+                    cg_note(get_pos(*varAccess), note);
+                }
+                return nullptr;
+            }
+        }
         if (varName == "this") {
             thisPtr = currentThis;
             targetClass = currentClassName;
@@ -8597,11 +8625,9 @@ llvm::Value* LLVMCompiler::copySpreadToArray(llvm::Value* collVal, AnyNode& coll
                                              llvm::Type* elemTy, int elemTypeCode) {
     llvm::Value* lengthVal = getCollectionLength(collVal, collExpr);
     if (!lengthVal) return startIndex;
-    bool isJagged = false;
     if (auto varAccess = std::get_if<VarAccessNode*>(&collExpr)) {
         std::string rawName = (*varAccess)->var_name_tok.value;
         std::string resolvedName = resolveMetadataName(rawName);
-        if (hasJaggedArray(resolvedName)) { isJagged = true; }
     }
 
     llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(context, "copy_loop", currentFunction);
@@ -8871,7 +8897,6 @@ llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
                     std::string base = t.substr(0, t.find("[]"));
                     int baseTypeCode = getTypeCode(base);
                     if (alloca->getType()->isArrayTy()) { arrayLengths[param.name.value] = alloca->getType()->getArrayNumElements(); }
-                    jaggedArrays[param.name.value] = {baseTypeCode, dims};
                     arrayTypeStrings[param.name.value] = base;
                     varTypes[param.name.value] = param.type.value;
                 } else {
@@ -8930,6 +8955,1388 @@ std::string LLVMCompiler::lambdaName() {
     static int counter = 0;
     return "__lambda_" + std::to_string(counter++);
 }
+void LLVMCompiler::emitMultiRet(MultiReturnNode* mret) {
+    llvm::Type* retTy = currentFunction->getReturnType();
+    if (!retTy->isStructTy()) {
+        cg_error(mret->pos, "multi-return in non-multi-return function", "QC-S262");
+        return;
+    }
+    emitDefersDownTo(0);
+    llvm::Value* agg = llvm::ConstantAggregateZero::get(retTy);
+    llvm::StructType* retStructTy = llvm::cast<llvm::StructType>(retTy);
+    for (size_t i = 0; i < mret->values.size(); ++i) {
+        llvm::Value* val = nullptr;
+        if (auto varAccess = std::get_if<VarAccessNode*>(&mret->values[i])) {
+            std::string name = (*varAccess)->var_name_tok.value;
+            llvm::Value* alloc = getVarAddress(name);
+            if (alloc) {
+                llvm::Type* allocatedTy = getPointeeType(name);
+                if (allocatedTy->isArrayTy()) { val = builder->CreateBitCast(alloc, llvm::PointerType::get(context, 0), "array_ret_ptr"); }
+            }
+        }
+        if (auto call = std::get_if<CallNode*>(&mret->values[i])) {
+            if (auto varAccess = std::get_if<VarAccessNode*>(&(*call)->node_to_call)) {
+                std::string funcName = (*varAccess)->var_name_tok.value;
+
+                if (classTypes.find(funcName) != classTypes.end()) {
+                    llvm::StructType* classTy = genericiseOrFindClass(funcName);
+
+                    std::vector<llvm::Value*> ctorArgs;
+                    for (auto& argNode : (*call)->arg_nodes) {
+                        llvm::Value* arg = emitExpr(argNode);
+                        if (!arg) return;
+                        ctorArgs.push_back(arg);
+                    }
+
+                    llvm::Function* ctor = findMethodOverload(funcName, funcName, ctorArgs);
+
+                    if (ctor) {
+                        llvm::AllocaInst* retVal = createEntryAlloca("mret_val_" + std::to_string(i), classTy);
+
+                        std::vector<llvm::Value*> allArgs = {retVal};
+                        allArgs.insert(allArgs.end(), ctorArgs.begin(), ctorArgs.end());
+                        if (insideTry()) {
+                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
+                            llvm::InvokeInst* invoke = builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
+                            builder->SetInsertPoint(contBB);
+                        } else {
+                            builder->CreateCall(ctor, allArgs);
+                        }
+                        val = builder->CreateLoad(classTy, retVal);
+                    }
+                }
+            }
+        }
+        if (auto arrayLit = std::get_if<ArrayLiteralNode*>(&mret->values[i])) {
+            val = emitExpr(mret->values[i]);
+            if (!val) return;
+
+            llvm::Type* srcTy = val->getType();
+            llvm::Type* destTy = retStructTy->getElementType(i);
+            if (destTy->isPointerTy() && srcTy->isArrayTy()) {
+                llvm::ArrayType* arrayType = llvm::cast<llvm::ArrayType>(srcTy);
+                llvm::Type* iTy = builder->getIntNTy(getPtrSize());
+                llvm::Value* size = llvm::ConstantInt::get(iTy, module->getDataLayout().getTypeAllocSize(arrayType));
+
+                llvm::Function* mallocFn = module->getFunction("qc_malloc");
+                if (!mallocFn) {
+                    llvm::FunctionType* mallocTy = llvm::FunctionType::get(builder->getPtrTy(), {iTy}, false);
+                    mallocFn = llvm::Function::Create(mallocTy, llvm::Function::InternalLinkage, "qc_malloc", module);
+                }
+
+                llvm::Value* heapPtr = builder->CreateCall(mallocFn, {size});
+                llvm::Value* typedPtr = builder->CreateBitCast(heapPtr, llvm::PointerType::get(context, 0));
+
+                builder->CreateStore(val, typedPtr);
+
+                val = builder->CreateBitCast(typedPtr, destTy);
+            }
+        }
+        if (this->returnsRef(i)) { val = this->emitLValue(mret->values[i]); }
+        if (!val) { val = emitExpr(mret->values[i]); }
+        if (!val) return;
+        llvm::Type* srcTy = val->getType();
+        llvm::Type* destTy = retStructTy->getElementType(i);
+        if (isUnionType(srcTy) && !isUnionType(destTy)) {
+            llvm::Value* dataPtr = builder->CreateExtractValue(val, 1, "union_data");
+            if (destTy->isPointerTy()) {
+                val = builder->CreateBitCast(dataPtr, destTy);
+            } else {
+                llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
+                val = builder->CreateLoad(destTy, typedPtr);
+            }
+            srcTy = destTy;
+            break;
+        }
+        if (!isUnionType(srcTy)) {
+            std::string unionName;
+            if (isUnionType(destTy, &unionName)) {
+                int tag = findUnionVariantTag(unionName, mret->values[i], val);
+                if (tag == -1) {
+                    cg_error(mret->pos, "return value doesn't match union variant", "QC-S263");
+                    return;
+                }
+
+                llvm::Value* unionVal = llvm::ConstantAggregateZero::get(destTy);
+                unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
+                llvm::Value* dataPtr = storeAndGetPointer(val);
+                val = builder->CreateInsertValue(unionVal, dataPtr, 1);
+
+                srcTy = destTy;
+                break;
+            }
+        }
+        agg = builder->CreateInsertValue(agg, val, i);
+    }
+
+    builder->CreateRet(agg);
+    return;
+}
+void LLVMCompiler::emitRet(ReturnNode* ret) {
+    emitDefersDownTo(0);
+    if (auto varAccess = std::get_if<VarAccessNode*>(&ret->value)) {
+        std::string name = (*varAccess)->var_name_tok.value;
+        llvm::Value* alloc = getVarAddress(name);
+        if (alloc) {
+            llvm::Type* allocatedTy = getPointeeType(name);
+            if (allocatedTy && allocatedTy->isArrayTy()) {
+                llvm::Value* arrayPtr = builder->CreateBitCast(alloc, llvm::PointerType::get(context, 0), "array_ret_ptr");
+                builder->CreateRet(arrayPtr);
+                return;
+            }
+        }
+    }
+    if (auto call = std::get_if<CallNode*>(&ret->value)) {
+        if (auto varAccess = std::get_if<VarAccessNode*>(&(*call)->node_to_call)) {
+            std::string funcName = (*varAccess)->var_name_tok.value;
+
+            if (classTypes.find(funcName) != classTypes.end()) {
+                llvm::StructType* classTy = genericiseOrFindClass(funcName);
+                std::vector<llvm::Value*> ctorArgs;
+                for (auto& argNode : (*call)->arg_nodes) {
+                    llvm::Value* arg = emitExpr(argNode);
+                    if (!arg) return;
+                    ctorArgs.push_back(arg);
+                }
+
+                std::string ctorName = funcName;
+                llvm::Function* ctor = findMethodOverload(funcName, ctorName, ctorArgs);
+
+                if (ctor) {
+                    llvm::AllocaInst* retVal = createEntryAlloca("ret_val", classTy);
+
+                    std::vector<llvm::Value*> allArgs = {retVal};
+                    allArgs.insert(allArgs.end(), ctorArgs.begin(), ctorArgs.end());
+                    if (insideTry()) {
+                        auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
+                        llvm::InvokeInst* invoke = builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
+                        builder->SetInsertPoint(contBB);
+                    } else {
+                        builder->CreateCall(ctor, allArgs);
+                    }
+                    llvm::Value* result = llvm::ConstantAggregateZero::get(classTy);
+                    for (unsigned i = 0; i < classTy->getNumElements(); i++) {
+                        std::vector<llvm::Value*> indices = {builder->getInt32(0), builder->getInt32(i)};
+                        llvm::Value* fieldPtr = builder->CreateInBoundsGEP(classTy, retVal, indices);
+                        llvm::Type* fieldTy = classTy->getElementType(i);
+                        llvm::Value* fieldVal = builder->CreateLoad(fieldTy, fieldPtr);
+
+                        result = builder->CreateInsertValue(result, fieldVal, i);
+                    }
+
+                    builder->CreateRet(result);
+                    return;
+                }
+            }
+        }
+    }
+    llvm::Value* v = nullptr;
+    llvm::Type* destTy = currentFunction->getReturnType();
+    if (this->returnsRef()) { v = this->emitLValue(ret->value); }
+    if (!v) { v = emitExpr(ret->value); }
+
+    if (!v) {
+        if (currentFunction->getReturnType()->isVoidTy()) {
+            builder->CreateRetVoid();
+        } else {
+            cg_error(ret->pos, "return without value in non-void function", "QC-S265");
+        }
+        return;
+    }
+    llvm::Type* srcTy = v->getType();
+    destTy = currentFunction->getReturnType();
+    if (auto arrayLit = std::get_if<ArrayLiteralNode*>(&ret->value)) {
+        if (destTy->isPointerTy() && srcTy->isArrayTy()) {
+            llvm::ArrayType* arrayType = llvm::cast<llvm::ArrayType>(srcTy);
+            llvm::Type* iTy = builder->getIntNTy(getPtrSize());
+            llvm::Value* size = llvm::ConstantInt::get(iTy, module->getDataLayout().getTypeAllocSize(arrayType));
+            llvm::Function* mallocFn = module->getFunction("qc_malloc");
+            if (!mallocFn) {
+                llvm::FunctionType* mallocTy = llvm::FunctionType::get(builder->getPtrTy(), {iTy}, false);
+                mallocFn = llvm::Function::Create(mallocTy, llvm::Function::InternalLinkage, "qc_malloc", module);
+            }
+
+            llvm::Value* heapPtr = builder->CreateCall(mallocFn, {size});
+            llvm::Value* typedPtr = builder->CreateBitCast(heapPtr, llvm::PointerType::get(context, 0));
+            builder->CreateStore(v, typedPtr);
+            llvm::Value* retPtr = builder->CreateBitCast(typedPtr, destTy);
+
+            builder->CreateRet(retPtr);
+            return;
+        }
+    }
+    for (auto& [unionName, unionTy] : unionTypes) {
+        if (srcTy == unionTy && !isUnionType(destTy)) {
+            llvm::Value* dataPtr = builder->CreateExtractValue(v, 1, "union_data");
+            if (destTy->isPointerTy()) {
+                v = builder->CreateBitCast(dataPtr, destTy);
+            } else {
+                llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
+                v = builder->CreateLoad(destTy, typedPtr);
+            }
+            srcTy = destTy;
+            break;
+        }
+        if (!isUnionType(srcTy) && destTy == unionTy) {
+            int tag = findUnionVariantTag(unionName, ret->value, v);
+            if (tag == -1) {
+                cg_error(ret->pos, "return value doesn't match union variant", "QC-S263");
+                return;
+            }
+
+            llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
+            unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
+            llvm::Value* dataPtr = storeAndGetPointer(v);
+            unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
+
+            builder->CreateRet(unionVal);
+            return;
+        }
+    }
+    builder->CreateRet(v);
+    return;
+}
+void LLVMCompiler::emitMultiVar(MultiVarDeclNode* mv) {
+    llvm::Value* callVal = emitExpr(mv->value);
+    if (!callVal) {
+        cg_error(mv->var_names[0].pos, "failed to compile multi-var initializer", "QC-S266");
+        return;
+    }
+
+    llvm::Type* retTy = callVal->getType();
+    if (!retTy->isStructTy() || retTy->getStructNumElements() != mv->var_names.size()) {
+        cg_error(mv->var_names[0].pos, "multi-return arity/type mismatch", "QC-T055");
+        return;
+    }
+
+    for (size_t i = 0; i < mv->var_names.size(); ++i) {
+        llvm::Value* field = builder->CreateExtractValue(callVal, i);
+        std::string name = mv->var_names[i].value;
+        std::string typeStr = mv->type_toks[i].value;
+        if (typeStr.find("[]") != std::string::npos) {
+            std::string baseType = typeStr;
+            while (baseType.ends_with("[]")) { baseType = baseType.substr(0, baseType.length() - 2); }
+            arrayTypeStrings[name] = baseType;
+        }
+        llvm::Type* srcTy = field->getType();
+        llvm::Type* destTy = llvmTypeFor(typeStr);
+        for (auto& [unionName, unionTy] : unionTypes) {
+            if (srcTy == unionTy && !isUnionType(destTy)) {
+                llvm::Value* dataPtr = builder->CreateExtractValue(field, 1, "union_data");
+                if (destTy->isPointerTy()) {
+                    field = builder->CreateBitCast(dataPtr, destTy);
+                } else {
+                    llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
+                    field = builder->CreateLoad(destTy, typedPtr);
+                }
+                srcTy = destTy;
+                break;
+            }
+        }
+        llvm::AllocaInst* alloc = createEntryAlloca(name, destTy);
+        builder->CreateStore(field, alloc);
+        std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
+        locals[fullName] = alloc;
+    }
+
+    return;
+}
+void LLVMCompiler::emitIf(IfNode* if_node) {
+    size_t outerDepth = defersStack.size();
+    enterScope();
+    if (if_node->init.has_value()) { emitStmt(if_node->init.value()); }
+    llvm::Value* cond = emitExpr(if_node->condition);
+    if (!cond) {
+        exitScope();
+        return;
+    }
+    llvm::ConstantInt* comptimeValue = nullptr;
+    if (if_node->is_comptime) {
+        comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(cond);
+        if (!comptimeValue) {
+            cg_error(get_pos(if_node->condition), "comptime if condition must be evaluatable at compile time.", "QC-S267");
+            return;
+        }
+        llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(context, "ifcont", currentFunction);
+        enterScope();
+        if (comptimeValue->getZExtValue() != 0) {
+            for (auto& stmt : if_node->then_branch->statements) { emitStmt(stmt); }
+        } else {
+            bool emitedBranch = false;
+            for (size_t i = 0; i < if_node->elif_branches.size(); i++) {
+                llvm::Value* elifCond = emitExpr(if_node->elif_branches[i].first);
+                comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(elifCond);
+                if (!comptimeValue) {
+                    cg_error(get_pos(if_node->elif_branches[i].first),
+                             "all conditions including else ifs in a comptime if must be evaluatable at compile time.", "QC-S268");
+                    return;
+                }
+                if (comptimeValue->getZExtValue() != 0) {
+                    for (auto& stmt : if_node->elif_branches[i].second->statements) { emitStmt(stmt); }
+                    if (!builder->GetInsertBlock()->getTerminator()) {
+                        emitDefersDownTo(outerDepth + 2);
+                        builder->CreateBr(mergeBB);
+                    }
+                    emitedBranch = true;
+                    break;
+                }
+            }
+            if (!emitedBranch && if_node->else_branch) {
+                for (auto& stmt : if_node->else_branch->statements) { emitStmt(stmt); }
+                if (!builder->GetInsertBlock()->getTerminator()) {
+                    emitDefersDownTo(outerDepth + 2);
+                    builder->CreateBr(mergeBB);
+                }
+            }
+        }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 2);
+            builder->CreateBr(mergeBB);
+        }
+        exitScope();
+        builder->SetInsertPoint(mergeBB);
+    } else {
+        comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(cond);
+        if (comptimeValue) {
+            warn("constant-condition", get_pos(if_node),
+                 std::string("condition to if is compile-time, always will be ") + (comptimeValue->getZExtValue() == 0 ? "false" : "true"),
+                 "QC-W015");
+        }
+        cond = normalizeValue(cond, if_node->condition);
+        cond = toTruthiness(cond, get_pos(if_node->condition));
+        if (!cond) {
+            exitScope();
+            return;
+        }
+        llvm::BasicBlock* thenBB = llvm::BasicBlock::Create(context, "then", currentFunction);
+        llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(context, "ifcont", currentFunction);
+        std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> elifBlocks;
+        for (size_t i = 0; i < if_node->elif_branches.size(); i++) {
+            llvm::BasicBlock* elifCondBB = llvm::BasicBlock::Create(context, "elif.cond", currentFunction);
+            llvm::BasicBlock* elifBodyBB = llvm::BasicBlock::Create(context, "elif.body", currentFunction);
+            elifBlocks.push_back({elifCondBB, elifBodyBB});
+        }
+
+        llvm::BasicBlock* elseBB = nullptr;
+        if (if_node->else_branch) { elseBB = llvm::BasicBlock::Create(context, "else", currentFunction); }
+        llvm::BasicBlock* nextBB = elifBlocks.empty() ? (elseBB ? elseBB : mergeBB) : elifBlocks[0].first;
+        builder->CreateCondBr(cond, thenBB, nextBB);
+        builder->SetInsertPoint(thenBB);
+        enterScope();
+        for (auto& stmt : if_node->then_branch->statements) { emitStmt(stmt); }
+        if (if_node->then_branch->statements.empty()) { warn("empty-body", get_pos(if_node), "if body is empty", "QC-W16"); }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 2);
+            builder->CreateBr(mergeBB);
+        }
+        exitScope();
+        for (size_t i = 0; i < elifBlocks.size(); i++) {
+            builder->SetInsertPoint(elifBlocks[i].first);
+            llvm::Value* elifCond = emitExpr(if_node->elif_branches[i].first);
+            elifCond = normalizeValue(elifCond, if_node->elif_branches[i].first);
+            elifCond = toTruthiness(elifCond, get_pos(if_node->elif_branches[i].first));
+            comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(elifCond);
+            if (comptimeValue) {
+                warn("constant-condition", get_pos(if_node),
+                     std::string("condition to else if is compile-time, always will be ") + (comptimeValue->getZExtValue() == 0 ? "false" : "true"),
+                     "QC-W015");
+            }
+            llvm::BasicBlock* nextElifBB = (i + 1 < elifBlocks.size()) ? elifBlocks[i + 1].first : (elseBB ? elseBB : mergeBB);
+            builder->CreateCondBr(elifCond, elifBlocks[i].second, nextElifBB);
+
+            builder->SetInsertPoint(elifBlocks[i].second);
+            enterScope();
+            for (auto& stmt : if_node->elif_branches[i].second->statements) { emitStmt(stmt); }
+            if (if_node->elif_branches[i].second->statements.empty()) { warn("empty-body", get_pos(if_node), "else if body is empty", "QC-W16"); }
+            if (!builder->GetInsertBlock()->getTerminator()) {
+                emitDefersDownTo(outerDepth + 2);
+                builder->CreateBr(mergeBB);
+            }
+            exitScope();
+        }
+        if (elseBB) {
+            builder->SetInsertPoint(elseBB);
+            enterScope();
+            for (auto& stmt : if_node->else_branch->statements) { emitStmt(stmt); }
+            if (if_node->else_branch->statements.empty()) { warn("empty-body", get_pos(if_node), "else body is empty", "QC-W16"); }
+            if (!builder->GetInsertBlock()->getTerminator()) {
+                emitDefersDownTo(outerDepth + 2);
+                builder->CreateBr(mergeBB);
+            }
+            exitScope();
+        }
+        exitScope();
+        builder->SetInsertPoint(mergeBB);
+    }
+}
+void LLVMCompiler::emitWhile(WhileNode* while_node) {
+    size_t outerDepth = defersStack.size();
+    loopStack.push_back(outerDepth);
+    enterScope();
+    llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "while.cond", currentFunction);
+    llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "while.body", currentFunction);
+    llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "while.end", currentFunction);
+    llvm::BasicBlock* oldBreakBB = currentBreakBB;
+    llvm::BasicBlock* oldContinueBB = currentContinueBB;
+    currentBreakBB = endBB;
+    currentContinueBB = condBB;
+    if (while_node->is_dowhile) {
+        builder->CreateBr(bodyBB);
+    } else {
+        builder->CreateBr(condBB);
+    }
+    builder->SetInsertPoint(condBB);
+    llvm::Value* cond = emitExpr(while_node->condition);
+    if (!cond) return;
+    cond = normalizeValue(cond, while_node->condition);
+    cond = toTruthiness(cond, get_pos(while_node->condition));
+    if (!cond) return;
+    builder->CreateCondBr(cond, bodyBB, endBB);
+    builder->SetInsertPoint(bodyBB);
+    for (auto& stmt : while_node->body->statements) { emitStmt(stmt); }
+    if (while_node->body->statements.empty()) { warn("empty-body", get_pos(while_node), "while body is empty", "QC-W16"); }
+
+    if (!builder->GetInsertBlock()->getTerminator()) {
+        emitDefersDownTo(outerDepth + 1);
+        builder->CreateBr(condBB);
+    }
+    currentBreakBB = oldBreakBB;
+    currentContinueBB = oldContinueBB;
+    exitScope();
+    loopStack.pop_back();
+    builder->SetInsertPoint(endBB);
+}
+void LLVMCompiler::emitFor(ForNode* for_node) {
+    size_t outerDepth = defersStack.size();
+    loopStack.push_back(outerDepth);
+    enterScope();
+    if (for_node->init.has_value()) { emitStmt(for_node->init.value()); }
+    llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "for.cond", currentFunction);
+    llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "for.body", currentFunction);
+    llvm::BasicBlock* incBB = llvm::BasicBlock::Create(context, "for.inc", currentFunction);
+    llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "for.end", currentFunction);
+    llvm::BasicBlock* oldBreakBB = currentBreakBB;
+    llvm::BasicBlock* oldContinueBB = currentContinueBB;
+    currentBreakBB = endBB;
+    currentContinueBB = incBB;
+    builder->CreateBr(condBB);
+    builder->SetInsertPoint(condBB);
+    llvm::Value* cond = emitExpr(for_node->condition);
+    if (!cond) return;
+    cond = normalizeValue(cond, for_node->condition);
+    cond = toTruthiness(cond, get_pos(for_node->condition));
+    if (!cond) return;
+    builder->CreateCondBr(cond, bodyBB, endBB);
+    builder->SetInsertPoint(bodyBB);
+    for (auto& stmt : for_node->body->statements) { emitStmt(stmt); }
+    if (!builder->GetInsertBlock()->getTerminator()) {
+        emitDefersDownTo(outerDepth + 1);
+        builder->CreateBr(incBB);
+    }
+    builder->SetInsertPoint(incBB);
+    if (for_node->update.has_value()) { emitStmt(for_node->update.value()); }
+    builder->CreateBr(condBB);
+    currentBreakBB = oldBreakBB;
+    currentContinueBB = oldContinueBB;
+    exitScope();
+    loopStack.pop_back();
+    builder->SetInsertPoint(endBB);
+}
+void LLVMCompiler::emitSwitch(SwitchNode* switch_node) {
+    size_t outerDepth = defersStack.size();
+    enterScope();
+    llvm::Value* switchVal = emitExpr(switch_node->value);
+    if (!switchVal) return;
+    switchVal = normalizeValue(switchVal, switch_node->value);
+    llvm::Type* switchTy = switchVal->getType();
+    bool canUseSwitch = switchTy->isIntegerTy();
+    for (auto& [unionName, unionTy] : unionTypes) {
+        if (switchTy == unionTy) {
+            canUseSwitch = false;
+            break;
+        }
+    }
+    llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "switch.end", currentFunction);
+    std::vector<llvm::BasicBlock*> sectionBlocks;
+    llvm::BasicBlock* defaultBB = nullptr;
+    for (auto& section : switch_node->sections) {
+        llvm::BasicBlock* bb = llvm::BasicBlock::Create(context, "switch.case", currentFunction);
+        sectionBlocks.push_back(bb);
+        if (section.is_default) { defaultBB = bb; }
+    }
+    if (!defaultBB) { defaultBB = endBB; }
+    if (canUseSwitch) {
+        llvm::SwitchInst* switchInst = builder->CreateSwitch(switchVal, defaultBB, switch_node->sections.size());
+        for (size_t i = 0; i < switch_node->sections.size(); i++) {
+            auto& section = switch_node->sections[i];
+            if (section.is_default) continue;
+            for (auto& caseLabel : section.cases) {
+                llvm::Value* caseVal = emitExpr(caseLabel.expr);
+                if (!caseVal || !(caseVal = normalizeValue(caseVal, caseLabel.expr), caseVal)) {
+                    cg_error(get_pos(caseLabel.expr), "Failed to emit switch case value", "QC-S278");
+                    return;
+                }
+                if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(caseVal)) { switchInst->addCase(constInt, sectionBlocks[i]); }
+            }
+        }
+    } else {
+        llvm::BasicBlock* currentCheckBB = builder->GetInsertBlock();
+        for (size_t i = 0; i < switch_node->sections.size(); i++) {
+            auto& section = switch_node->sections[i];
+            if (section.is_default) { continue; }
+            llvm::BasicBlock* nextCheckBB = (i + 1 < switch_node->sections.size())
+                                                ? llvm::BasicBlock::Create(context, "switch.check", currentFunction)
+                                                : defaultBB;
+            builder->SetInsertPoint(currentCheckBB);
+            llvm::Value* matches = nullptr;
+            for (auto& caseLabel : section.cases) {
+                llvm::Value* caseVal = emitExpr(caseLabel.expr);
+                llvm::Value* cmp = nullptr;
+                if (switchTy->isPointerTy() && caseVal->getType()->isPointerTy()) {
+                    llvm::Function* strcmp_fn = module->getFunction("qc_string_eq");
+                    cmp = builder->CreateCall(strcmp_fn, {switchVal, caseVal});
+                } else if (switchTy->isIntegerTy()) {
+                    cmp = builder->CreateICmpEQ(switchVal, caseVal);
+                } else if (switchTy->isFloatingPointTy()) {
+                    cmp = builder->CreateFCmpOEQ(switchVal, caseVal);
+                } else {
+                    llvm::Value* switchTag = builder->CreateExtractValue(switchVal, 0);
+                    llvm::Value* caseTag = builder->CreateExtractValue(caseVal, 0);
+                    llvm::Value* tagMatch = builder->CreateICmpEQ(switchTag, caseTag);
+                    llvm::Value* switchData = builder->CreateExtractValue(switchVal, 1);
+                    llvm::Value* caseData = builder->CreateExtractValue(caseVal, 1);
+                    llvm::Value* dataMatch = builder->CreateICmpEQ(switchData, caseData);
+                    cmp = builder->CreateAnd(tagMatch, dataMatch);
+                }
+                if (matches) {
+                    matches = builder->CreateOr(matches, cmp);
+                } else {
+                    matches = cmp;
+                }
+            }
+            builder->CreateCondBr(matches, sectionBlocks[i], nextCheckBB);
+            currentCheckBB = nextCheckBB;
+        }
+    }
+    llvm::BasicBlock* oldBreakBB = currentBreakBB;
+    currentBreakBB = endBB;
+    for (size_t i = 0; i < switch_node->sections.size(); i++) {
+        builder->SetInsertPoint(sectionBlocks[i]);
+        for (auto& stmt : switch_node->sections[i].body->statements) { emitStmt(stmt); }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            if (i + 1 < sectionBlocks.size()) {
+                builder->CreateBr(sectionBlocks[i + 1]);
+            } else {
+                emitDefersDownTo(outerDepth + 1);
+                builder->CreateBr(endBB);
+            }
+        }
+    }
+    currentBreakBB = oldBreakBB;
+    exitScope();
+    builder->SetInsertPoint(endBB);
+}
+void LLVMCompiler::emitQIf(QIfNode* qif_node) {
+    size_t outerDepth = defersStack.size();
+    enterScope();
+    if (qif_node->init.has_value()) { emitStmt(qif_node->init.value()); }
+    llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "qif.end", currentFunction);
+
+    llvm::Value* qifCond = emitExpr(qif_node->condition);
+    qifCond = normalizeValue(qifCond, qif_node->condition);
+    llvm::Value* qifBit1 = builder->CreateAnd(qifCond, builder->getIntN(2, 0b10));
+    llvm::Value* qif_is_true = builder->CreateICmpNE(qifBit1, builder->getIntN(2, 0));
+
+    llvm::BasicBlock* qifBodyBB = llvm::BasicBlock::Create(context, "qif.body", currentFunction);
+    llvm::BasicBlock* nextBB = (qif_node->qelif_branches.empty() && !qif_node->qelse_branch)
+                                   ? endBB
+                                   : llvm::BasicBlock::Create(context, "qelif.check", currentFunction);
+
+    builder->CreateCondBr(qif_is_true, qifBodyBB, nextBB);
+
+    builder->SetInsertPoint(qifBodyBB);
+    enterScope();
+    for (auto& stmt : qif_node->then_branch->statements) { emitStmt(stmt); }
+    if (!builder->GetInsertBlock()->getTerminator()) {
+        emitDefersDownTo(outerDepth + 2);
+        builder->CreateBr(endBB);
+    }
+    exitScope();
+    for (size_t i = 0; i < qif_node->qelif_branches.size(); i++) {
+        builder->SetInsertPoint(nextBB);
+
+        llvm::Value* elifCond = emitExpr(qif_node->qelif_branches[i].first);
+        llvm::Value* elifBit1 = builder->CreateAnd(elifCond, builder->getIntN(2, 0b10));
+        llvm::Value* elif_is_true = builder->CreateICmpNE(elifBit1, builder->getIntN(2, 0));
+
+        llvm::BasicBlock* elifBodyBB = llvm::BasicBlock::Create(context, "qelif.body", currentFunction);
+        llvm::BasicBlock* nextElifBB = (i + 1 < qif_node->qelif_branches.size() || qif_node->qelse_branch)
+                                           ? llvm::BasicBlock::Create(context, "qelif.check", currentFunction)
+                                           : endBB;
+
+        builder->CreateCondBr(elif_is_true, elifBodyBB, nextElifBB);
+        builder->SetInsertPoint(elifBodyBB);
+        enterScope();
+        for (auto& stmt : qif_node->qelif_branches[i].second->statements) { emitStmt(stmt); }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 2);
+            builder->CreateBr(endBB);
+        }
+        exitScope();
+        nextBB = nextElifBB;
+    }
+
+    if (qif_node->qelse_branch) {
+        builder->SetInsertPoint(nextBB);
+        llvm::Value* qifBit0 = builder->CreateAnd(qifCond, builder->getIntN(2, 0b01));
+        llvm::Value* all_false = builder->CreateICmpNE(qifBit0, builder->getIntN(2, 0));
+        for (auto& qelif : qif_node->qelif_branches) {
+            llvm::Value* elifCond = emitExpr(qelif.first);
+            llvm::Value* elifBit0 = builder->CreateAnd(elifCond, builder->getIntN(2, 0b01));
+            llvm::Value* elif_false = builder->CreateICmpNE(elifBit0, builder->getIntN(2, 0));
+            all_false = builder->CreateAnd(all_false, elif_false);
+        }
+
+        llvm::BasicBlock* qelseBodyBB = llvm::BasicBlock::Create(context, "qelse.body", currentFunction);
+        builder->CreateCondBr(all_false, qelseBodyBB, endBB);
+
+        builder->SetInsertPoint(qelseBodyBB);
+        enterScope();
+        for (auto& stmt : qif_node->qelse_branch->statements) { emitStmt(stmt); }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 2);
+            builder->CreateBr(endBB);
+        }
+        exitScope();
+    }
+    exitScope();
+    builder->SetInsertPoint(endBB);
+}
+void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
+    size_t outerDepth = defersStack.size();
+    enterScope();
+    llvm::Value* qb_val = emitExpr(qsw->value);
+    if (!qb_val) {
+        cg_error(get_pos(qsw), "failed to compile qswitch value", "QC-S271");
+        return;
+    }
+    qb_val = normalizeValue(qb_val, qsw->value);
+    if (qb_val->getType() != builder->getIntNTy(2)) {
+        cg_error(get_pos(qsw), "qswitch requires qbool type", "QC-T056");
+        return;
+    }
+    llvm::BasicBlock* check_true = llvm::BasicBlock::Create(context, "qsw.check_true", currentFunction);
+    llvm::BasicBlock* check_false = llvm::BasicBlock::Create(context, "qsw.check_false", currentFunction);
+    llvm::BasicBlock* case_t_block = nullptr;
+    llvm::BasicBlock* case_f_block = nullptr;
+    llvm::BasicBlock* case_n_block = nullptr;
+    llvm::BasicBlock* case_b_block = nullptr;
+    llvm::BasicBlock* qswitch_end = llvm::BasicBlock::Create(context, "qswitch.end", currentFunction);
+    if (qsw->case_t) { case_t_block = llvm::BasicBlock::Create(context, "qsw.case_t", currentFunction); }
+    if (qsw->case_f) { case_f_block = llvm::BasicBlock::Create(context, "qsw.case_f", currentFunction); }
+    if (qsw->case_n) { case_n_block = llvm::BasicBlock::Create(context, "qsw.case_n", currentFunction); }
+    if (qsw->case_b) { case_b_block = llvm::BasicBlock::Create(context, "qsw.case_b", currentFunction); }
+    builder->CreateBr(check_true);
+    builder->SetInsertPoint(check_true);
+    llvm::Value* has_true = builder->CreateAnd(qb_val, builder->getIntN(2, 2), "has_true");
+    llvm::Value* is_true = builder->CreateICmpNE(has_true, builder->getIntN(2, 0), "is_true");
+    builder->CreateCondBr(is_true, check_false, check_false);
+    builder->SetInsertPoint(check_false);
+    llvm::Value* has_false = builder->CreateAnd(qb_val, builder->getIntN(2, 1), "has_false");
+    llvm::Value* is_false = builder->CreateICmpNE(has_false, builder->getIntN(2, 0), "is_false");
+    llvm::Value* is_both = builder->CreateAnd(is_true, is_false, "is_both");
+    llvm::Value* not_false = builder->CreateNot(is_false, "not_false");
+    llvm::Value* is_qtrue_only = builder->CreateAnd(is_true, not_false, "is_qtrue_only");
+    llvm::Value* not_true = builder->CreateNot(is_true, "not_true");
+    llvm::Value* is_qfalse_only = builder->CreateAnd(not_true, is_false, "is_qfalse_only");
+    llvm::Value* is_none = builder->CreateAnd(not_true, not_false, "is_none");
+    llvm::BasicBlock* check_qtrue = llvm::BasicBlock::Create(context, "qsw.check_qtrue", currentFunction);
+    llvm::BasicBlock* check_qfalse = llvm::BasicBlock::Create(context, "qsw.check_qfalse", currentFunction);
+    llvm::BasicBlock* check_none_final = llvm::BasicBlock::Create(context, "qsw.check_none_final", currentFunction);
+    builder->CreateCondBr(is_both, case_b_block ? case_b_block : qswitch_end, check_qtrue);
+    builder->SetInsertPoint(check_qtrue);
+    builder->CreateCondBr(is_qtrue_only, case_t_block ? case_t_block : qswitch_end, check_qfalse);
+    builder->SetInsertPoint(check_qfalse);
+    builder->CreateCondBr(is_qfalse_only, case_f_block ? case_f_block : qswitch_end, check_none_final);
+    builder->SetInsertPoint(check_none_final);
+    builder->CreateCondBr(is_none, case_n_block ? case_n_block : qswitch_end, qswitch_end);
+    if (case_t_block && qsw->case_t) {
+        builder->SetInsertPoint(case_t_block);
+        for (auto& stmt : qsw->case_t->statements) { emitStmt(stmt); }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 1);
+            builder->CreateBr(qswitch_end);
+        }
+    }
+
+    if (case_f_block && qsw->case_f) {
+        builder->SetInsertPoint(case_f_block);
+        for (auto& stmt : qsw->case_f->statements) { emitStmt(stmt); }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 1);
+            builder->CreateBr(qswitch_end);
+        }
+    }
+
+    if (case_n_block && qsw->case_n) {
+        builder->SetInsertPoint(case_n_block);
+        for (auto& stmt : qsw->case_n->statements) { emitStmt(stmt); }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 1);
+            builder->CreateBr(qswitch_end);
+        }
+    }
+    if (case_b_block && qsw->case_b) {
+        builder->SetInsertPoint(case_b_block);
+        for (auto& stmt : qsw->case_b->statements) { emitStmt(stmt); }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 1);
+            builder->CreateBr(qswitch_end);
+        }
+    }
+    exitScope();
+    builder->SetInsertPoint(qswitch_end);
+}
+void LLVMCompiler::emitArrDecl(ArrayDeclNode* arrDecl) {
+    std::string name = arrDecl->var_name_tok.value;
+    std::string elemType = arrDecl->type_tok.value;
+    bool isVolatile = false;
+    if (elemType.starts_with("volatile ")) {
+        isVolatile = true;
+        elemType.erase(0, 9);
+    }
+    llvm::Type* elemTy = llvmTypeFor(elemType);
+    if (!elemTy) {
+        cg_error(arrDecl->type_tok.pos, "unknown array element type: " + elemType, "QC-T057");
+        return;
+    }
+    arrayTypeStrings[name] = elemType;
+    if (!std::holds_alternative<ArrayLiteralNode*>(arrDecl->value) && !std::holds_alternative<std::monostate>(arrDecl->value)) {
+        llvm::Value* arrPtr = emitExpr(arrDecl->value);
+        if (!arrPtr) return;
+        llvm::AllocaInst* alloc = createEntryAlloca(name, arrPtr->getType());
+        builder->CreateStore(arrPtr, alloc, isVolatile);
+        locals[name] = alloc;
+        volatileVars[name] = isVolatile;
+        return;
+    }
+    if (auto arrLit = std::get_if<ArrayLiteralNode*>(&arrDecl->value)) {
+        if ((*arrLit)->elements.empty()) {
+            llvm::Value* lengthValue = emitExpr((*arrLit)->length);
+            auto* lengthConstant = llvm::dyn_cast<llvm::ConstantInt>(lengthValue);
+            if (!lengthConstant) {
+                cg_error(get_pos(*arrLit), "array length must be constant", "QC-S272");
+                return;
+            }
+            uint64_t length = lengthConstant->getZExtValue();
+            auto* arrTy = llvm::ArrayType::get(elemTy, length);
+            auto* alloc = createEntryAlloca(name, arrTy);
+            uint64_t bytes = module->getDataLayout().getTypeAllocSize(arrTy).getFixedValue();
+            if (config.use_runtime) builder->CreateMemSet(alloc, builder->getInt8(0), builder->getInt64(bytes), llvm::MaybeAlign(1), isVolatile);
+            locals[name] = alloc;
+            arrayTypeStrings[name] = elemType;
+            arrayLengths[name] = length;
+            volatileVars[name] = isVolatile;
+            return;
+        }
+        bool hasSpread = false;
+        for (auto& elem : (*arrLit)->elements) {
+            if (std::holds_alternative<SpreadNode*>(elem)) {
+                hasSpread = true;
+                break;
+            }
+        }
+        if (hasSpread) {
+            llvm::Value* arrPtr = emitExpr(arrDecl->value);
+            if (!arrPtr) return;
+            llvm::Value* totalSize = builder->getInt32(0);
+            if (auto arrLit = std::get_if<ArrayLiteralNode*>(&arrDecl->value)) {
+                for (auto& elem : (*arrLit)->elements) {
+                    if (auto spread = std::get_if<SpreadNode*>(&elem)) {
+                        llvm::Value* collVal = emitExpr((*spread)->expr);
+                        llvm::Value* spreadLen = getCollectionLength(collVal, (*spread)->expr);
+                        totalSize = builder->CreateAdd(totalSize, spreadLen);
+                    } else {
+                        totalSize = builder->CreateAdd(totalSize, builder->getInt32(1));
+                    }
+                }
+            }
+            if (!arrDecl->sizes.empty() && arrDecl->sizes[0].has_value()) {
+                int userSize = *arrDecl->sizes[0];
+                arrayLengths[name] = userSize;
+            } else if (auto* constSize = llvm::dyn_cast<llvm::ConstantInt>(totalSize)) {
+                arrayLengths[name] = constSize->getSExtValue();
+            } else {
+                llvm::AllocaInst* sizeAlloc = createEntryAlloca(name + "_size", builder->getInt32Ty());
+                builder->CreateStore(totalSize, sizeAlloc);
+                runtimeArraySizes[name] = sizeAlloc;
+            }
+            llvm::AllocaInst* alloc = createEntryAlloca(name, arrPtr->getType());
+            builder->CreateStore(arrPtr, alloc, isVolatile);
+            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
+            locals[fullName] = alloc;
+            arrayTypeStrings[fullName] = elemType;
+            volatileVars[fullName] = isVolatile;
+            return;
+        }
+        size_t arraySize = (*arrLit)->elements.size();
+        arrayLengths[name] = arraySize;
+        std::vector<uint64_t> actualSizes;
+        std::function<void(AnyNode&, int)> inferDims;
+        inferDims = [&](AnyNode& node, int depth) {
+            if (auto lit = std::get_if<ArrayLiteralNode*>(&node)) {
+                if (actualSizes.size() <= depth) { actualSizes.push_back((*lit)->elements.size()); }
+                if (!(*lit)->elements.empty()) { inferDims((*lit)->elements[0], depth + 1); }
+            }
+        };
+        inferDims(arrDecl->value, 0);
+        llvm::Type* arrTy = elemTy;
+        for (int i = actualSizes.size() - 1; i >= 0; i--) { arrTy = llvm::ArrayType::get(arrTy, actualSizes[i]); }
+        bool useHeap = (currentFunction != nullptr);
+        llvm::AllocaInst* alloc;
+        if (useHeap) {
+            llvm::Function* mallocFn = module->getFunction("qc_malloc");
+            if (!mallocFn) {
+                llvm::FunctionType* mallocTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {builder->getIntNTy(getPtrSize())}, false);
+                mallocFn = llvm::Function::Create(mallocTy, llvm::Function::InternalLinkage, "qc_malloc", module);
+            }
+            const llvm::DataLayout& DL = module->getDataLayout();
+            uint64_t sizeBytes = DL.getTypeAllocSize(arrTy);
+            llvm::Value* mallocCall = builder->CreateCall(mallocFn, {builder->getInt64(sizeBytes)}, "heap_arr");
+            llvm::Value* arrPtr = builder->CreateBitCast(mallocCall, llvm::PointerType::get(context, 0), "arr_cast");
+            alloc = createEntryAlloca(name, llvm::PointerType::get(context, 0));
+            builder->CreateStore(arrPtr, alloc, isVolatile);
+            arrayTypeStrings[name] = elemType;
+        } else {
+            alloc = createEntryAlloca(name, arrTy);
+        }
+        std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
+        locals[fullName] = alloc;
+        volatileVars[fullName] = isVolatile;
+        std::function<void(llvm::Value*, llvm::Type*, AnyNode&, std::vector<uint64_t>&)> initArray;
+        initArray = [&](llvm::Value* ptr, llvm::Type* ty, AnyNode& node, std::vector<uint64_t>& indices) {
+            if (auto lit = std::get_if<ArrayLiteralNode*>(&node)) {
+                for (size_t i = 0; i < (*lit)->elements.size(); i++) {
+                    indices.push_back(i);
+                    if (std::holds_alternative<ArrayLiteralNode*>((*lit)->elements[i])) {
+                        initArray(ptr, ty, (*lit)->elements[i], indices);
+                    } else {
+                        llvm::Value* elemVal = emitExpr((*lit)->elements[i]);
+                        if (!elemVal) return;
+                        std::vector<llvm::Value*> llvmIndices = useHeap ? std::vector<llvm::Value*>{builder->getInt32(0)}
+                                                                        : std::vector<llvm::Value*>{builder->getInt32(0)};
+                        for (auto idx : indices) { llvmIndices.push_back(builder->getInt32(idx)); }
+                        llvm::Value* basePtr = useHeap ? builder->CreateLoad(llvm::PointerType::get(context, 0), alloc, "heap_ptr")
+                                                       : static_cast<llvm::Value*>(alloc);
+                        llvm::Value* elemPtr = builder->CreateInBoundsGEP(arrTy, basePtr, llvmIndices);
+                        builder->CreateStore(elemVal, elemPtr);
+                    }
+                    indices.pop_back();
+                }
+            }
+        };
+        std::vector<uint64_t> indices;
+        initArray(alloc, arrTy, arrDecl->value, indices);
+    }
+    if (!arrDecl->sizes.empty() && arrDecl->sizes[0].has_value()) {
+        int arraySize = *arrDecl->sizes[0];
+        if (std::holds_alternative<std::monostate>(arrDecl->value)) {
+            llvm::ArrayType* arrTy = llvm::ArrayType::get(elemTy, arraySize);
+            llvm::AllocaInst* alloc = createEntryAlloca(name, arrTy);
+            const llvm::DataLayout& dl = module->getDataLayout();
+            uint64_t sizeBytes = dl.getTypeAllocSize(arrTy).getFixedValue();
+            if (config.use_runtime) builder->CreateMemSet(alloc, builder->getInt8(0), builder->getInt64(sizeBytes), llvm::MaybeAlign(1), isVolatile);
+            locals[name] = alloc;
+            arrayTypeStrings[name] = elemType;
+            arrayLengths[name] = arraySize;
+            volatileVars[name] = isVolatile;
+            return;
+        }
+    }
+    return;
+}
+void LLVMCompiler::emitArrAssign(ArrayAssignNode* arrAssign) {
+    if (auto arrAcc = safe_get<ArrayAccessNode>(arrAssign->array_access)) {
+        std::string ptrTy = getExpressionType(arrAcc->base);
+        if (ptrTy.ends_with("*") || ptrTy == "@nullptr") {
+            if (ptrTy == "@nullptr") {
+                warn("null-deref", get_pos(arrAcc), "attempted to dereference nullptr", "QC-W008");
+                return;
+            }
+            if (ptrTy == "void*") {
+                cg_error(get_pos(arrAcc), "you cannot dereference or indice void*", "QC-S273");
+                return;
+            }
+            std::string valueTy = getExpressionType(arrAcc->indices[0]);
+            if (llvm::Type* ty = llvmTypeFor(valueTy); !ty || !ty->isIntegerTy()) {
+                cg_error(get_pos(arrAcc->indices[0]),
+                         "attempted to index a pointer with a "
+                         "non-integer value.",
+                         "QC-S239");
+                return;
+            }
+            llvm::Value* value = emitExpr(arrAcc->indices[0]);
+            if (!value) {
+                cg_error(get_pos(arrAcc->indices[0]), "failed to emit index for pointer index.", "QC-S274");
+                return;
+            }
+            ptrTy.pop_back();
+            llvm::Value* addr = builder->CreateGEP(llvmTypeFor(ptrTy), emitExpr(arrAcc->base), value, "ptr_arr_asi");
+            llvm::Value* valToStore = emitExpr(arrAssign->value);
+            builder->CreateStore(valToStore, addr);
+            return;
+        }
+        if (genericiseOrFindClass(ptrTy)) {
+            llvm::Value* obj = emitLValue(arrAcc->base, true);
+            llvm::Value* idx = emitExpr(arrAcc->indices[0]);
+            llvm::Value* ref = emitVirtualOrDirectCall(ptrTy, "operator[]", obj, {idx});
+            if (!ref) {
+                cg_error(get_pos(arrAcc->base), ptrTy + " does not have operator[]", "QC-S240");
+                addMethodNotes(ptrTy, "operator[]", {idx}, get_pos(arrAcc->base));
+                return;
+            }
+            llvm::Value* val = emitExpr(arrAssign->value);
+            builder->CreateStore(val, ref);
+            return;
+        }
+        if (auto varAcc = safe_get<VarAccessNode>(arrAcc->base)) {
+            std::string name = varAcc->var_name_tok.value;
+            llvm::Value* alloc = getVarAddress(name);
+            if (!alloc) {
+                cg_error(get_pos(arrAcc->base), "unknown array: " + name, "QC-S242");
+                return;
+            }
+            llvm::Value* arrAlloc = alloc;
+            llvm::Type* arrTy = getPointeeType(name);
+            llvm::Value* indexVal = emitExpr(arrAcc->indices[0]);
+            if (!indexVal) return;
+            llvm::Value* valueVal = emitExpr(arrAssign->value);
+            if (!valueVal) return;
+            if (arrTy->isPointerTy()) {
+                llvm::Value* ptr = builder->CreateLoad(arrTy, arrAlloc, hasVolatileVar(name) ? findVolatileVar(name)->second : false, "arr_ptr");
+                llvm::Type* elemTy = valueVal->getType();
+                llvm::Value* elemPtr = builder->CreateGEP(elemTy, ptr, indexVal, "arr_elem_ptr");
+                builder->CreateStore(valueVal, elemPtr, hasVolatileVar(name) ? findVolatileVar(name)->second : false);
+            } else if (arrTy->isArrayTy()) {
+                std::vector<llvm::Value*> indices = {builder->getInt32(0), indexVal};
+                llvm::Value* elemPtr = builder->CreateInBoundsGEP(arrTy, arrAlloc, indices, "arr_elem_ptr");
+                builder->CreateStore(valueVal, elemPtr, hasVolatileVar(name) ? findVolatileVar(name)->second : false);
+            }
+        }
+    }
+    return;
+}
+void LLVMCompiler::emitForeach(ForeachNode* foreach) {
+    size_t outerDepth = defersStack.size();
+    loopStack.push_back(outerDepth);
+    std::string elemName = foreach->elem_name.value;
+    std::string iterName = "__foreach_i_" + elemName;
+    llvm::Value* lengthVal = nullptr;
+    bool isArray = false;
+    llvm::Value* arrayAlloc = nullptr;
+    llvm::Type* arrayElemTy = nullptr;
+    std::string collName = "";
+    std::string collTypeName = "";
+    llvm::Function* beginOverload = nullptr;
+    llvm::Value* collVal;
+    if (auto varAccess = std::get_if<VarAccessNode*>(&foreach->collection)) {
+        collName = (*varAccess)->var_name_tok.value;
+        collTypeName = resolveVarType(collName);
+        llvm::Value* alloc = getVarAddress(collName);
+        if (alloc) {
+            llvm::Type* allocTy = getPointeeType(collName);
+
+            if (allocTy->isArrayTy()) {
+                isArray = true;
+                arrayAlloc = alloc;
+                lengthVal = builder->getInt32(allocTy->getArrayNumElements());
+            } else if (allocTy->isPointerTy()) {
+                if (hasArrayLength(collName)) {
+                    auto lenIt = findArrayLength(collName);
+                    isArray = true;
+                    arrayAlloc = alloc;
+                    lengthVal = builder->getInt32(lenIt->second);
+
+                    if (hasArrayType(collName)) {
+                        auto typeIt = findArrayType(collName);
+                        arrayElemTy = llvmTypeFor(typeIt->second);
+                    } else {
+                    }
+                } else if (runtimeArraySizes.find(collName) != runtimeArraySizes.end()) {
+                    isArray = true;
+                    arrayAlloc = alloc;
+                    llvm::AllocaInst* sizeAlloc = runtimeArraySizes[collName];
+                    lengthVal = builder->CreateLoad(builder->getInt32Ty(), sizeAlloc, "runtime_len");
+                    if (hasArrayType(collName)) {
+                        auto typeIt = findArrayType(collName);
+                        arrayElemTy = llvmTypeFor(typeIt->second);
+                    }
+                } else {
+                }
+            }
+        }
+        beginOverload = findMethodOverload(collTypeName, "_begin", {});
+        bool isIterator = !isArray && !collTypeName.empty() && beginOverload != nullptr;
+        collVal = isIterator ? emitLValue(foreach->collection) : emitExpr(foreach->collection);
+    } else {
+        collVal = userTypes.find(baseTypeName(getExpressionType(foreach->collection))) == userTypes.end() ? emitExpr(foreach->collection)
+                                                                                                          : emitLValue(foreach->collection);
+        if (userTypes.find(baseTypeName(getExpressionType(foreach->collection))) != userTypes.end()) {
+            if (userTypes[baseTypeName(getExpressionType(foreach->collection))].kind == UserTypeKind::Class) {
+                collTypeName = getExpressionType(foreach->collection);
+                isArray = false;
+            }
+        } else {
+            if (collVal->getType()->isArrayTy()) {
+                collTypeName = getExpressionType(foreach->collection);
+                isArray = true;
+            }
+        }
+    }
+    beginOverload = findMethodOverload(collTypeName, "_begin", {});
+    bool isIterator = !isArray && !collTypeName.empty() && beginOverload != nullptr;
+    llvm::AllocaInst* iterObjAlloc = nullptr;
+    std::string iterTypeName = "";
+    llvm::Type* iterLLVMTy = nullptr;
+    llvm::Value* iterLoaded = nullptr;
+    if (!collVal) return;
+    if (isIterator) {
+        auto baseInfo = userTypes.find(baseTypeName(collTypeName));
+        auto info = baseInfo->second;
+        auto oldNamespaceStack = namespaceStack;
+        namespaceStack.clear();
+
+        if (!info.namespace_path.empty()) {
+            size_t start = 0;
+            size_t pos;
+
+            while ((pos = info.namespace_path.find("::", start)) != std::string::npos) {
+                namespaceStack.push_back(info.namespace_path.substr(start, pos - start));
+                start = pos + 2;
+            }
+
+            namespaceStack.push_back(info.namespace_path.substr(start));
+        }
+        iterTypeName = resolveTypeName(getMethodReturnTypeName(collTypeName, "_begin"), false);
+        auto concreteParams = genericParamsFromName(collTypeName);
+        for (size_t i = 0; i < baseInfo->second.generics.size() && i < concreteParams.size(); i++) {
+            std::string gname = baseInfo->second.generics[i].name;
+            std::string gval = concreteParams[i];
+            size_t pos;
+            while ((pos = iterTypeName.find(gname, pos)) != std::string::npos) {
+                size_t end = pos + gname.size();
+                bool leftOk = pos == 0 || !(std::isalnum(static_cast<unsigned char>(iterTypeName[pos - 1])) || iterTypeName[pos - 1] == '_');
+                bool rightOk = end == iterTypeName.size() ||
+                               !(std::isalnum(static_cast<unsigned char>(iterTypeName[end])) || iterTypeName[end] == '_');
+                if (leftOk && rightOk) {
+                    iterTypeName.replace(pos, gname.size(), gval);
+                    pos += gval.size();
+                } else {
+                    pos += gname.size();
+                }
+            }
+        }
+        iterLLVMTy = llvmTypeFor(iterTypeName);
+        iterObjAlloc = createEntryAlloca("__iter_" + elemName, iterLLVMTy);
+        llvm::Value* iterObj = emitMethodCall(beginOverload, collVal, {}, "_begin");
+        builder->CreateStore(iterObj, iterObjAlloc);
+        namespaceStack = oldNamespaceStack;
+    }
+    enterScope();
+    llvm::BasicBlock* savedBreakBB = currentBreakBB;
+    llvm::BasicBlock* savedContinueBB = currentContinueBB;
+    llvm::Type* elemTy = llvmTypeFor(foreach->elem_type.value);
+    llvm::AllocaInst* iterAlloc = createEntryAlloca(iterName, builder->getInt32Ty());
+    llvm::AllocaInst* elemAlloc = createEntryAlloca(elemName, elemTy);
+    locals[iterName] = iterAlloc;
+    locals[elemName] = elemAlloc;
+    varTypes[elemName] = foreach->elem_type.value;
+    varTypes[iterName] = "int";
+    builder->CreateStore(builder->getInt32(0), iterAlloc);
+    llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "foreach.cond", currentFunction);
+    llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "foreach.body", currentFunction);
+    llvm::BasicBlock* incBB = nullptr;
+    if (isArray) incBB = llvm::BasicBlock::Create(context, "foreach.inc", currentFunction);
+    llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "foreach.end", currentFunction);
+    if (isIterator)
+        currentContinueBB = condBB;
+    else
+        currentContinueBB = incBB;
+    if (!builder->GetInsertBlock()->getTerminator()) { builder->CreateBr(condBB); }
+    builder->SetInsertPoint(condBB);
+    if (isArray) {
+        llvm::Value* iVal = builder->CreateLoad(builder->getInt32Ty(), iterAlloc, iterName);
+        llvm::Value* cmpVal = builder->CreateICmpSLT(iVal, lengthVal, "foreach_cmp");
+        builder->CreateCondBr(cmpVal, bodyBB, endBB);
+    } else if (isIterator) {
+        llvm::Function* atEndFn = findMethodOverload(iterTypeName, "_atEnd", {});
+        llvm::Value* atEnd = emitMethodCall(atEndFn, iterObjAlloc, {}, "_atEnd");
+        builder->CreateCondBr(atEnd, endBB, bodyBB);
+    }
+
+    builder->SetInsertPoint(bodyBB);
+    currentBreakBB = endBB;
+    llvm::Value* elemVal = nullptr;
+    if (isArray && arrayAlloc) {
+        llvm::Value* iVal = builder->CreateLoad(builder->getInt32Ty(), iterAlloc, iterName);
+        llvm::Type* allocTy = getPointeeType(collName);
+
+        if (allocTy->isArrayTy()) {
+            std::vector<llvm::Value*> indices = {builder->getInt32(0), iVal};
+            llvm::Value* elemPtr = builder->CreateInBoundsGEP(allocTy, arrayAlloc, indices, "elem_ptr");
+            elemVal = builder->CreateLoad(elemTy, elemPtr, "elem");
+        } else if (allocTy->isPointerTy() && arrayElemTy) {
+            llvm::Value* heapPtr = builder->CreateLoad(allocTy, arrayAlloc, "heap_ptr");
+            llvm::Value* elemPtr = builder->CreateGEP(arrayElemTy, heapPtr, iVal, "heap_elem_ptr");
+
+            elemVal = builder->CreateLoad(elemTy, elemPtr, "elem");
+        }
+        builder->CreateStore(elemVal, elemAlloc);
+        emitStmt(foreach->body);
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 1);
+            builder->CreateBr(incBB);
+        }
+        builder->SetInsertPoint(incBB);
+        llvm::Value* iVal2 = builder->CreateLoad(builder->getInt32Ty(), iterAlloc, iterName);
+        llvm::Value* incVal = builder->CreateAdd(iVal2, builder->getInt32(1), "i_inc");
+        builder->CreateStore(incVal, iterAlloc);
+        builder->CreateBr(condBB);
+    } else if (isIterator) {
+        iterLoaded = builder->CreateLoad(iterLLVMTy, iterObjAlloc);
+        llvm::Function* nextFn = findMethodOverload(iterTypeName, "_next", {});
+        llvm::Value* cur = emitMethodCall(nextFn, iterObjAlloc, {}, "_next");
+        builder->CreateStore(cur, elemAlloc);
+        emitStmt(foreach->body);
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerDepth + 1);
+            builder->CreateBr(condBB);
+        }
+    }
+    builder->SetInsertPoint(endBB);
+    exitScope();
+    loopStack.pop_back();
+    locals.erase(iterName);
+    locals.erase(elemName);
+    currentBreakBB = savedBreakBB;
+    currentContinueBB = savedContinueBB;
+    return;
+}
+void LLVMCompiler::emitTryCatch(TryCatchNode* trycatch) {
+    if (insideTry()) {
+        cg_error(get_pos(trycatch), "You cannot have nested try catch blocks. Why would you need them", "QC-TC01");
+        return;
+    }
+    size_t outerScope = defersStack.size();
+    enterScope();
+    auto* tryBB = llvm::BasicBlock::Create(context, "try.start", currentFunction);
+    auto* landingPadBB = llvm::BasicBlock::Create(context, "catch.landing", currentFunction);
+    auto* endBB = llvm::BasicBlock::Create(context, "try.end", currentFunction);
+    std::vector<llvm::BasicBlock*> catchBlocks;
+    catchBlocks.reserve(trycatch->catch_bodys.size());
+    EHScope thisScope{
+        .landingPad = landingPadBB,
+        .continuation = endBB,
+        .handlers = {},
+        .deferDepth = outerScope + 1,
+    };
+    for (size_t i = 0; i < trycatch->catch_bodys.size(); ++i) {
+        auto* catchBB = llvm::BasicBlock::Create(context, "catch." + std::to_string(i), currentFunction);
+        catchBlocks.push_back(catchBB);
+        thisScope.handlers.push_back({
+            .body = trycatch->catch_bodys[i],
+            .block = catchBB,
+        });
+    }
+    ehScopes.push_back(std::move(thisScope));
+    builder->CreateBr(tryBB);
+    builder->SetInsertPoint(tryBB);
+    enterScope();
+    emitStmt(trycatch->try_body);
+    if (!builder->GetInsertBlock()->getTerminator()) {
+        emitDefersDownTo(outerScope + 2);
+        builder->CreateBr(endBB);
+    }
+    exitScope();
+    builder->SetInsertPoint(landingPadBB);
+    auto* exceptionType = llvm::StructType::get(context, {builder->getPtrTy(), builder->getInt32Ty()});
+    std::vector<EHHandler> visibleHandlers;
+    for (auto scopeIt = ehScopes.rbegin(); scopeIt != ehScopes.rend(); ++scopeIt) {
+        for (const auto& handler : scopeIt->handlers) { visibleHandlers.push_back(handler); }
+    }
+    auto* lp = builder->CreateLandingPad(exceptionType, visibleHandlers.size(), "qc.exception");
+    for (const auto& handler : visibleHandlers) {
+        const auto& c = handler.body;
+        llvm::Constant* typeInfo = c.var_type == "..." ? llvm::ConstantPointerNull::get(builder->getPtrTy()) : getStringConstant(c.var_type);
+        lp->addClause(typeInfo);
+    }
+    if (!currentFunction->hasPersonalityFn()) { currentFunction->setPersonalityFn(module->getFunction("__qc_personality")); }
+    auto* exception = builder->CreateExtractValue(lp, 0, "exception");
+    auto* selector = builder->CreateExtractValue(lp, 1, "selector");
+    auto* noMatchBB = llvm::BasicBlock::Create(context, "catch.no_match", currentFunction);
+    auto* sw = builder->CreateSwitch(selector, noMatchBB, visibleHandlers.size());
+    for (size_t i = 0; i < visibleHandlers.size(); ++i) {
+        sw->addCase(llvm::ConstantInt::get(builder->getInt32Ty(), i + 1), visibleHandlers[i].block);
+    }
+    EHScope savedScope = std::move(ehScopes.back());
+    ehScopes.pop_back();
+    for (size_t i = 0; i < savedScope.handlers.size(); ++i) {
+        const auto& c = savedScope.handlers[i].body;
+        auto* catchBB = savedScope.handlers[i].block;
+        builder->SetInsertPoint(catchBB);
+        enterScope();
+        if (!c.var_name.empty()) {
+            std::string name = getCurrentNamespace().empty() ? c.var_name : getCurrentNamespace() + c.var_name;
+            llvm::Value* payload = builder->CreateCall(module->getFunction("__qc_exception_get_value"), {exception});
+            llvm::Type* catchLLVMType = llvmTypeFor(c.var_type);
+            llvm::Value* catchValue = nullptr;
+            if (catchLLVMType->isFloatingPointTy()) {
+                llvm::Value* int64Val = builder->CreatePtrToInt(payload, builder->getInt64Ty());
+                if (catchLLVMType->isFloatTy()) {
+                    llvm::Value* int32Val = builder->CreateTrunc(int64Val, builder->getInt32Ty());
+                    catchValue = builder->CreateBitCast(int32Val, builder->getFloatTy());
+                } else {
+                    catchValue = builder->CreateBitCast(int64Val, builder->getDoubleTy());
+                }
+            } else if (catchLLVMType->isIntegerTy()) {
+                llvm::Value* int64Val = builder->CreatePtrToInt(payload, builder->getInt64Ty());
+                catchValue = builder->CreateTruncOrBitCast(int64Val, catchLLVMType);
+
+            } else {
+                catchValue = payload;
+            }
+            auto* alloc = createEntryAlloca(name, catchLLVMType);
+            builder->CreateStore(catchValue, alloc);
+            locals[name] = alloc;
+            varTypes[name] = resolveTypeName(c.var_type, false);
+        }
+        emitStmt(c.body);
+        if (c.body->statements.empty()) {
+            warn("empty-catch", get_pos(trycatch), "catch body is empty and silently consumes thrown errors", "QC-W021");
+        }
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            emitDefersDownTo(outerScope + 2);
+            builder->CreateBr(endBB);
+        }
+        exitScope();
+    }
+    builder->SetInsertPoint(noMatchBB);
+    builder->CreateResume(lp);
+    exitScope();
+    builder->SetInsertPoint(endBB);
+}
+void LLVMCompiler::emitMatch(MatchNode* match_node) {
+    size_t outerDepth = defersStack.size();
+    enterScope();
+    llvm::Value* matchVal = emitExpr(match_node->value);
+    if (!matchVal) {
+        exitScope();
+        return;
+    }
+    llvm::Type* matchTy = matchVal->getType();
+    std::string enumName = "";
+    bool canUseMatch = matchTy->isIntegerTy() || ((match_node->is_enum || match_node->sections.empty() ||
+                                                   (match_node->sections.size() == 1 && match_node->sections[0].is_default)) &&
+                                                  isEnumType(matchTy, &enumName));
+    if (!enumName.empty()) {
+        if (std::ranges::none_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; }) &&
+            match_node->sections.size() != userTypes.at(baseTypeName(resolveTypeName(enumName))).enumEntries.size()) {
+            cg_error(get_pos(match_node), "match must have a case for every enum member, or have a default branch", "QC-MCH1");
+            return;
+        }
+    } else {
+        if (!(std::ranges::any_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; }))) {
+            cg_error(get_pos(match_node), "match must have a default branch for non-enum values.", "QC-MCH1");
+            cg_help(get_pos(match_node), "if you know it is impossible for any other value to be here, use `default => unreachable;`");
+            return;
+        }
+    }
+    llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "match.end", currentFunction);
+    std::vector<llvm::BasicBlock*> sectionBlocks;
+    llvm::BasicBlock* defaultBB = nullptr;
+    for (auto& section : match_node->sections) {
+        llvm::BasicBlock* bb = llvm::BasicBlock::Create(context, "match.case", currentFunction);
+        sectionBlocks.push_back(bb);
+        if (section.is_default) { defaultBB = bb; }
+    }
+    if (!defaultBB) { defaultBB = endBB; }
+    if (canUseMatch) {
+        if (!match_node->is_enum) {
+            llvm::SwitchInst* matchInst = builder->CreateSwitch(matchVal, defaultBB, match_node->sections.size());
+            for (size_t i = 0; i < match_node->sections.size(); i++) {
+                auto& section = match_node->sections[i];
+                if (section.is_default) continue;
+                llvm::Value* caseVal = emitExpr(section.normal_case.expr);
+                if (!caseVal) {
+                    cg_error(get_pos(section.normal_case.expr), "Failed to emit case value", "QC-S278");
+                    return;
+                }
+                if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(caseVal)) { matchInst->addCase(constInt, sectionBlocks[i]); }
+            }
+        } else {
+            llvm::SwitchInst* matchInst = builder->CreateSwitch(builder->CreateExtractValue(matchVal, {0}), defaultBB, match_node->sections.size());
+            for (size_t i = 0; i < match_node->sections.size(); i++) {
+                auto& section = match_node->sections[i];
+                if (section.is_default) continue;
+                std::string member_name = section.enum_case.first;
+                if (enumMemberInfo.find(member_name) == enumMemberInfo.end()) {
+                    cg_error(get_pos(match_node), "unknown enum member: " + member_name, "QC-MCH3");
+                    return;
+                }
+                llvm::Value* caseVal = llvm::ConstantInt::get(llvm::dyn_cast<llvm::StructType>(matchTy)->getElementType(0),
+                                                              std::stoull(enumMemberInfo[member_name].first));
+                if (!caseVal) {
+                    cg_error(get_pos(section.normal_case.expr), "Failed to emit case value", "QC-S278");
+                    return;
+                }
+                if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(caseVal)) { matchInst->addCase(constInt, sectionBlocks[i]); }
+            }
+        }
+    } else {
+        cg_error(get_pos(match_node), "cannot use match on non enum non integer types", "QC-MCH2");
+        return;
+    }
+    llvm::BasicBlock* oldBreakBB = currentBreakBB;
+    currentBreakBB = endBB;
+    for (size_t i = 0; i < match_node->sections.size(); i++) {
+        builder->SetInsertPoint(sectionBlocks[i]);
+        enterScope();
+
+        for (auto& stmt : match_node->sections[i].body->statements) {
+            if (match_node->is_enum) {
+                auto& section = match_node->sections[i].enum_case;
+                for (unsigned int i = 0; i < section.second.size(); i++) {
+                    std::string fullName = getCurrentNamespace().empty() ? section.second[i] : getCurrentNamespace() + "::" + section.second[i];
+                    std::vector<std::string> types = enumMemberInfo[section.first].second;
+                    varTypes[fullName] = types[i];
+                    llvm::Value* raw = builder->CreateExtractValue(matchVal, {i + 1});
+                    llvm::AllocaInst* rawAlloc = builder->CreateAlloca(raw->getType(), nullptr, "match_raw");
+                    builder->CreateStore(raw, rawAlloc);
+                    llvm::AllocaInst* alloc = createEntryAlloca(fullName, llvmTypeFor(types[i]));
+                    uint64_t size = module->getDataLayout().getTypeStoreSize(llvmTypeFor(types[i]));
+                    builder->CreateMemCpyInline(alloc, llvm::MaybeAlign(), rawAlloc, llvm::MaybeAlign(),
+                                                llvm::ConstantInt::get(builder->getInt64Ty(), size));
+                    locals[fullName] = alloc;
+                    varTypes[fullName] = types[i];
+                    volatileVars[fullName] = false;
+                }
+            }
+            emitStmt(stmt);
+        }
+        exitScope();
+        if (!builder->GetInsertBlock()->getTerminator()) {
+            if (i + 1 < sectionBlocks.size()) {
+                builder->CreateBr(endBB);
+            } else {
+                emitDefersDownTo(outerDepth + 1);
+                builder->CreateBr(endBB);
+            }
+        }
+    }
+    currentBreakBB = oldBreakBB;
+    exitScope();
+    builder->SetInsertPoint(endBB);
+}
 void LLVMCompiler::emitStmt(AnyNode node) {
     if (builder->GetInsertBlock()->getTerminator()) {
         warn("unreachable-code", get_pos(node), "attempted to emit into terminated basic block (unreachable code)", "QC-W001");
@@ -8946,452 +10353,15 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         return;
     }
     if (auto mret = safe_get<MultiReturnNode>(node)) {
-        llvm::Type* retTy = currentFunction->getReturnType();
-        if (!retTy->isStructTy()) {
-            cg_error(mret->pos, "multi-return in non-multi-return function", "QC-S262");
-            return;
-        }
-        emitDefersDownTo(0);
-        llvm::Value* agg = llvm::ConstantAggregateZero::get(retTy);
-        llvm::StructType* retStructTy = llvm::cast<llvm::StructType>(retTy);
-        for (size_t i = 0; i < mret->values.size(); ++i) {
-            llvm::Value* val = nullptr;
-            if (auto varAccess = std::get_if<VarAccessNode*>(&mret->values[i])) {
-                std::string name = (*varAccess)->var_name_tok.value;
-                llvm::Value* alloc = getVarAddress(name);
-                if (alloc) {
-                    llvm::Type* allocatedTy = getPointeeType(name);
-                    if (allocatedTy->isArrayTy()) { val = builder->CreateBitCast(alloc, llvm::PointerType::get(context, 0), "array_ret_ptr"); }
-                }
-            }
-            if (auto call = std::get_if<CallNode*>(&mret->values[i])) {
-                if (auto varAccess = std::get_if<VarAccessNode*>(&(*call)->node_to_call)) {
-                    std::string funcName = (*varAccess)->var_name_tok.value;
-
-                    if (classTypes.find(funcName) != classTypes.end()) {
-                        llvm::StructType* classTy = genericiseOrFindClass(funcName);
-
-                        std::vector<llvm::Value*> ctorArgs;
-                        for (auto& argNode : (*call)->arg_nodes) {
-                            llvm::Value* arg = emitExpr(argNode);
-                            if (!arg) return;
-                            ctorArgs.push_back(arg);
-                        }
-
-                        llvm::Function* ctor = findMethodOverload(funcName, funcName, ctorArgs);
-
-                        if (ctor) {
-                            llvm::AllocaInst* retVal = createEntryAlloca("mret_val_" + std::to_string(i), classTy);
-
-                            std::vector<llvm::Value*> allArgs = {retVal};
-                            allArgs.insert(allArgs.end(), ctorArgs.begin(), ctorArgs.end());
-                            if (insideTry()) {
-                                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                                llvm::InvokeInst* invoke = builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
-                                builder->SetInsertPoint(contBB);
-                            } else {
-                                builder->CreateCall(ctor, allArgs);
-                            }
-                            val = builder->CreateLoad(classTy, retVal);
-                        }
-                    }
-                }
-            }
-            if (auto arrayLit = std::get_if<ArrayLiteralNode*>(&mret->values[i])) {
-                val = emitExpr(mret->values[i]);
-                if (!val) return;
-
-                llvm::Type* srcTy = val->getType();
-                llvm::Type* destTy = retStructTy->getElementType(i);
-                if (destTy->isPointerTy() && srcTy->isArrayTy()) {
-                    llvm::ArrayType* arrayType = llvm::cast<llvm::ArrayType>(srcTy);
-                    llvm::Type* iTy = builder->getIntNTy(getPtrSize());
-                    llvm::Value* size = llvm::ConstantInt::get(iTy, module->getDataLayout().getTypeAllocSize(arrayType));
-
-                    llvm::Function* mallocFn = module->getFunction("qc_malloc");
-                    if (!mallocFn) {
-                        llvm::FunctionType* mallocTy = llvm::FunctionType::get(builder->getPtrTy(), {iTy}, false);
-                        mallocFn = llvm::Function::Create(mallocTy, llvm::Function::InternalLinkage, "qc_malloc", module);
-                    }
-
-                    llvm::Value* heapPtr = builder->CreateCall(mallocFn, {size});
-                    llvm::Value* typedPtr = builder->CreateBitCast(heapPtr, llvm::PointerType::get(context, 0));
-
-                    builder->CreateStore(val, typedPtr);
-
-                    val = builder->CreateBitCast(typedPtr, destTy);
-                }
-            }
-            if (this->returnsRef(i)) { val = this->emitLValue(mret->values[i]); }
-            if (!val) { val = emitExpr(mret->values[i]); }
-            if (!val) return;
-            llvm::Type* srcTy = val->getType();
-            llvm::Type* destTy = retStructTy->getElementType(i);
-            if (isUnionType(srcTy) && !isUnionType(destTy)) {
-                llvm::Value* dataPtr = builder->CreateExtractValue(val, 1, "union_data");
-                if (destTy->isPointerTy()) {
-                    val = builder->CreateBitCast(dataPtr, destTy);
-                } else {
-                    llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                    val = builder->CreateLoad(destTy, typedPtr);
-                }
-                srcTy = destTy;
-                break;
-            }
-            if (!isUnionType(srcTy)) {
-                std::string unionName;
-                if (isUnionType(destTy, &unionName)) {
-                    int tag = findUnionVariantTag(unionName, mret->values[i], val);
-                    if (tag == -1) {
-                        cg_error(mret->pos, "return value doesn't match union variant", "QC-S263");
-                        return;
-                    }
-
-                    llvm::Value* unionVal = llvm::ConstantAggregateZero::get(destTy);
-                    unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-                    llvm::Value* dataPtr = storeAndGetPointer(val);
-                    val = builder->CreateInsertValue(unionVal, dataPtr, 1);
-
-                    srcTy = destTy;
-                    break;
-                }
-            }
-            agg = builder->CreateInsertValue(agg, val, i);
-        }
-
-        builder->CreateRet(agg);
-        return;
-    } else if (auto ret = std::get_if<ReturnNode*>(&node)) {
-        emitDefersDownTo(0);
-        if (auto varAccess = std::get_if<VarAccessNode*>(&(*ret)->value)) {
-            std::string name = (*varAccess)->var_name_tok.value;
-            llvm::Value* alloc = getVarAddress(name);
-            if (alloc) {
-                llvm::Type* allocatedTy = getPointeeType(name);
-                if (allocatedTy && allocatedTy->isArrayTy()) {
-                    llvm::Value* arrayPtr = builder->CreateBitCast(alloc, llvm::PointerType::get(context, 0), "array_ret_ptr");
-                    builder->CreateRet(arrayPtr);
-                    return;
-                }
-            }
-        }
-        if (auto call = std::get_if<CallNode*>(&(*ret)->value)) {
-            if (auto varAccess = std::get_if<VarAccessNode*>(&(*call)->node_to_call)) {
-                std::string funcName = (*varAccess)->var_name_tok.value;
-
-                if (classTypes.find(funcName) != classTypes.end()) {
-                    llvm::StructType* classTy = genericiseOrFindClass(funcName);
-                    std::vector<llvm::Value*> ctorArgs;
-                    for (auto& argNode : (*call)->arg_nodes) {
-                        llvm::Value* arg = emitExpr(argNode);
-                        if (!arg) return;
-                        ctorArgs.push_back(arg);
-                    }
-
-                    std::string ctorName = funcName;
-                    llvm::Function* ctor = findMethodOverload(funcName, ctorName, ctorArgs);
-
-                    if (ctor) {
-                        llvm::AllocaInst* retVal = createEntryAlloca("ret_val", classTy);
-
-                        std::vector<llvm::Value*> allArgs = {retVal};
-                        allArgs.insert(allArgs.end(), ctorArgs.begin(), ctorArgs.end());
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            llvm::InvokeInst* invoke = builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                        } else {
-                            builder->CreateCall(ctor, allArgs);
-                        }
-                        llvm::Value* result = llvm::ConstantAggregateZero::get(classTy);
-                        for (unsigned i = 0; i < classTy->getNumElements(); i++) {
-                            std::vector<llvm::Value*> indices = {builder->getInt32(0), builder->getInt32(i)};
-                            llvm::Value* fieldPtr = builder->CreateInBoundsGEP(classTy, retVal, indices);
-                            llvm::Type* fieldTy = classTy->getElementType(i);
-                            llvm::Value* fieldVal = builder->CreateLoad(fieldTy, fieldPtr);
-
-                            result = builder->CreateInsertValue(result, fieldVal, i);
-                        }
-
-                        builder->CreateRet(result);
-                        return;
-                    }
-                }
-            }
-        }
-        llvm::Value* v = nullptr;
-        llvm::Type* destTy = currentFunction->getReturnType();
-        if (this->returnsRef()) { v = this->emitLValue((*ret)->value); }
-        if (!v) { v = emitExpr((*ret)->value); }
-
-        if (!v) {
-            if (currentFunction->getReturnType()->isVoidTy()) {
-                builder->CreateRetVoid();
-            } else {
-                cg_error((*ret)->pos, "return without value in non-void function", "QC-S265");
-            }
-            return;
-        }
-        llvm::Type* srcTy = v->getType();
-        destTy = currentFunction->getReturnType();
-        if (auto arrayLit = std::get_if<ArrayLiteralNode*>(&(*ret)->value)) {
-            if (destTy->isPointerTy() && srcTy->isArrayTy()) {
-                llvm::ArrayType* arrayType = llvm::cast<llvm::ArrayType>(srcTy);
-                llvm::Type* iTy = builder->getIntNTy(getPtrSize());
-                llvm::Value* size = llvm::ConstantInt::get(iTy, module->getDataLayout().getTypeAllocSize(arrayType));
-                llvm::Function* mallocFn = module->getFunction("qc_malloc");
-                if (!mallocFn) {
-                    llvm::FunctionType* mallocTy = llvm::FunctionType::get(builder->getPtrTy(), {iTy}, false);
-                    mallocFn = llvm::Function::Create(mallocTy, llvm::Function::InternalLinkage, "qc_malloc", module);
-                }
-
-                llvm::Value* heapPtr = builder->CreateCall(mallocFn, {size});
-                llvm::Value* typedPtr = builder->CreateBitCast(heapPtr, llvm::PointerType::get(context, 0));
-                builder->CreateStore(v, typedPtr);
-                llvm::Value* retPtr = builder->CreateBitCast(typedPtr, destTy);
-
-                builder->CreateRet(retPtr);
-                return;
-            }
-        }
-        for (auto& [unionName, unionTy] : unionTypes) {
-            if (srcTy == unionTy && !isUnionType(destTy)) {
-                llvm::Value* dataPtr = builder->CreateExtractValue(v, 1, "union_data");
-                if (destTy->isPointerTy()) {
-                    v = builder->CreateBitCast(dataPtr, destTy);
-                } else {
-                    llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                    v = builder->CreateLoad(destTy, typedPtr);
-                }
-                srcTy = destTy;
-                break;
-            }
-            if (!isUnionType(srcTy) && destTy == unionTy) {
-                int tag = findUnionVariantTag(unionName, (*ret)->value, v);
-                if (tag == -1) {
-                    cg_error((*ret)->pos, "return value doesn't match union variant", "QC-S263");
-                    return;
-                }
-
-                llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
-                unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-                llvm::Value* dataPtr = storeAndGetPointer(v);
-                unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
-
-                builder->CreateRet(unionVal);
-                return;
-            }
-        }
-        builder->CreateRet(v);
-        return;
+        emitMultiRet(mret);
+    } else if (auto ret = safe_get<ReturnNode>(node)) {
+        emitRet(ret);
     } else if (auto mv = safe_get<MultiVarDeclNode>(node)) {
-        llvm::Value* callVal = emitExpr(mv->value);
-        if (!callVal) {
-            cg_error(mv->var_names[0].pos, "failed to compile multi-var initializer", "QC-S266");
-            return;
-        }
-
-        llvm::Type* retTy = callVal->getType();
-        if (!retTy->isStructTy() || retTy->getStructNumElements() != mv->var_names.size()) {
-            cg_error(mv->var_names[0].pos, "multi-return arity/type mismatch", "QC-T055");
-            return;
-        }
-
-        for (size_t i = 0; i < mv->var_names.size(); ++i) {
-            llvm::Value* field = builder->CreateExtractValue(callVal, i);
-            std::string name = mv->var_names[i].value;
-            std::string typeStr = mv->type_toks[i].value;
-            if (typeStr.find("[]") != std::string::npos) {
-                std::string baseType = typeStr;
-                while (baseType.ends_with("[]")) { baseType = baseType.substr(0, baseType.length() - 2); }
-                arrayTypeStrings[name] = baseType;
-            }
-            llvm::Type* srcTy = field->getType();
-            llvm::Type* destTy = llvmTypeFor(typeStr);
-            for (auto& [unionName, unionTy] : unionTypes) {
-                if (srcTy == unionTy && !isUnionType(destTy)) {
-                    llvm::Value* dataPtr = builder->CreateExtractValue(field, 1, "union_data");
-                    if (destTy->isPointerTy()) {
-                        field = builder->CreateBitCast(dataPtr, destTy);
-                    } else {
-                        llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                        field = builder->CreateLoad(destTy, typedPtr);
-                    }
-                    srcTy = destTy;
-                    break;
-                }
-            }
-            llvm::AllocaInst* alloc = createEntryAlloca(name, destTy);
-            builder->CreateStore(field, alloc);
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
-            locals[fullName] = alloc;
-        }
-
-        return;
+        emitMultiVar(mv);
     } else if (auto if_node = safe_get<IfNode>(node)) {
-        size_t outerDepth = defersStack.size();
-        enterScope();
-        if (if_node->init.has_value()) { emitStmt(if_node->init.value()); }
-        llvm::Value* cond = emitExpr(if_node->condition);
-        if (!cond) {
-            exitScope();
-            return;
-        }
-        llvm::ConstantInt* comptimeValue = nullptr;
-        if (if_node->is_comptime) {
-            comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(cond);
-            if (!comptimeValue) {
-                cg_error(get_pos(if_node->condition), "comptime if condition must be evaluatable at compile time.", "QC-S267");
-                return;
-            }
-            llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(context, "ifcont", currentFunction);
-            enterScope();
-            if (comptimeValue->getZExtValue() != 0) {
-                for (auto& stmt : if_node->then_branch->statements) { emitStmt(stmt); }
-            } else {
-                bool emitedBranch = false;
-                for (size_t i = 0; i < if_node->elif_branches.size(); i++) {
-                    llvm::Value* elifCond = emitExpr(if_node->elif_branches[i].first);
-                    comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(elifCond);
-                    if (!comptimeValue) {
-                        cg_error(get_pos(if_node->elif_branches[i].first),
-                                 "all conditions including else ifs in a comptime if must be evaluatable at compile time.", "QC-S268");
-                        return;
-                    }
-                    if (comptimeValue->getZExtValue() != 0) {
-                        for (auto& stmt : if_node->elif_branches[i].second->statements) { emitStmt(stmt); }
-                        if (!builder->GetInsertBlock()->getTerminator()) {
-                            emitDefersDownTo(outerDepth + 2);
-                            builder->CreateBr(mergeBB);
-                        }
-                        emitedBranch = true;
-                        break;
-                    }
-                }
-                if (!emitedBranch && if_node->else_branch) {
-                    for (auto& stmt : if_node->else_branch->statements) { emitStmt(stmt); }
-                    if (!builder->GetInsertBlock()->getTerminator()) {
-                        emitDefersDownTo(outerDepth + 2);
-                        builder->CreateBr(mergeBB);
-                    }
-                }
-            }
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 2);
-                builder->CreateBr(mergeBB);
-            }
-            exitScope();
-            builder->SetInsertPoint(mergeBB);
-        } else {
-            comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(cond);
-            if (comptimeValue) {
-                warn("constant-condition", get_pos(if_node),
-                     std::string("condition to if is compile-time, always will be ") + (comptimeValue->getZExtValue() == 0 ? "false" : "true"),
-                     "QC-W015");
-            }
-            cond = normalizeValue(cond, if_node->condition);
-            cond = toTruthiness(cond, get_pos(if_node->condition));
-            if (!cond) {
-                exitScope();
-                return;
-            }
-            llvm::BasicBlock* thenBB = llvm::BasicBlock::Create(context, "then", currentFunction);
-            llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(context, "ifcont", currentFunction);
-            std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> elifBlocks;
-            for (size_t i = 0; i < if_node->elif_branches.size(); i++) {
-                llvm::BasicBlock* elifCondBB = llvm::BasicBlock::Create(context, "elif.cond", currentFunction);
-                llvm::BasicBlock* elifBodyBB = llvm::BasicBlock::Create(context, "elif.body", currentFunction);
-                elifBlocks.push_back({elifCondBB, elifBodyBB});
-            }
-
-            llvm::BasicBlock* elseBB = nullptr;
-            if (if_node->else_branch) { elseBB = llvm::BasicBlock::Create(context, "else", currentFunction); }
-            llvm::BasicBlock* nextBB = elifBlocks.empty() ? (elseBB ? elseBB : mergeBB) : elifBlocks[0].first;
-            builder->CreateCondBr(cond, thenBB, nextBB);
-            builder->SetInsertPoint(thenBB);
-            enterScope();
-            for (auto& stmt : if_node->then_branch->statements) { emitStmt(stmt); }
-            if (if_node->then_branch->statements.empty()) { warn("empty-body", get_pos(if_node), "if body is empty", "QC-W16"); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 2);
-                builder->CreateBr(mergeBB);
-            }
-            exitScope();
-            for (size_t i = 0; i < elifBlocks.size(); i++) {
-                builder->SetInsertPoint(elifBlocks[i].first);
-                llvm::Value* elifCond = emitExpr(if_node->elif_branches[i].first);
-                elifCond = normalizeValue(elifCond, if_node->elif_branches[i].first);
-                elifCond = toTruthiness(elifCond, get_pos(if_node->elif_branches[i].first));
-                comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(elifCond);
-                if (comptimeValue) {
-                    warn("constant-condition", get_pos(if_node),
-                         std::string("condition to else if is compile-time, always will be ") +
-                             (comptimeValue->getZExtValue() == 0 ? "false" : "true"),
-                         "QC-W015");
-                }
-                llvm::BasicBlock* nextElifBB = (i + 1 < elifBlocks.size()) ? elifBlocks[i + 1].first : (elseBB ? elseBB : mergeBB);
-                builder->CreateCondBr(elifCond, elifBlocks[i].second, nextElifBB);
-
-                builder->SetInsertPoint(elifBlocks[i].second);
-                enterScope();
-                for (auto& stmt : if_node->elif_branches[i].second->statements) { emitStmt(stmt); }
-                if (if_node->elif_branches[i].second->statements.empty()) { warn("empty-body", get_pos(if_node), "else if body is empty", "QC-W16"); }
-                if (!builder->GetInsertBlock()->getTerminator()) {
-                    emitDefersDownTo(outerDepth + 2);
-                    builder->CreateBr(mergeBB);
-                }
-                exitScope();
-            }
-            if (elseBB) {
-                builder->SetInsertPoint(elseBB);
-                enterScope();
-                for (auto& stmt : if_node->else_branch->statements) { emitStmt(stmt); }
-                if (if_node->else_branch->statements.empty()) { warn("empty-body", get_pos(if_node), "else body is empty", "QC-W16"); }
-                if (!builder->GetInsertBlock()->getTerminator()) {
-                    emitDefersDownTo(outerDepth + 2);
-                    builder->CreateBr(mergeBB);
-                }
-                exitScope();
-            }
-            exitScope();
-            builder->SetInsertPoint(mergeBB);
-        }
+        emitIf(if_node);
     } else if (auto while_node = safe_get<WhileNode>(node)) {
-        size_t outerDepth = defersStack.size();
-        loopStack.push_back(outerDepth);
-        enterScope();
-        llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "while.cond", currentFunction);
-        llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "while.body", currentFunction);
-        llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "while.end", currentFunction);
-        llvm::BasicBlock* oldBreakBB = currentBreakBB;
-        llvm::BasicBlock* oldContinueBB = currentContinueBB;
-        currentBreakBB = endBB;
-        currentContinueBB = condBB;
-        if (while_node->is_dowhile) {
-            builder->CreateBr(bodyBB);
-        } else {
-            builder->CreateBr(condBB);
-        }
-        builder->SetInsertPoint(condBB);
-        llvm::Value* cond = emitExpr(while_node->condition);
-        if (!cond) return;
-        cond = normalizeValue(cond, while_node->condition);
-        cond = toTruthiness(cond, get_pos(while_node->condition));
-        if (!cond) return;
-        builder->CreateCondBr(cond, bodyBB, endBB);
-        builder->SetInsertPoint(bodyBB);
-        for (auto& stmt : while_node->body->statements) { emitStmt(stmt); }
-        if (while_node->body->statements.empty()) { warn("empty-body", get_pos(while_node), "while body is empty", "QC-W16"); }
-
-        if (!builder->GetInsertBlock()->getTerminator()) {
-            emitDefersDownTo(outerDepth + 1);
-            builder->CreateBr(condBB);
-        }
-        currentBreakBB = oldBreakBB;
-        currentContinueBB = oldContinueBB;
-        exitScope();
-        loopStack.pop_back();
-        builder->SetInsertPoint(endBB);
+        emitWhile(while_node);
     } else if (std::holds_alternative<BreakNode*>(node)) {
         if (currentBreakBB) {
             if (!loopStack.empty()) emitDefersDownTo(loopStack.back());
@@ -9410,847 +10380,19 @@ void LLVMCompiler::emitStmt(AnyNode node) {
             cg_error(get_pos(node), "continue outside of loop", "QC-S270");
         }
     } else if (auto for_node = safe_get<ForNode>(node)) {
-        size_t outerDepth = defersStack.size();
-        loopStack.push_back(outerDepth);
-        enterScope();
-        if (for_node->init.has_value()) { emitStmt(for_node->init.value()); }
-        llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "for.cond", currentFunction);
-        llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "for.body", currentFunction);
-        llvm::BasicBlock* incBB = llvm::BasicBlock::Create(context, "for.inc", currentFunction);
-        llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "for.end", currentFunction);
-        llvm::BasicBlock* oldBreakBB = currentBreakBB;
-        llvm::BasicBlock* oldContinueBB = currentContinueBB;
-        currentBreakBB = endBB;
-        currentContinueBB = incBB;
-        builder->CreateBr(condBB);
-        builder->SetInsertPoint(condBB);
-        llvm::Value* cond = emitExpr(for_node->condition);
-        if (!cond) return;
-        cond = normalizeValue(cond, for_node->condition);
-        cond = toTruthiness(cond, get_pos(for_node->condition));
-        if (!cond) return;
-        builder->CreateCondBr(cond, bodyBB, endBB);
-        builder->SetInsertPoint(bodyBB);
-        for (auto& stmt : for_node->body->statements) { emitStmt(stmt); }
-        if (!builder->GetInsertBlock()->getTerminator()) {
-            emitDefersDownTo(outerDepth + 1);
-            builder->CreateBr(incBB);
-        }
-        builder->SetInsertPoint(incBB);
-        if (for_node->update.has_value()) { emitStmt(for_node->update.value()); }
-        builder->CreateBr(condBB);
-        currentBreakBB = oldBreakBB;
-        currentContinueBB = oldContinueBB;
-        exitScope();
-        loopStack.pop_back();
-        builder->SetInsertPoint(endBB);
+        emitFor(for_node);
     } else if (auto switch_node = safe_get<SwitchNode>(node)) {
-        size_t outerDepth = defersStack.size();
-        enterScope();
-        llvm::Value* switchVal = emitExpr(switch_node->value);
-        if (!switchVal) return;
-
-        llvm::Type* switchTy = switchVal->getType();
-
-        bool canUseSwitch = switchTy->isIntegerTy();
-
-        for (auto& [unionName, unionTy] : unionTypes) {
-            if (switchTy == unionTy) {
-                canUseSwitch = false;
-                break;
-            }
-        }
-
-        llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "switch.end", currentFunction);
-        std::vector<llvm::BasicBlock*> sectionBlocks;
-        llvm::BasicBlock* defaultBB = nullptr;
-
-        for (auto& section : switch_node->sections) {
-            llvm::BasicBlock* bb = llvm::BasicBlock::Create(context, "switch.case", currentFunction);
-            sectionBlocks.push_back(bb);
-            if (section.is_default) { defaultBB = bb; }
-        }
-
-        if (!defaultBB) { defaultBB = endBB; }
-
-        if (canUseSwitch) {
-            llvm::SwitchInst* switchInst = builder->CreateSwitch(switchVal, defaultBB, switch_node->sections.size());
-
-            for (size_t i = 0; i < switch_node->sections.size(); i++) {
-                auto& section = switch_node->sections[i];
-                if (section.is_default) continue;
-
-                for (auto& caseLabel : section.cases) {
-                    llvm::Value* caseVal = emitExpr(caseLabel.expr);
-                    if (!caseVal) {
-                        cg_error(get_pos(caseLabel.expr), "Failed to emit switch case value", "QC-S278");
-                        return;
-                    }
-                    if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(caseVal)) { switchInst->addCase(constInt, sectionBlocks[i]); }
-                }
-            }
-        } else {
-            llvm::BasicBlock* currentCheckBB = builder->GetInsertBlock();
-
-            for (size_t i = 0; i < switch_node->sections.size(); i++) {
-                auto& section = switch_node->sections[i];
-
-                if (section.is_default) { continue; }
-                llvm::BasicBlock* nextCheckBB = (i + 1 < switch_node->sections.size())
-                                                    ? llvm::BasicBlock::Create(context, "switch.check", currentFunction)
-                                                    : defaultBB;
-
-                builder->SetInsertPoint(currentCheckBB);
-
-                llvm::Value* matches = nullptr;
-                for (auto& caseLabel : section.cases) {
-                    llvm::Value* caseVal = emitExpr(caseLabel.expr);
-
-                    llvm::Value* cmp = nullptr;
-
-                    if (switchTy->isPointerTy() && caseVal->getType()->isPointerTy()) {
-                        llvm::Function* strcmp_fn = module->getFunction("qc_string_eq");
-                        cmp = builder->CreateCall(strcmp_fn, {switchVal, caseVal});
-                    } else if (switchTy->isIntegerTy()) {
-                        cmp = builder->CreateICmpEQ(switchVal, caseVal);
-                    } else if (switchTy->isFloatingPointTy()) {
-                        cmp = builder->CreateFCmpOEQ(switchVal, caseVal);
-                    } else {
-                        llvm::Value* switchTag = builder->CreateExtractValue(switchVal, 0);
-                        llvm::Value* caseTag = builder->CreateExtractValue(caseVal, 0);
-                        llvm::Value* tagMatch = builder->CreateICmpEQ(switchTag, caseTag);
-
-                        llvm::Value* switchData = builder->CreateExtractValue(switchVal, 1);
-                        llvm::Value* caseData = builder->CreateExtractValue(caseVal, 1);
-                        llvm::Value* dataMatch = builder->CreateICmpEQ(switchData, caseData);
-
-                        cmp = builder->CreateAnd(tagMatch, dataMatch);
-                    }
-                    if (matches) {
-                        matches = builder->CreateOr(matches, cmp);
-                    } else {
-                        matches = cmp;
-                    }
-                }
-
-                builder->CreateCondBr(matches, sectionBlocks[i], nextCheckBB);
-                currentCheckBB = nextCheckBB;
-            }
-        }
-
-        llvm::BasicBlock* oldBreakBB = currentBreakBB;
-        currentBreakBB = endBB;
-
-        for (size_t i = 0; i < switch_node->sections.size(); i++) {
-            builder->SetInsertPoint(sectionBlocks[i]);
-
-            for (auto& stmt : switch_node->sections[i].body->statements) { emitStmt(stmt); }
-
-            if (!builder->GetInsertBlock()->getTerminator()) {
-
-                if (i + 1 < sectionBlocks.size()) {
-                    builder->CreateBr(sectionBlocks[i + 1]);
-                } else {
-                    emitDefersDownTo(outerDepth + 1);
-                    builder->CreateBr(endBB);
-                }
-            }
-        }
-
-        currentBreakBB = oldBreakBB;
-        exitScope();
-        builder->SetInsertPoint(endBB);
+        emitSwitch(switch_node);
     } else if (auto qif_node = safe_get<QIfNode>(node)) {
-        size_t outerDepth = defersStack.size();
-        enterScope();
-        if (qif_node->init.has_value()) { emitStmt(qif_node->init.value()); }
-        llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "qif.end", currentFunction);
-
-        llvm::Value* qifCond = emitExpr(qif_node->condition);
-        qifCond = normalizeValue(qifCond, qif_node->condition);
-        llvm::Value* qifBit1 = builder->CreateAnd(qifCond, builder->getIntN(2, 0b10));
-        llvm::Value* qif_is_true = builder->CreateICmpNE(qifBit1, builder->getIntN(2, 0));
-
-        llvm::BasicBlock* qifBodyBB = llvm::BasicBlock::Create(context, "qif.body", currentFunction);
-        llvm::BasicBlock* nextBB = (qif_node->qelif_branches.empty() && !qif_node->qelse_branch)
-                                       ? endBB
-                                       : llvm::BasicBlock::Create(context, "qelif.check", currentFunction);
-
-        builder->CreateCondBr(qif_is_true, qifBodyBB, nextBB);
-
-        builder->SetInsertPoint(qifBodyBB);
-        enterScope();
-        for (auto& stmt : qif_node->then_branch->statements) { emitStmt(stmt); }
-        if (!builder->GetInsertBlock()->getTerminator()) {
-            emitDefersDownTo(outerDepth + 2);
-            builder->CreateBr(endBB);
-        }
-        exitScope();
-        for (size_t i = 0; i < qif_node->qelif_branches.size(); i++) {
-            builder->SetInsertPoint(nextBB);
-
-            llvm::Value* elifCond = emitExpr(qif_node->qelif_branches[i].first);
-            llvm::Value* elifBit1 = builder->CreateAnd(elifCond, builder->getIntN(2, 0b10));
-            llvm::Value* elif_is_true = builder->CreateICmpNE(elifBit1, builder->getIntN(2, 0));
-
-            llvm::BasicBlock* elifBodyBB = llvm::BasicBlock::Create(context, "qelif.body", currentFunction);
-            llvm::BasicBlock* nextElifBB = (i + 1 < qif_node->qelif_branches.size() || qif_node->qelse_branch)
-                                               ? llvm::BasicBlock::Create(context, "qelif.check", currentFunction)
-                                               : endBB;
-
-            builder->CreateCondBr(elif_is_true, elifBodyBB, nextElifBB);
-            builder->SetInsertPoint(elifBodyBB);
-            enterScope();
-            for (auto& stmt : qif_node->qelif_branches[i].second->statements) { emitStmt(stmt); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 2);
-                builder->CreateBr(endBB);
-            }
-            exitScope();
-            nextBB = nextElifBB;
-        }
-
-        if (qif_node->qelse_branch) {
-            builder->SetInsertPoint(nextBB);
-            llvm::Value* qifBit0 = builder->CreateAnd(qifCond, builder->getIntN(2, 0b01));
-            llvm::Value* all_false = builder->CreateICmpNE(qifBit0, builder->getIntN(2, 0));
-            for (auto& qelif : qif_node->qelif_branches) {
-                llvm::Value* elifCond = emitExpr(qelif.first);
-                llvm::Value* elifBit0 = builder->CreateAnd(elifCond, builder->getIntN(2, 0b01));
-                llvm::Value* elif_false = builder->CreateICmpNE(elifBit0, builder->getIntN(2, 0));
-                all_false = builder->CreateAnd(all_false, elif_false);
-            }
-
-            llvm::BasicBlock* qelseBodyBB = llvm::BasicBlock::Create(context, "qelse.body", currentFunction);
-            builder->CreateCondBr(all_false, qelseBodyBB, endBB);
-
-            builder->SetInsertPoint(qelseBodyBB);
-            enterScope();
-            for (auto& stmt : qif_node->qelse_branch->statements) { emitStmt(stmt); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 2);
-                builder->CreateBr(endBB);
-            }
-            exitScope();
-        }
-        exitScope();
-        builder->SetInsertPoint(endBB);
+        emitQIf(qif_node);
     } else if (auto qsw = safe_get<QSwitchNode>(node)) {
-        size_t outerDepth = defersStack.size();
-        enterScope();
-        llvm::Value* qb_val = emitExpr(qsw->value);
-        if (!qb_val) {
-            cg_error(get_pos(qsw), "failed to compile qswitch value", "QC-S271");
-            return;
-        }
-        qb_val = normalizeValue(qb_val, qsw->value);
-        if (qb_val->getType() != builder->getIntNTy(2)) {
-            cg_error(get_pos(qsw), "qswitch requires qbool type", "QC-T056");
-            return;
-        }
-        llvm::BasicBlock* check_true = llvm::BasicBlock::Create(context, "qsw.check_true", currentFunction);
-        llvm::BasicBlock* check_false = llvm::BasicBlock::Create(context, "qsw.check_false", currentFunction);
-        llvm::BasicBlock* case_t_block = nullptr;
-        llvm::BasicBlock* case_f_block = nullptr;
-        llvm::BasicBlock* case_n_block = nullptr;
-        llvm::BasicBlock* case_b_block = nullptr;
-        llvm::BasicBlock* qswitch_end = llvm::BasicBlock::Create(context, "qswitch.end", currentFunction);
-        if (qsw->case_t) { case_t_block = llvm::BasicBlock::Create(context, "qsw.case_t", currentFunction); }
-        if (qsw->case_f) { case_f_block = llvm::BasicBlock::Create(context, "qsw.case_f", currentFunction); }
-        if (qsw->case_n) { case_n_block = llvm::BasicBlock::Create(context, "qsw.case_n", currentFunction); }
-        if (qsw->case_b) { case_b_block = llvm::BasicBlock::Create(context, "qsw.case_b", currentFunction); }
-        builder->CreateBr(check_true);
-        builder->SetInsertPoint(check_true);
-        llvm::Value* has_true = builder->CreateAnd(qb_val, builder->getIntN(2, 2), "has_true");
-        llvm::Value* is_true = builder->CreateICmpNE(has_true, builder->getIntN(2, 0), "is_true");
-        builder->CreateCondBr(is_true, check_false, check_false);
-        builder->SetInsertPoint(check_false);
-        llvm::Value* has_false = builder->CreateAnd(qb_val, builder->getIntN(2, 1), "has_false");
-        llvm::Value* is_false = builder->CreateICmpNE(has_false, builder->getIntN(2, 0), "is_false");
-        llvm::Value* is_both = builder->CreateAnd(is_true, is_false, "is_both");
-        llvm::Value* not_false = builder->CreateNot(is_false, "not_false");
-        llvm::Value* is_qtrue_only = builder->CreateAnd(is_true, not_false, "is_qtrue_only");
-        llvm::Value* not_true = builder->CreateNot(is_true, "not_true");
-        llvm::Value* is_qfalse_only = builder->CreateAnd(not_true, is_false, "is_qfalse_only");
-        llvm::Value* is_none = builder->CreateAnd(not_true, not_false, "is_none");
-        llvm::BasicBlock* check_qtrue = llvm::BasicBlock::Create(context, "qsw.check_qtrue", currentFunction);
-        llvm::BasicBlock* check_qfalse = llvm::BasicBlock::Create(context, "qsw.check_qfalse", currentFunction);
-        llvm::BasicBlock* check_none_final = llvm::BasicBlock::Create(context, "qsw.check_none_final", currentFunction);
-        builder->CreateCondBr(is_both, case_b_block ? case_b_block : qswitch_end, check_qtrue);
-        builder->SetInsertPoint(check_qtrue);
-        builder->CreateCondBr(is_qtrue_only, case_t_block ? case_t_block : qswitch_end, check_qfalse);
-        builder->SetInsertPoint(check_qfalse);
-        builder->CreateCondBr(is_qfalse_only, case_f_block ? case_f_block : qswitch_end, check_none_final);
-        builder->SetInsertPoint(check_none_final);
-        builder->CreateCondBr(is_none, case_n_block ? case_n_block : qswitch_end, qswitch_end);
-        if (case_t_block && qsw->case_t) {
-            builder->SetInsertPoint(case_t_block);
-            for (auto& stmt : qsw->case_t->statements) { emitStmt(stmt); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 1);
-                builder->CreateBr(qswitch_end);
-            }
-        }
-
-        if (case_f_block && qsw->case_f) {
-            builder->SetInsertPoint(case_f_block);
-            for (auto& stmt : qsw->case_f->statements) { emitStmt(stmt); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 1);
-                builder->CreateBr(qswitch_end);
-            }
-        }
-
-        if (case_n_block && qsw->case_n) {
-            builder->SetInsertPoint(case_n_block);
-            for (auto& stmt : qsw->case_n->statements) { emitStmt(stmt); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 1);
-                builder->CreateBr(qswitch_end);
-            }
-        }
-        if (case_b_block && qsw->case_b) {
-            builder->SetInsertPoint(case_b_block);
-            for (auto& stmt : qsw->case_b->statements) { emitStmt(stmt); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 1);
-                builder->CreateBr(qswitch_end);
-            }
-        }
-        exitScope();
-        builder->SetInsertPoint(qswitch_end);
+        emitQSwitch(qsw);
     } else if (auto arrDecl = safe_get<ArrayDeclNode>(node)) {
-        std::string name = arrDecl->var_name_tok.value;
-        std::string elemType = arrDecl->type_tok.value;
-        bool isVolatile = false;
-        if (elemType.starts_with("volatile ")) {
-            isVolatile = true;
-            elemType.erase(0, 9);
-        }
-        llvm::Type* elemTy = llvmTypeFor(elemType);
-        if (!elemTy) {
-            cg_error(arrDecl->type_tok.pos, "unknown array element type: " + elemType, "QC-T057");
-            return;
-        }
-        arrayTypeStrings[name] = elemType;
-        if (!std::holds_alternative<ArrayLiteralNode*>(arrDecl->value) && !std::holds_alternative<std::monostate>(arrDecl->value)) {
-
-            llvm::Value* arrPtr = emitExpr(arrDecl->value);
-            if (!arrPtr) return;
-
-            llvm::AllocaInst* alloc = createEntryAlloca(name, arrPtr->getType());
-            builder->CreateStore(arrPtr, alloc, isVolatile);
-            locals[name] = alloc;
-            volatileVars[name] = isVolatile;
-            return;
-        }
-        if (auto arrLit = std::get_if<ArrayLiteralNode*>(&arrDecl->value)) {
-            if ((*arrLit)->elements.empty()) {
-                llvm::Value* lengthValue = emitExpr((*arrLit)->length);
-                auto* lengthConstant = llvm::dyn_cast<llvm::ConstantInt>(lengthValue);
-                if (!lengthConstant) {
-                    cg_error(get_pos(*arrLit), "array length must be constant", "QC-S272");
-                    return;
-                }
-                uint64_t length = lengthConstant->getZExtValue();
-                auto* arrTy = llvm::ArrayType::get(elemTy, length);
-                auto* alloc = createEntryAlloca(name, arrTy);
-                uint64_t bytes = module->getDataLayout().getTypeAllocSize(arrTy).getFixedValue();
-                if (config.use_runtime) builder->CreateMemSet(alloc, builder->getInt8(0), builder->getInt64(bytes), llvm::MaybeAlign(1), isVolatile);
-                locals[name] = alloc;
-                arrayTypeStrings[name] = elemType;
-                arrayLengths[name] = length;
-                volatileVars[name] = isVolatile;
-                return;
-            }
-            bool hasSpread = false;
-            for (auto& elem : (*arrLit)->elements) {
-                if (std::holds_alternative<SpreadNode*>(elem)) {
-                    hasSpread = true;
-                    break;
-                }
-            }
-
-            if (hasSpread) {
-                llvm::Value* arrPtr = emitExpr(arrDecl->value);
-                if (!arrPtr) return;
-                llvm::Value* totalSize = builder->getInt32(0);
-                if (auto arrLit = std::get_if<ArrayLiteralNode*>(&arrDecl->value)) {
-                    for (auto& elem : (*arrLit)->elements) {
-                        if (auto spread = std::get_if<SpreadNode*>(&elem)) {
-                            llvm::Value* collVal = emitExpr((*spread)->expr);
-                            llvm::Value* spreadLen = getCollectionLength(collVal, (*spread)->expr);
-                            totalSize = builder->CreateAdd(totalSize, spreadLen);
-                        } else {
-                            totalSize = builder->CreateAdd(totalSize, builder->getInt32(1));
-                        }
-                    }
-                }
-
-                if (!arrDecl->sizes.empty() && arrDecl->sizes[0].has_value()) {
-                    int userSize = *arrDecl->sizes[0];
-                    arrayLengths[name] = userSize;
-                } else if (auto* constSize = llvm::dyn_cast<llvm::ConstantInt>(totalSize)) {
-                    arrayLengths[name] = constSize->getSExtValue();
-                } else {
-                    llvm::AllocaInst* sizeAlloc = createEntryAlloca(name + "_size", builder->getInt32Ty());
-                    builder->CreateStore(totalSize, sizeAlloc);
-                    runtimeArraySizes[name] = sizeAlloc;
-                }
-                llvm::AllocaInst* alloc = createEntryAlloca(name, arrPtr->getType());
-                builder->CreateStore(arrPtr, alloc, isVolatile);
-                std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
-                locals[fullName] = alloc;
-                arrayTypeStrings[fullName] = elemType;
-                volatileVars[fullName] = isVolatile;
-                return;
-            }
-            auto [isJagged, depth] = checkJagged(arrDecl->value);
-            size_t arraySize = (*arrLit)->elements.size();
-            arrayLengths[name] = arraySize;
-            if (isJagged) {
-                int elemTypeCode = -1;
-                if (elemType == "int")
-                    elemTypeCode = 0;
-                else if (elemType == "float")
-                    elemTypeCode = 1;
-                else if (elemType == "double")
-                    elemTypeCode = 2;
-                else if (elemType == "char")
-                    elemTypeCode = 3;
-                else if (elemType == "bool")
-                    elemTypeCode = 4;
-                else if (elemType == "qbool")
-                    elemTypeCode = 5;
-                else if (elemType == "string")
-                    elemTypeCode = 6;
-
-                llvm::Value* jaggedArr = createJaggedArray(arrDecl->value, elemTypeCode, depth - 1);
-                llvm::Type* ptrTy = llvm::PointerType::get(context, 0);
-                llvm::AllocaInst* alloc = createEntryAlloca(name, ptrTy);
-                builder->CreateStore(jaggedArr, alloc, isVolatile);
-                std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
-                locals[fullName] = alloc;
-                volatileVars[fullName] = isVolatile;
-                jaggedArrays[fullName] = {elemTypeCode, depth};
-                return;
-            }
-
-            std::vector<uint64_t> actualSizes;
-
-            std::function<void(AnyNode&, int)> inferDims;
-            inferDims = [&](AnyNode& node, int depth) {
-                if (auto lit = std::get_if<ArrayLiteralNode*>(&node)) {
-                    if (actualSizes.size() <= depth) { actualSizes.push_back((*lit)->elements.size()); }
-                    if (!(*lit)->elements.empty()) { inferDims((*lit)->elements[0], depth + 1); }
-                }
-            };
-
-            inferDims(arrDecl->value, 0);
-            llvm::Type* arrTy = elemTy;
-            for (int i = actualSizes.size() - 1; i >= 0; i--) { arrTy = llvm::ArrayType::get(arrTy, actualSizes[i]); }
-
-            bool useHeap = (currentFunction != nullptr);
-
-            llvm::AllocaInst* alloc;
-            if (useHeap) {
-                llvm::Function* mallocFn = module->getFunction("qc_malloc");
-                if (!mallocFn) {
-                    llvm::FunctionType* mallocTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {builder->getIntNTy(getPtrSize())},
-                                                                           false);
-                    mallocFn = llvm::Function::Create(mallocTy, llvm::Function::InternalLinkage, "qc_malloc", module);
-                }
-
-                const llvm::DataLayout& DL = module->getDataLayout();
-                uint64_t sizeBytes = DL.getTypeAllocSize(arrTy);
-
-                llvm::Value* mallocCall = builder->CreateCall(mallocFn, {builder->getInt64(sizeBytes)}, "heap_arr");
-                llvm::Value* arrPtr = builder->CreateBitCast(mallocCall, llvm::PointerType::get(context, 0), "arr_cast");
-
-                alloc = createEntryAlloca(name, llvm::PointerType::get(context, 0));
-                builder->CreateStore(arrPtr, alloc, isVolatile);
-                arrayTypeStrings[name] = elemType;
-            } else {
-                alloc = createEntryAlloca(name, arrTy);
-            }
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
-            locals[fullName] = alloc;
-            volatileVars[fullName] = isVolatile;
-            std::function<void(llvm::Value*, llvm::Type*, AnyNode&, std::vector<uint64_t>&)> initArray;
-            initArray = [&](llvm::Value* ptr, llvm::Type* ty, AnyNode& node, std::vector<uint64_t>& indices) {
-                if (auto lit = std::get_if<ArrayLiteralNode*>(&node)) {
-                    for (size_t i = 0; i < (*lit)->elements.size(); i++) {
-                        indices.push_back(i);
-
-                        if (std::holds_alternative<ArrayLiteralNode*>((*lit)->elements[i])) {
-                            initArray(ptr, ty, (*lit)->elements[i], indices);
-                        } else {
-                            llvm::Value* elemVal = emitExpr((*lit)->elements[i]);
-                            if (!elemVal) return;
-
-                            std::vector<llvm::Value*> llvmIndices = useHeap ? std::vector<llvm::Value*>{builder->getInt32(0)}
-                                                                            : std::vector<llvm::Value*>{builder->getInt32(0)};
-
-                            for (auto idx : indices) { llvmIndices.push_back(builder->getInt32(idx)); }
-
-                            llvm::Value* basePtr = useHeap ? builder->CreateLoad(llvm::PointerType::get(context, 0), alloc, "heap_ptr")
-                                                           : static_cast<llvm::Value*>(alloc);
-
-                            llvm::Value* elemPtr = builder->CreateInBoundsGEP(arrTy, basePtr, llvmIndices);
-                            builder->CreateStore(elemVal, elemPtr);
-                        }
-
-                        indices.pop_back();
-                    }
-                }
-            };
-
-            std::vector<uint64_t> indices;
-            initArray(alloc, arrTy, arrDecl->value, indices);
-        }
-        if (!arrDecl->sizes.empty() && arrDecl->sizes[0].has_value()) {
-            int arraySize = *arrDecl->sizes[0];
-            if (std::holds_alternative<std::monostate>(arrDecl->value)) {
-                llvm::ArrayType* arrTy = llvm::ArrayType::get(elemTy, arraySize);
-                llvm::AllocaInst* alloc = createEntryAlloca(name, arrTy);
-                const llvm::DataLayout& dl = module->getDataLayout();
-                uint64_t sizeBytes = dl.getTypeAllocSize(arrTy).getFixedValue();
-                if (config.use_runtime)
-                    builder->CreateMemSet(alloc, builder->getInt8(0), builder->getInt64(sizeBytes), llvm::MaybeAlign(1), isVolatile);
-                locals[name] = alloc;
-                arrayTypeStrings[name] = elemType;
-                arrayLengths[name] = arraySize;
-                volatileVars[name] = isVolatile;
-                return;
-            }
-        }
-        return;
+        emitArrDecl(arrDecl);
     } else if (auto arrAssign = safe_get<ArrayAssignNode>(node)) {
-        if (auto arrAcc = safe_get<ArrayAccessNode>(arrAssign->array_access)) {
-            std::string ptrTy = getExpressionType(arrAcc->base);
-            if (ptrTy.ends_with("*") || ptrTy == "@nullptr") {
-                if (ptrTy == "@nullptr") {
-                    warn("null-deref", get_pos(arrAcc), "attempted to dereference nullptr", "QC-W008");
-                    return;
-                }
-                if (ptrTy == "void*") {
-                    cg_error(get_pos(arrAcc), "you cannot dereference or indice void*", "QC-S273");
-                    return;
-                }
-                std::string valueTy = getExpressionType(arrAcc->indices[0]);
-                if (llvm::Type* ty = llvmTypeFor(valueTy); !ty || !ty->isIntegerTy()) {
-                    cg_error(get_pos(arrAcc->indices[0]),
-                             "attempted to index a pointer with a "
-                             "non-integer value.",
-                             "QC-S239");
-                    return;
-                }
-                llvm::Value* value = emitExpr(arrAcc->indices[0]);
-                if (!value) {
-                    cg_error(get_pos(arrAcc->indices[0]), "failed to emit index for pointer index.", "QC-S274");
-                    return;
-                }
-                ptrTy.pop_back();
-                llvm::Value* addr = builder->CreateGEP(llvmTypeFor(ptrTy), emitExpr(arrAcc->base), value, "ptr_arr_asi");
-                llvm::Value* valToStore = emitExpr(arrAssign->value);
-                builder->CreateStore(valToStore, addr);
-                return;
-            }
-            if (genericiseOrFindClass(ptrTy)) {
-                llvm::Value* obj = emitLValue(arrAcc->base, true);
-                llvm::Value* idx = emitExpr(arrAcc->indices[0]);
-                llvm::Value* ref = emitVirtualOrDirectCall(ptrTy, "operator[]", obj, {idx});
-                if (!ref) {
-                    cg_error(get_pos(arrAcc->base), ptrTy + " does not have operator[]", "QC-S240");
-                    addMethodNotes(ptrTy, "operator[]", {idx}, get_pos(arrAcc->base));
-                    return;
-                }
-                llvm::Value* val = emitExpr(arrAssign->value);
-                builder->CreateStore(val, ref);
-                return;
-            }
-            if (auto varAcc = safe_get<VarAccessNode>(arrAcc->base)) {
-                std::string name = varAcc->var_name_tok.value;
-                if (hasJaggedArray(name)) {
-                    auto jagIt = findJaggedArray(name);
-                    if (!hasLocal(name)) {
-                        cg_error(get_pos(varAcc), "unknown jagged array: " + name, "QC-S241");
-                        return;
-                    }
-                    auto it = findLocal(name);
-                    llvm::Value* jaggedPtr = builder->CreateLoad(llvm::PointerType::get(context, 0), it->second, "jagged_ptr");
-                    llvm::ArrayType* indicesArrTy = llvm::ArrayType::get(builder->getInt32Ty(), arrAcc->indices.size());
-                    llvm::AllocaInst* indicesAlloc = createEntryAlloca("indices_arr", indicesArrTy);
-
-                    for (size_t i = 0; i < arrAcc->indices.size(); i++) {
-                        llvm::Value* indexVal = emitExpr(arrAcc->indices[i]);
-                        if (!indexVal) return;
-
-                        std::vector<llvm::Value*> indices = {builder->getInt32(0), builder->getInt32(i)};
-                        llvm::Value* idxPtr = builder->CreateInBoundsGEP(indicesArrTy, indicesAlloc, indices);
-                        builder->CreateStore(indexVal, idxPtr, hasVolatileVar(name) ? findVolatileVar(name)->second : false);
-                    }
-
-                    llvm::Function* getFn = module->getFunction("qc_jagged_array_get");
-                    if (!getFn) {
-                        llvm::Type* voidPtrTy = llvm::PointerType::get(context, 0);
-                        llvm::Type* intPtrTy = llvm::PointerType::get(context, 0);
-                        llvm::FunctionType* fnTy = llvm::FunctionType::get(voidPtrTy, {voidPtrTy, intPtrTy, builder->getInt32Ty()}, false);
-                        getFn = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage, "qc_jagged_array_get", module);
-                    }
-
-                    std::vector<llvm::Value*> idxIndices = {builder->getInt32(0), builder->getInt32(0)};
-                    llvm::Value* indicesPtr = builder->CreateInBoundsGEP(indicesArrTy, indicesAlloc, idxIndices);
-
-                    llvm::Value* elemPtr = builder->CreateCall(getFn, {jaggedPtr, indicesPtr, builder->getInt32(arrAcc->indices.size())},
-                                                               "jagged_elem_ptr");
-
-                    llvm::Value* valueVal = emitExpr(arrAssign->value);
-                    if (!valueVal) return;
-
-                    int elemTypeCode = jagIt->second.first;
-                    llvm::Type* elemTy = nullptr;
-                    switch (elemTypeCode) {
-                    case 0: elemTy = builder->getInt32Ty(); break;
-                    case 1: elemTy = builder->getFloatTy(); break;
-                    case 2: elemTy = builder->getDoubleTy(); break;
-                    case 3: elemTy = builder->getInt8Ty(); break;
-                    case 4: elemTy = builder->getInt1Ty(); break;
-                    case 5: elemTy = builder->getIntNTy(2); break;
-                    case 6: elemTy = llvm::PointerType::get(context, 0); break;
-                    }
-
-                    llvm::Value* typedPtr = builder->CreateBitCast(elemPtr, llvm::PointerType::get(context, 0));
-                    builder->CreateStore(valueVal, typedPtr, hasVolatileVar(name) ? findVolatileVar(name)->second : false);
-
-                    return;
-                }
-                llvm::Value* alloc = getVarAddress(name);
-                if (!alloc) {
-                    cg_error(get_pos(arrAcc->base), "unknown array: " + name, "QC-S242");
-                    return;
-                }
-
-                llvm::Value* arrAlloc = alloc;
-                llvm::Type* arrTy = getPointeeType(name);
-
-                llvm::Value* indexVal = emitExpr(arrAcc->indices[0]);
-                if (!indexVal) return;
-
-                llvm::Value* valueVal = emitExpr(arrAssign->value);
-                if (!valueVal) return;
-                if (arrTy->isPointerTy()) {
-                    llvm::Value* ptr = builder->CreateLoad(arrTy, arrAlloc, hasVolatileVar(name) ? findVolatileVar(name)->second : false, "arr_ptr");
-                    llvm::Type* elemTy = valueVal->getType();
-
-                    llvm::Value* elemPtr = builder->CreateGEP(elemTy, ptr, indexVal, "arr_elem_ptr");
-
-                    builder->CreateStore(valueVal, elemPtr, hasVolatileVar(name) ? findVolatileVar(name)->second : false);
-                } else if (arrTy->isArrayTy()) {
-                    std::vector<llvm::Value*> indices = {builder->getInt32(0), indexVal};
-                    llvm::Value* elemPtr = builder->CreateInBoundsGEP(arrTy, arrAlloc, indices, "arr_elem_ptr");
-
-                    builder->CreateStore(valueVal, elemPtr, hasVolatileVar(name) ? findVolatileVar(name)->second : false);
-                }
-            }
-        }
-
-        return;
+        emitArrAssign(arrAssign);
     } else if (auto foreach = safe_get<ForeachNode>(node)) {
-        size_t outerDepth = defersStack.size();
-        loopStack.push_back(outerDepth);
-        std::string elemName = foreach->elem_name.value;
-        std::string iterName = "__foreach_i_" + elemName;
-        llvm::Value* lengthVal = nullptr;
-        bool isArray = false;
-        llvm::Value* arrayAlloc = nullptr;
-        llvm::Type* arrayElemTy = nullptr;
-        std::string collName = "";
-        std::string collTypeName = "";
-        llvm::Function* beginOverload = nullptr;
-        llvm::Value* collVal;
-        if (auto varAccess = std::get_if<VarAccessNode*>(&foreach->collection)) {
-            collName = (*varAccess)->var_name_tok.value;
-            collTypeName = resolveVarType(collName);
-            llvm::Value* alloc = getVarAddress(collName);
-            if (alloc) {
-                llvm::Type* allocTy = getPointeeType(collName);
-
-                if (allocTy->isArrayTy()) {
-                    isArray = true;
-                    arrayAlloc = alloc;
-                    lengthVal = builder->getInt32(allocTy->getArrayNumElements());
-                } else if (allocTy->isPointerTy()) {
-                    if (hasArrayLength(collName)) {
-                        auto lenIt = findArrayLength(collName);
-                        isArray = true;
-                        arrayAlloc = alloc;
-                        lengthVal = builder->getInt32(lenIt->second);
-
-                        if (hasArrayType(collName)) {
-                            auto typeIt = findArrayType(collName);
-                            arrayElemTy = llvmTypeFor(typeIt->second);
-                        } else {
-                        }
-                    } else if (runtimeArraySizes.find(collName) != runtimeArraySizes.end()) {
-                        isArray = true;
-                        arrayAlloc = alloc;
-                        llvm::AllocaInst* sizeAlloc = runtimeArraySizes[collName];
-                        lengthVal = builder->CreateLoad(builder->getInt32Ty(), sizeAlloc, "runtime_len");
-                        if (hasArrayType(collName)) {
-                            auto typeIt = findArrayType(collName);
-                            arrayElemTy = llvmTypeFor(typeIt->second);
-                        }
-                    } else {
-                    }
-                }
-            }
-            beginOverload = findMethodOverload(collTypeName, "_begin", {});
-            bool isIterator = !isArray && !collTypeName.empty() && beginOverload != nullptr;
-            collVal = isIterator ? emitLValue(foreach->collection) : emitExpr(foreach->collection);
-        } else {
-            collVal = userTypes.find(baseTypeName(getExpressionType(foreach->collection))) == userTypes.end() ? emitExpr(foreach->collection)
-                                                                                                              : emitLValue(foreach->collection);
-            if (userTypes.find(baseTypeName(getExpressionType(foreach->collection))) != userTypes.end()) {
-                if (userTypes[baseTypeName(getExpressionType(foreach->collection))].kind == UserTypeKind::Class) {
-                    collTypeName = getExpressionType(foreach->collection);
-                    isArray = false;
-                }
-            } else {
-                if (collVal->getType()->isArrayTy()) {
-                    collTypeName = getExpressionType(foreach->collection);
-                    isArray = true;
-                }
-            }
-        }
-        beginOverload = findMethodOverload(collTypeName, "_begin", {});
-        bool isIterator = !isArray && !collTypeName.empty() && beginOverload != nullptr;
-        llvm::AllocaInst* iterObjAlloc = nullptr;
-        std::string iterTypeName = "";
-        llvm::Type* iterLLVMTy = nullptr;
-        llvm::Value* iterLoaded = nullptr;
-        if (!collVal) return;
-        if (isIterator) {
-            auto baseInfo = userTypes.find(baseTypeName(collTypeName));
-            auto info = baseInfo->second;
-            auto oldNamespaceStack = namespaceStack;
-            namespaceStack.clear();
-
-            if (!info.namespace_path.empty()) {
-                size_t start = 0;
-                size_t pos;
-
-                while ((pos = info.namespace_path.find("::", start)) != std::string::npos) {
-                    namespaceStack.push_back(info.namespace_path.substr(start, pos - start));
-                    start = pos + 2;
-                }
-
-                namespaceStack.push_back(info.namespace_path.substr(start));
-            }
-            iterTypeName = resolveTypeName(getMethodReturnTypeName(collTypeName, "_begin"), false);
-            auto concreteParams = genericParamsFromName(collTypeName);
-            for (size_t i = 0; i < baseInfo->second.generics.size() && i < concreteParams.size(); i++) {
-                std::string gname = baseInfo->second.generics[i].name;
-                std::string gval = concreteParams[i];
-                size_t pos;
-                while ((pos = iterTypeName.find(gname, pos)) != std::string::npos) {
-                    size_t end = pos + gname.size();
-                    bool leftOk = pos == 0 || !(std::isalnum(static_cast<unsigned char>(iterTypeName[pos - 1])) || iterTypeName[pos - 1] == '_');
-                    bool rightOk = end == iterTypeName.size() ||
-                                   !(std::isalnum(static_cast<unsigned char>(iterTypeName[end])) || iterTypeName[end] == '_');
-                    if (leftOk && rightOk) {
-                        iterTypeName.replace(pos, gname.size(), gval);
-                        pos += gval.size();
-                    } else {
-                        pos += gname.size();
-                    }
-                }
-            }
-            iterLLVMTy = llvmTypeFor(iterTypeName);
-            iterObjAlloc = createEntryAlloca("__iter_" + elemName, iterLLVMTy);
-            llvm::Value* iterObj = emitMethodCall(beginOverload, collVal, {}, "_begin");
-            builder->CreateStore(iterObj, iterObjAlloc);
-            namespaceStack = oldNamespaceStack;
-        }
-        enterScope();
-        llvm::BasicBlock* savedBreakBB = currentBreakBB;
-        llvm::BasicBlock* savedContinueBB = currentContinueBB;
-        llvm::Type* elemTy = llvmTypeFor(foreach->elem_type.value);
-        llvm::AllocaInst* iterAlloc = createEntryAlloca(iterName, builder->getInt32Ty());
-        llvm::AllocaInst* elemAlloc = createEntryAlloca(elemName, elemTy);
-        locals[iterName] = iterAlloc;
-        locals[elemName] = elemAlloc;
-        varTypes[elemName] = foreach->elem_type.value;
-        varTypes[iterName] = "int";
-        builder->CreateStore(builder->getInt32(0), iterAlloc);
-        llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "foreach.cond", currentFunction);
-        llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "foreach.body", currentFunction);
-        llvm::BasicBlock* incBB = nullptr;
-        if (isArray) incBB = llvm::BasicBlock::Create(context, "foreach.inc", currentFunction);
-        llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "foreach.end", currentFunction);
-        if (isIterator)
-            currentContinueBB = condBB;
-        else
-            currentContinueBB = incBB;
-        if (!builder->GetInsertBlock()->getTerminator()) { builder->CreateBr(condBB); }
-        builder->SetInsertPoint(condBB);
-        if (isArray) {
-            llvm::Value* iVal = builder->CreateLoad(builder->getInt32Ty(), iterAlloc, iterName);
-            llvm::Value* cmpVal = builder->CreateICmpSLT(iVal, lengthVal, "foreach_cmp");
-            builder->CreateCondBr(cmpVal, bodyBB, endBB);
-        } else if (isIterator) {
-            llvm::Function* atEndFn = findMethodOverload(iterTypeName, "_atEnd", {});
-            llvm::Value* atEnd = emitMethodCall(atEndFn, iterObjAlloc, {}, "_atEnd");
-            builder->CreateCondBr(atEnd, endBB, bodyBB);
-        }
-
-        builder->SetInsertPoint(bodyBB);
-        currentBreakBB = endBB;
-        llvm::Value* elemVal = nullptr;
-        if (isArray && arrayAlloc) {
-            llvm::Value* iVal = builder->CreateLoad(builder->getInt32Ty(), iterAlloc, iterName);
-            llvm::Type* allocTy = getPointeeType(collName);
-
-            if (allocTy->isArrayTy()) {
-                std::vector<llvm::Value*> indices = {builder->getInt32(0), iVal};
-                llvm::Value* elemPtr = builder->CreateInBoundsGEP(allocTy, arrayAlloc, indices, "elem_ptr");
-                elemVal = builder->CreateLoad(elemTy, elemPtr, "elem");
-            } else if (allocTy->isPointerTy() && arrayElemTy) {
-                llvm::Value* heapPtr = builder->CreateLoad(allocTy, arrayAlloc, "heap_ptr");
-                llvm::Value* elemPtr = builder->CreateGEP(arrayElemTy, heapPtr, iVal, "heap_elem_ptr");
-
-                elemVal = builder->CreateLoad(elemTy, elemPtr, "elem");
-            }
-            builder->CreateStore(elemVal, elemAlloc);
-            emitStmt(foreach->body);
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 1);
-                builder->CreateBr(incBB);
-            }
-            builder->SetInsertPoint(incBB);
-            llvm::Value* iVal2 = builder->CreateLoad(builder->getInt32Ty(), iterAlloc, iterName);
-            llvm::Value* incVal = builder->CreateAdd(iVal2, builder->getInt32(1), "i_inc");
-            builder->CreateStore(incVal, iterAlloc);
-            builder->CreateBr(condBB);
-        } else if (isIterator) {
-            iterLoaded = builder->CreateLoad(iterLLVMTy, iterObjAlloc);
-            llvm::Function* nextFn = findMethodOverload(iterTypeName, "_next", {});
-            llvm::Value* cur = emitMethodCall(nextFn, iterObjAlloc, {}, "_next");
-            builder->CreateStore(cur, elemAlloc);
-            emitStmt(foreach->body);
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerDepth + 1);
-                builder->CreateBr(condBB);
-            }
-        }
-        builder->SetInsertPoint(endBB);
-        exitScope();
-        loopStack.pop_back();
-        locals.erase(iterName);
-        locals.erase(elemName);
-        currentBreakBB = savedBreakBB;
-        currentContinueBB = savedContinueBB;
-        return;
+        emitForeach(foreach);
     } else if (auto stmts = safe_get<StatementsNode>(node)) {
         if (stmts->is_scoped) enterScope();
         for (auto& stmt : stmts->statements) { emitStmt(stmt); }
@@ -10263,110 +10405,12 @@ void LLVMCompiler::emitStmt(AnyNode node) {
 
         return;
     } else if (auto trycatch = safe_get<TryCatchNode>(node)) {
-        if (insideTry()) {
-            cg_error(get_pos(trycatch), "You cannot have nested try catch blocks. Why would you need them", "QC-TC01");
-            return;
-        }
-        size_t outerScope = defersStack.size();
-        enterScope();
-        auto* tryBB = llvm::BasicBlock::Create(context, "try.start", currentFunction);
-        auto* landingPadBB = llvm::BasicBlock::Create(context, "catch.landing", currentFunction);
-        auto* endBB = llvm::BasicBlock::Create(context, "try.end", currentFunction);
-        std::vector<llvm::BasicBlock*> catchBlocks;
-        catchBlocks.reserve(trycatch->catch_bodys.size());
-        EHScope thisScope{
-            .landingPad = landingPadBB,
-            .continuation = endBB,
-            .handlers = {},
-            .deferDepth = outerScope + 1,
-        };
-        for (size_t i = 0; i < trycatch->catch_bodys.size(); ++i) {
-            auto* catchBB = llvm::BasicBlock::Create(context, "catch." + std::to_string(i), currentFunction);
-            catchBlocks.push_back(catchBB);
-            thisScope.handlers.push_back({
-                .body = trycatch->catch_bodys[i],
-                .block = catchBB,
-            });
-        }
-        ehScopes.push_back(std::move(thisScope));
-        builder->CreateBr(tryBB);
-        builder->SetInsertPoint(tryBB);
-        enterScope();
-        emitStmt(trycatch->try_body);
-        if (!builder->GetInsertBlock()->getTerminator()) {
-            emitDefersDownTo(outerScope + 2);
-            builder->CreateBr(endBB);
-        }
-        exitScope();
-        builder->SetInsertPoint(landingPadBB);
-        auto* exceptionType = llvm::StructType::get(context, {builder->getPtrTy(), builder->getInt32Ty()});
-        std::vector<EHHandler> visibleHandlers;
-        for (auto scopeIt = ehScopes.rbegin(); scopeIt != ehScopes.rend(); ++scopeIt) {
-            for (const auto& handler : scopeIt->handlers) { visibleHandlers.push_back(handler); }
-        }
-        auto* lp = builder->CreateLandingPad(exceptionType, visibleHandlers.size(), "qc.exception");
-        for (const auto& handler : visibleHandlers) {
-            const auto& c = handler.body;
-            llvm::Constant* typeInfo = c.var_type == "..." ? llvm::ConstantPointerNull::get(builder->getPtrTy()) : getStringConstant(c.var_type);
-            lp->addClause(typeInfo);
-        }
-        if (!currentFunction->hasPersonalityFn()) { currentFunction->setPersonalityFn(module->getFunction("__qc_personality")); }
-        auto* exception = builder->CreateExtractValue(lp, 0, "exception");
-        auto* selector = builder->CreateExtractValue(lp, 1, "selector");
-        auto* noMatchBB = llvm::BasicBlock::Create(context, "catch.no_match", currentFunction);
-        auto* sw = builder->CreateSwitch(selector, noMatchBB, visibleHandlers.size());
-        for (size_t i = 0; i < visibleHandlers.size(); ++i) {
-            sw->addCase(llvm::ConstantInt::get(builder->getInt32Ty(), i + 1), visibleHandlers[i].block);
-        }
-        EHScope savedScope = std::move(ehScopes.back());
-        ehScopes.pop_back();
-        for (size_t i = 0; i < savedScope.handlers.size(); ++i) {
-            const auto& c = savedScope.handlers[i].body;
-            auto* catchBB = savedScope.handlers[i].block;
-            builder->SetInsertPoint(catchBB);
-            enterScope();
-            if (!c.var_name.empty()) {
-                std::string name = getCurrentNamespace().empty() ? c.var_name : getCurrentNamespace() + c.var_name;
-                llvm::Value* payload = builder->CreateCall(module->getFunction("__qc_exception_get_value"), {exception});
-                llvm::Type* catchLLVMType = llvmTypeFor(c.var_type);
-                llvm::Value* catchValue = nullptr;
-                if (catchLLVMType->isFloatingPointTy()) {
-                    llvm::Value* int64Val = builder->CreatePtrToInt(payload, builder->getInt64Ty());
-                    if (catchLLVMType->isFloatTy()) {
-                        llvm::Value* int32Val = builder->CreateTrunc(int64Val, builder->getInt32Ty());
-                        catchValue = builder->CreateBitCast(int32Val, builder->getFloatTy());
-                    } else {
-                        catchValue = builder->CreateBitCast(int64Val, builder->getDoubleTy());
-                    }
-                } else if (catchLLVMType->isIntegerTy()) {
-                    llvm::Value* int64Val = builder->CreatePtrToInt(payload, builder->getInt64Ty());
-                    catchValue = builder->CreateTruncOrBitCast(int64Val, catchLLVMType);
-
-                } else {
-                    catchValue = payload;
-                }
-                auto* alloc = createEntryAlloca(name, catchLLVMType);
-                builder->CreateStore(catchValue, alloc);
-                locals[name] = alloc;
-                varTypes[name] = resolveTypeName(c.var_type, false);
-            }
-            emitStmt(c.body);
-            if (c.body->statements.empty()) {
-                warn("empty-catch", get_pos(trycatch), "catch body is empty and silently consumes thrown errors", "QC-W021");
-            }
-            if (!builder->GetInsertBlock()->getTerminator()) {
-                emitDefersDownTo(outerScope + 2);
-                builder->CreateBr(endBB);
-            }
-            exitScope();
-        }
-        builder->SetInsertPoint(noMatchBB);
-        builder->CreateResume(lp);
-        exitScope();
-        builder->SetInsertPoint(endBB);
+        emitTryCatch(trycatch);
     } else if (auto defer = safe_get<DeferNode>(node)) {
         defers.push_back(defer->block);
         return;
+    } else if (auto match_node = safe_get<MatchNode>(node)) {
+        emitMatch(match_node);
     }
 }
 std::pair<bool, int> LLVMCompiler::checkJagged(AnyNode& node) {
@@ -10406,7 +10450,6 @@ std::vector<CTError> LLVMCompiler::compile(
     this->functionDefs = visibleFunctionDefs;
     this->globals = visibleGlobals;
     this->varTypesStack = {visibleVarTypes};
-    this->jaggedArraysStack = {visibleJaggedArrays};
     this->arrayTypeStringsStack = {visibleArrayTypeStrings};
     this->arrayLengthsStack = {visibleArrayLengths};
     this->runtimeArraySizes = visibleRuntimeArraySizes;
@@ -10458,7 +10501,7 @@ std::vector<CTError> LLVMCompiler::compile(
             if (auto fn = safe_get<FuncDefNode>(decl)) {
                 if (fn->name_tok.has_value()) {
                     std::string funcName = fn->name_tok.value().value;
-                    std::string fullName = getCurrentNamespace() + "::" + funcName;
+                    std::string fullName = getCurrentNamespace().empty() ? funcName : getCurrentNamespace() + "::" + funcName;
                     functionDefs[fullName] = fn;
                 }
             } else if (auto nested = std::get_if<NamespaceNode*>(&decl)) {

@@ -101,8 +101,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.0.6 = "Generics in headers."
-Next Version: x1.1.0 = "Probably tagged enums"
+Current Version: x1.1.0 = "Tags on Enums"
+Next Version: x1.1.1 = "Function Pointers"
 
 # Current Version Highlights
 
@@ -114,26 +114,23 @@ Major
 └─ N/A
 
 Moderate
-└─ Modifiers
+└─ Misc important
 
 Minor
-└─ Filesystem
+└─ Tagged Enums
 
 Patch
-└─ Nonsense
+└─ N/A
 ```
 
 # Recent Deprecations / Breaking Changes
 
-These are deprecations in the past 3 moderate versions (`x0.26.* -> x1.0.*`)
+These are deprecations in the past 3 moderate versions (`x0.27.* -> x1.1.*`)
 
-Self parameter is now a pointer.
-This now requires explicit dereference (must use `->` instead of `.`)
-Concepts as constraints must start with `proves`
+Jagged arrays will be deprecated at version x1.1.0.
 
 # Upcoming Deprecations:
 
-Jagged arrays will be deprecated at version x1.1.0.
 
 ## Feature Roadmap
 
@@ -172,7 +169,7 @@ Jagged arrays will be deprecated at version x1.1.0.
 |                     | Try/Catch and `throw`                                                  | Done    |
 |                     | Error message quality and helpfulness upgrade                          | Done    |
 
-See the full list of remaining features in the [roadmap](https://github.com/Youg-Otricked/QuarticC/blob/master/roadmap.md).
+See the full list of remaining features in the [roadmap](https://github.com/Youg-Otricked/QuarticC/blob/master/notes/roadmap.md).
 
 # Contributing
 
@@ -587,7 +584,7 @@ int main() {
 }
 ```
 
-Generics are allowed on `struct`s, `class`es, `concept`s, unions, aliases, functions, and methods.
+Generics are allowed on `struct`s, `class`es, `concept`s, unions, `enum`s, aliases, functions, and methods.
 The unique thing about QuarticC's generics is its constraint system:
 The constraint system follows this syntax:
 

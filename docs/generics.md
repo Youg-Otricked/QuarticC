@@ -8,6 +8,7 @@ QuarticC generics allow types and functions to work with multiple different type
 
 Generics are available on:
 
+- Enums
 - Classes
 - Structs
 - Unions

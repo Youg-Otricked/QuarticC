@@ -71,3 +71,22 @@ enum Status {
     OK = 0;
 };
 ```
+
+Enums can also have _tags_, special fields of each member of the enum, such as
+
+```cpp
+enum Optional {
+    Value(string);
+    None;
+};
+```
+
+Then you can extract the tags in a _match_ (a special kind of switch without fallthrough that requires every possible case be covered).
+
+```cpp
+Optional s = Optional.Value("Hello");
+match (s) {
+    Value(val) => `qout("%s", val);
+    None => unreachable;
+}
+```

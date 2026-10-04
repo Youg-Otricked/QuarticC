@@ -609,7 +609,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             }
             std::unordered_map<std::string, std::unordered_map<std::string, FunctionSignature>> db_sigs;
             std::unordered_map<std::string, std::unordered_map<std::string, FuncDefNode*>> db_fDefs;
-            std::unordered_map<std::string, std::unordered_map<std::string, std::pair<int, int>>> db_jagged;
             std::unordered_map<std::string, std::unordered_map<std::string, std::string>> db_typeStrings;
             std::unordered_map<std::string, std::unordered_map<std::string, int>> db_lengths;
             std::unordered_map<std::string, std::unordered_map<std::string, std::string>> db_vars;
@@ -645,7 +644,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                         auto pre = ns + "::";
                         auto& d_sigs = db_sigs.at(dep_p);
                         auto& d_fDefs = db_fDefs.at(dep_p);
-                        auto& d_jagged = db_jagged.at(dep_p);
                         auto& d_typeStr = db_typeStrings.at(dep_p);
                         auto& d_len = db_lengths.at(dep_p);
                         auto& d_vars = db_vars.at(dep_p);
@@ -657,8 +655,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                             if (k.rfind(pre, 0) == 0) visSigs[k] = v;
                         for (auto const& [k, v] : d_fDefs)
                             if (k.rfind(pre, 0) == 0) visFDefs[k] = v;
-                        for (auto const& [k, v] : d_jagged)
-                            if (k.rfind(pre, 0) == 0) visJagged[k] = v;
                         for (auto const& [k, v] : d_typeStr)
                             if (k.rfind(pre, 0) == 0) visTypeStr[k] = v;
                         for (auto const& [k, v] : d_len)
@@ -695,7 +691,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 }
                 db_sigs[filepath] = comp.functionSignatures;
                 db_fDefs[filepath] = comp.functionDefs;
-                db_jagged[filepath] = comp.jaggedArraysStack[0];
                 db_typeStrings[filepath] = comp.arrayTypeStringsStack[0];
                 db_lengths[filepath] = comp.arrayLengthsStack[0];
                 db_vars[filepath] = comp.varTypesStack[0];

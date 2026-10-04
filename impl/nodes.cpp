@@ -66,6 +66,8 @@ std::string printAny(const AnyNode& node) {
                 return arg->print();
             } else if constexpr (std::is_same_v<T, BreakNode*>) {
                 return arg->print();
+            } else if constexpr (std::is_same_v<T, MatchNode*>) {
+                return arg->print();
             } else if constexpr (std::is_same_v<T, SwitchNode*>) {
                 return arg->print();
             } else if constexpr (std::is_same_v<T, FuncDefNode*>) {
@@ -247,6 +249,8 @@ Prs ParseResult::success(AnyNode node) {
                 return Prs{arg};
             } else if constexpr (std::is_same_v<T, BreakNode*>) {
                 return Prs{arg};
+            } else if constexpr (std::is_same_v<T, MatchNode*>) {
+                return Prs{arg};
             } else if constexpr (std::is_same_v<T, SwitchNode*>) {
                 return Prs{arg};
             } else if constexpr (std::is_same_v<T, WhileNode*>) {
@@ -342,6 +346,8 @@ Prs ParseResult::to_prs() {
             } else if constexpr (std::is_same_v<T, TryCatchNode*>) {
                 return Prs{arg};
             } else if constexpr (std::is_same_v<T, BreakNode*>) {
+                return Prs{arg};
+            } else if constexpr (std::is_same_v<T, MatchNode*>) {
                 return Prs{arg};
             } else if constexpr (std::is_same_v<T, SwitchNode*>) {
                 return Prs{arg};

@@ -38,7 +38,7 @@
 - panic, assume
 - reflection, ^^ changes purposes
 - _ unsued variable
-
+- comptime-trycatch (catches compiel verrors)
 TOP PRIORITY:
 2. Tuples + Destruturing
 1. Function Pointers, prefhab better syntax than C-style. Maybe just allow passing a &function to a lambda

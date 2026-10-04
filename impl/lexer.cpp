@@ -193,7 +193,7 @@ Token Lexer::make_identifier() {
     if (
         /* primitives */ id == "int" || id == "float" || id == "double" || id == "bool" || id == "string" || id == "qbool" || id == "char" ||
         /* storage modifiers */ id == "long" || id == "short" || id == "const" || id == "atomic" ||
-        /* switch */ id == "case" || id == "switch" || id == "default" ||
+        /* switch */ id == "case" || id == "switch" || id == "default" || id == "match" ||
         /* if else */ id == "if" || id == "else" ||
         /* loops */ id == "break" || id == "while" || id == "loop" || id == "do" || id == "for" || id == "continue" || id == "foreach" ||
         id == "in" || id == "unreachable" ||
@@ -612,6 +612,9 @@ Ler Lexer::make_tokens() {
                     } else {
                         tokens.push_back(Token(TokenType::EQ_TO, "==", start_pos));
                     }
+                } else if (current_char == '>') {
+                    this->advance();
+                    tokens.push_back(Token(TokenType::BIG_ARROW, "=>", start_pos));
                 } else {
                     tokens.push_back(Token(TokenType::EQ, "=", start_pos));
                     break;

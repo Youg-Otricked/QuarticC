@@ -71,9 +71,7 @@ class LLVMCompiler {
         result.reserve(name.size());
         for (size_t i = 0; i < name.size(); ++i) {
             unsigned char c = static_cast<unsigned char>(name[i]);
-            if (!name.contains("_") && c != std::tolower(c) && i != 0) {
-                result += '_';
-            }
+            if (!name.contains("_") && c != std::tolower(c) && i != 0) { result += '_'; }
             result += static_cast<char>(scream ? std::toupper(c) : std::tolower(c));
         }
         return result;
@@ -104,10 +102,14 @@ class LLVMCompiler {
     void add_var_warning(std::string name, Position& pos, bool scream) {
         std::string converted = to_snake_case(name, scream);
         if (converted != name) {
-            warn("var-casing", pos, (scream ? ("Constant '" + name + "' is not in SCREAMING_SNAKE_CASE") : ("Variable '" + name + "' is not in snake_case.")), "QC-WC01");
+            warn("var-casing", pos,
+                 (scream ? ("Constant '" + name + "' is not in SCREAMING_SNAKE_CASE") : ("Variable '" + name + "' is not in snake_case.")),
+                 "QC-WC01");
             if (getWarningLevel("var-casing") != run::WarningLevel::Disabled && getWarningLevel("var-casing") != run::WarningLevel::None) {
                 cg_help(pos, "Consider '" + converted + "' instead.", converted);
-                cg_insight(scream ? "C^4 uses SCREAMING_SNAKE_CASE for constants as it is common across almost all languages." : "C^4 uses snake_case for variables because it is distinct from all of the other casing conventions allowing quick discerning between functions and variables.");
+                cg_insight(scream ? "C^4 uses SCREAMING_SNAKE_CASE for constants as it is common across almost all languages."
+                                  : "C^4 uses snake_case for variables because it is distinct from all of the other casing conventions allowing "
+                                    "quick discerning between functions and variables.");
             }
         }
     }
@@ -189,6 +191,34 @@ class LLVMCompiler {
     }
     void generateStructReprFunctions();
     llvm::Value* callStringConcat(llvm::Value* a, llvm::Value* b);
+    std::vector<llvm::Type*> getLargestDiscriminantType(const UserTypeInfo& info) {
+        std::vector<size_t> sizes;
+        auto& DL = module->getDataLayout();
+        for (const EnumEntry& entry : info.enumEntries) {
+            for (int i = 0; i < entry.tags.size(); i++) {
+                if (i >= sizes.size()) { sizes.push_back(0); }
+                llvm::Type *ty = llvmTypeFor(entry.tags[i]);
+                if (!ty) {
+                    cg_error(info.pos, "unknow type: " + entry.tags[i], "QC-EM05");
+                    sizes.back() = 1;
+                    continue;
+                }
+                size_t sz = DL.getTypeAllocSize(ty);
+                if (sz > sizes.back()) sizes.back() = sz;
+            }
+        }
+        std::vector<llvm::Type*> res = {llvmTypeFor(info.enumType)};
+        for (size_t size : sizes) { res.push_back(llvm::ArrayType::get(builder->getIntNTy(8), size)); }
+        return res;
+    }
+    llvm::Type* generateEnum(const std::string& name, const UserTypeInfo& info) {
+        if (!info.generics.empty()) return nullptr;
+        auto it = enumTypes.find(resolveTypeName(name));
+        if (it == enumTypes.end()) return nullptr;
+        llvm::StructType* ty = it->second;
+        if (ty->isOpaque()) ty->setBody(getLargestDiscriminantType(info));
+        return ty;
+    }
     void createUserTypes();
     static bool isIndirectType(const std::string& t) { return !t.empty() && (t.back() == '*' || t.back() == '&'); }
     void generateStruct(const std::string& mapKey, const UserTypeInfo& info);
@@ -221,7 +251,17 @@ class LLVMCompiler {
     llvm::BasicBlock* currentBreakBB = nullptr;
     llvm::BasicBlock* currentContinueBB = nullptr;
     std::unordered_map<std::string, std::vector<size_t>> genericMethodIndices;
+    bool isEnumType(llvm::Type* ty, std::string* outName = nullptr) {
+        auto* st = llvm::dyn_cast<llvm::StructType>(ty);
+        if (!st) return false;
 
+        std::string name = st->getName().str();
+        auto it = enumTypes.find(name);
+        if (it == enumTypes.end()) return false;
+
+        if (outName) *outName = name;
+        return true;
+    }
     bool isUnionType(llvm::Type* ty, std::string* outName = nullptr) {
         auto* st = llvm::dyn_cast<llvm::StructType>(ty);
         if (!st) return false;
@@ -266,8 +306,8 @@ class LLVMCompiler {
         }
         return returnType;
     }
-    std::unordered_map<std::string, std::string> enumMemberInfo;
-    std::unordered_map<std::string, llvm::Type*> enumTypes;
+    std::unordered_map<std::string, std::pair<std::string, std::vector<std::string>>> enumMemberInfo;
+    std::unordered_map<std::string, llvm::StructType*> enumTypes;
     std::unordered_map<std::string, std::string> typeAliases;
     std::unordered_map<std::string, llvm::StructType*> structTypes;
     std::unordered_map<std::string, llvm::StructType*> unionTypes;
@@ -276,6 +316,7 @@ class LLVMCompiler {
     std::unordered_map<std::string, std::unordered_map<std::string, int>> vtableSlotIndex;
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<llvm::Function*>>> classMethods;
     std::unordered_map<std::string, bool> genericClasses;
+    std::unordered_map<std::string, bool> genericEnums;
     std::unordered_map<std::string, bool> genericStructs;
     std::unordered_map<std::string, bool> genericAliases;
     std::unordered_map<std::string, bool> genericUnions;
@@ -372,6 +413,7 @@ class LLVMCompiler {
     void expandSpreadIntoVector(llvm::Value* collVal, AnyNode& collExpr, std::vector<llvm::Value*>& elements);
     llvm::Value* emitSpreadFunctionCall(llvm::Value* calleeVal, llvm::FunctionType* fnTy, CallNode& call);
     bool fulfillsGenericConstraints(std::vector<GenericType> generics, std::vector<std::string> genericParams, Position pos = Position());
+    llvm::StructType* generateGenericEnum(std::string enumName, UserTypeInfo enumInfo, std::vector<std::string> genericParams);
     ConceptInfo generateGenericConcept(std::string conceptName, UserTypeInfo conceptInfo, std::vector<std::string> genericParams);
     llvm::StructType* generateGenericClass(std::string className, UserTypeInfo classInfo, std::vector<std::string> genericParams);
     llvm::StructType* generateGenericStruct(std::string structName, UserTypeInfo structInfo, std::vector<std::string> genericParams);
@@ -380,7 +422,6 @@ class LLVMCompiler {
     std::unordered_map<std::string, llvm::GlobalVariable*> globals;
     std::unordered_map<std::string, FunctionSignature> functionSignatures;
     std::unordered_map<std::string, FuncDefNode*> functionDefs;
-    std::vector<std::unordered_map<std::string, std::pair<int, int>>> jaggedArraysStack;
     std::vector<std::unordered_map<std::string, std::string>> arrayTypeStringsStack;
     std::vector<std::unordered_map<std::string, int>> arrayLengthsStack;
     std::vector<std::unordered_map<std::string, std::string>> varTypesStack;
@@ -403,24 +444,20 @@ class LLVMCompiler {
 #define hasLocal(name) foundInStack(localsStack, name)
 #define hasArrayType(name) foundInStack(arrayTypeStringsStack, name)
 #define hasArrayLength(name) foundInStack(arrayLengthsStack, name)
-#define hasJaggedArray(name) foundInStack(jaggedArraysStack, name)
 #define hasVolatileVar(name) foundInStack(volatileVarsStack, name)
 #define volatileVars (volatileVarsStack.back())
 #define arrayLengths (arrayLengthsStack.back())
 #define locals (localsStack.back())
-#define jaggedArrays (jaggedArraysStack.back())
 #define varTypes (varTypesStack.back())
 #define arrayTypeStrings (arrayTypeStringsStack.back())
 #define findLocal(name) findInStack(localsStack, name)
 #define findVolatileVar(name) findInStack(volatileVarsStack, name)
 #define findArrayLength(name) findInStack(arrayLengthsStack, name)
 #define findVarType(name) findInStack(varTypesStack, name)
-#define findJaggedArray(name) findInStack(jaggedArraysStack, name)
 #define findArrayType(name) findInStack(arrayTypeStringsStack, name)
     void enterScope() {
         defersStack.push_back({});
         localsStack.push_back({});
-        jaggedArraysStack.push_back({});
         arrayTypeStringsStack.push_back({});
         arrayLengthsStack.push_back({});
         varTypesStack.push_back({});
@@ -433,7 +470,6 @@ class LLVMCompiler {
         defersStack.pop_back();
         localsStack.pop_back();
         volatileVarsStack.pop_back();
-        jaggedArraysStack.pop_back();
         arrayTypeStringsStack.pop_back();
         arrayLengthsStack.pop_back();
         varTypesStack.pop_back();
@@ -586,7 +622,7 @@ class LLVMCompiler {
                 auto baseName = (*varAccess)->var_name_tok.value;
                 std::string resolved = resolveTypeName(baseName);
                 auto enumIt = enumTypes.find(resolved);
-                if (enumIt != enumTypes.end()) { return userTypes.at(baseTypeName(resolved)).enumType; }
+                if (enumIt != enumTypes.end()) return resolved;
             }
             std::string currentType = getExpressionType(*((*propAcc)->base));
             if (currentType.ends_with("*") || currentType.ends_with("&")) { currentType.pop_back(); }
@@ -851,6 +887,12 @@ class LLVMCompiler {
             }
             return "unknown";
         } else if (auto methCall = std::get_if<MethodCallNode*>(&node)) {
+            if (auto varAccess = std::get_if<VarAccessNode*>(&(*methCall)->base)) {
+                auto baseName = (*varAccess)->var_name_tok.value;
+                std::string resolved = resolveTypeName(baseName);
+                auto intTy = userTypes.find(baseTypeName(resolved));
+                if (intTy != userTypes.end()) { return resolved; }
+            }
             std::string baseType = getExpressionType((*methCall)->base);
             if (baseType.ends_with("*") || baseType.ends_with("&")) baseType.pop_back();
             auto originalGenericMap = currentGenericTypeStrings;
@@ -989,6 +1031,7 @@ class LLVMCompiler {
     };
     */
     llvm::Value* derefIfReference(llvm::Value* val, AnyNode& argNode) {
+        val = normalizeValue(val, argNode);
         if (!val || !val->getType()->isPointerTy()) return val;
         std::string qcType = substituteGenerics(getExpressionType(argNode, false));
         if (!qcType.ends_with("&")) return val;
@@ -1448,6 +1491,14 @@ class LLVMCompiler {
         if (v->getType()->isArrayTy() && paramTy->isPointerTy()) {
             v = decayArrayToPointer(v);
             if (!v) return nullptr;
+        }
+        if (isEnumType(srcTy) && paramTy->isIntegerTy()) {
+            v = builder->CreateExtractValue(v, {0});
+            srcTy = v->getType();
+        }
+        if (srcTy->isIntegerTy() && isEnumType(paramTy)) {
+            llvm::Value *structVal = llvm::ConstantAggregateZero::get(llvm::cast<llvm::StructType>(paramTy));
+            v = builder->CreateInsertValue(structVal, v, {0});
         }
         if (srcTy->isIntegerTy() && paramTy->isIntegerTy()) {
             unsigned srcBits = srcTy->getIntegerBitWidth();
@@ -1981,6 +2032,8 @@ class LLVMCompiler {
             return false;
         };
         if (isCharLike(expected) && isCharLike(actual)) return 0;
+        if (expected->isIntegerTy() && isEnumType(actual)) return 1;
+        if (isEnumType(actual) && expected->isIntegerTy()) return 0;
         if (expected->isIntegerTy() && actual->isIntegerTy()) {
             unsigned expBits = expected->getIntegerBitWidth();
             unsigned actBits = actual->getIntegerBitWidth();
@@ -2566,7 +2619,6 @@ class LLVMCompiler {
                         std::string base = t.substr(0, t.find("[]"));
                         int baseTypeCode = getTypeCode(base);
                         if (alloca->getType()->isArrayTy()) { arrayLengths[param.name.value] = alloca->getType()->getArrayNumElements(); }
-                        jaggedArrays[param.name.value] = {baseTypeCode, dims};
                         arrayTypeStrings[param.name.value] = base;
                         varTypes[param.name.value] = param.type.value;
                     } else {
@@ -3275,7 +3327,25 @@ class LLVMCompiler {
             if (userIt == userTypes.end()) { return nullptr; }
             return generateGenericClass(base, userIt->second, genericParamsFromName(baseName));
         }
-        if (auto it = classTypes.find(baseName); it != classTypes.end()) { return it->second; }
+        if (auto it = classTypes.find(baseName); it != classTypes.end()) {
+            if (it->second->isOpaque()) generateClass(baseName, userTypes.at(baseName));
+            return it->second;
+        }
+        return nullptr;
+    }
+    llvm::StructType* genericiseOrFindEnum(const std::string& baseName) {
+        const auto base = baseTypeName(baseName);
+        if (genericEnums.contains(base) && genericEnums.at(base)) {
+            if (auto it = enumTypes.find(baseName); it != enumTypes.end()) { return it->second; }
+            auto userIt = userTypes.find(base);
+            if (userIt == userTypes.end()) { return nullptr; }
+            return generateGenericEnum(base, userIt->second, genericParamsFromName(baseName));
+        }
+        if (auto it = enumTypes.find(baseName); it != enumTypes.end()) {
+            auto userIt = userTypes.find(base);
+            if (userIt == userTypes.end()) { return it->second; }
+            return llvm::cast<llvm::StructType>(generateEnum(baseName, userIt->second));
+        }
         return nullptr;
     }
     llvm::StructType* genericiseOrFindStruct(std::string baseName) {
@@ -3290,7 +3360,12 @@ class LLVMCompiler {
             }
             return structTy;
         }
-        return structTypes.contains(baseName) ? structTypes[baseName] : nullptr;
+        if (structTypes.contains(baseName)) {
+            llvm::StructType* structTy = structTypes[baseName];
+            if (structTy->isOpaque()) generateStruct(baseName, userTypes.at(baseName));
+            return structTy;
+        }
+        return nullptr;
     }
     UserTypeInfo genericiseOrFindUnion(std::string baseName) {
         if (genericUnions.contains(baseTypeName(baseName)) && genericUnions[baseTypeName(baseName)]) {
@@ -3346,6 +3421,7 @@ class LLVMCompiler {
             if (genericClasses.find(name) != genericClasses.end()) return finish(strip ? name : savedName);
             if (genericStructs.find(name) != genericStructs.end()) return finish(strip ? name : savedName);
             if (genericUnions.find(name) != genericUnions.end()) return finish(strip ? name : savedName);
+            if (genericEnums.find(name) != genericEnums.end()) return finish(strip ? name : savedName);
             if (structTypes.find(savedName) != structTypes.end()) return finish(strip ? name : savedName);
             if (enumTypes.find(savedName) != enumTypes.end()) return finish(strip ? name : savedName);
             if (unionTypes.find(savedName) != unionTypes.end()) return finish(strip ? name : savedName);
@@ -3369,6 +3445,7 @@ class LLVMCompiler {
             if (genericUnions.count(fullName)) return finish(result);
             if (structTypes.count(fullSavedName)) return finish(result);
             if (enumTypes.count(fullSavedName)) return finish(result);
+            if (genericEnums.count(fullName)) return finish(result);
             if (unionTypes.count(fullSavedName)) return finish(result);
             if (hasArrayType(fullSavedName)) return finish(result);
             if (current.empty()) break;
@@ -3880,11 +3957,14 @@ class LLVMCompiler {
         return builder->CreateLoad(targetTy, typedPtr, "union_unwrapped");
     }
     llvm::Value* normalizeValue(llvm::Value* v, AnyNode& expr) {
+        if (!v) return nullptr;
         llvm::Type* ty = v->getType();
         std::string unionName;
+        if (isEnumType(ty)) {
+            return builder->CreateExtractValue(v, 0, "enum_descriminant");
+        }
         bool isUnion = isUnionType(ty, &unionName);
         if (!isUnion) { return v; }
-
         std::string typeName = unionName;
         auto utIt = userTypes.find(typeName);
         if (utIt == userTypes.end()) return v;
@@ -3925,6 +4005,34 @@ class LLVMCompiler {
         builder->SetInsertPoint(endBB);
         return builder->CreateLoad(voidPtrTy, tmp, "normalized");
     }
+    [[gnu::noinline]]
+    void emitMultiRet(MultiReturnNode *mret);
+    [[gnu::noinline]]
+    void emitRet(ReturnNode *ret);
+    [[gnu::noinline]]
+    void emitMultiVar(MultiVarDeclNode *mv);
+    [[gnu::noinline]]
+    void emitIf(IfNode *if_node);
+    [[gnu::noinline]]
+    void emitFor(ForNode *for_node);
+    [[gnu::noinline]]
+    void emitWhile(WhileNode *while_node);
+    [[gnu::noinline]]
+    void emitSwitch(SwitchNode *switch_node);
+    [[gnu::noinline]]
+    void emitQSwitch(QSwitchNode *qsw);
+    [[gnu::noinline]]
+    void emitQIf(QIfNode *qif_node);
+    [[gnu::noinline]]
+    void emitArrAssign(ArrayAssignNode *arrAssign);
+    [[gnu::noinline]]
+    void emitArrDecl(ArrayDeclNode *arrDecl);
+    [[gnu::noinline]]
+    void emitTryCatch(TryCatchNode *trycatch);
+    [[gnu::noinline]]
+    void emitForeach(ForeachNode *foreach);
+    [[gnu::noinline]]
+    void emitMatch(MatchNode *match_node);
     void emitStmt(AnyNode node);
 };
 #endif

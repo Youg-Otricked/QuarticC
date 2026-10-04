@@ -136,6 +136,7 @@ enum class TokenType {
     QUESTION,
     AS,
     TYPEOF,
+    BIG_ARROW,
     EOFT
 };
 std::string get_token_name(TokenType tok);

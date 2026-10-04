@@ -166,6 +166,7 @@ class Parser {
     Prs qout_expr();
     Prs qin_expr();
     Prs logical_or();
+    Prs match_stmt();
     Prs switch_stmt();
     Prs qswitch_stmt();
     Aer parse();
