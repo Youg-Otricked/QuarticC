@@ -271,8 +271,8 @@ Token::Token(TokenType t, std::string val, Position p) : type(t), value(val), po
 }
 std::string Token::print() const {
     if (this->value.empty()) {
-        return std::format("{}", get_token_name(this->type));
+        return get_token_name(this->type);
     } else {
-        return std::format("{}:{}", get_token_name(this->type), this->value);
+        return get_token_name(this->type) + ":" + this->value;
     }
 }

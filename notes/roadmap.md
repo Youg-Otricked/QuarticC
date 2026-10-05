@@ -74,3 +74,5 @@ TOP PRIORITY:
 9. User defined literals
 10. Labels & goto/br
 11. co_await
+12. rest of featuers im forgetting
+13. self host
