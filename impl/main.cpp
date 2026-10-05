@@ -260,6 +260,7 @@ std::string removeExtension(const std::string& filename) {
 }
 int emitObjectFile(llvm::Module& M, const std::string& outputPath, bool debug, std::string tgt = "") {
 #ifndef X86_ONLY
+#ifndef __EMSCRIPTEN__
     LLVMInitializeAArch64TargetInfo();
     LLVMInitializeAArch64Target();
     LLVMInitializeAArch64TargetMC();
@@ -270,17 +271,13 @@ int emitObjectFile(llvm::Module& M, const std::string& outputPath, bool debug, s
     LLVMInitializeARMTargetMC();
     LLVMInitializeARMAsmPrinter();
     LLVMInitializeARMAsmParser();
+#endif
     LLVMInitializeWebAssemblyTargetInfo();
     LLVMInitializeWebAssemblyTarget();
     LLVMInitializeWebAssemblyTargetMC();
     LLVMInitializeWebAssemblyAsmPrinter();
     LLVMInitializeWebAssemblyAsmParser();
 #endif
-    LLVMInitializeX86TargetInfo();
-    LLVMInitializeX86Target();
-    LLVMInitializeX86TargetMC();
-    LLVMInitializeX86AsmPrinter();
-    LLVMInitializeX86AsmParser();
 #ifdef __EMSCRIPTEN__
     llvm::Triple triple("wasm32-unknown-unknown");
     M.setTargetTriple(triple);
@@ -310,6 +307,11 @@ int emitObjectFile(llvm::Module& M, const std::string& outputPath, bool debug, s
     delete TM;
     return 0;
 #else
+    LLVMInitializeX86TargetInfo();
+    LLVMInitializeX86Target();
+    LLVMInitializeX86TargetMC();
+    LLVMInitializeX86AsmPrinter();
+    LLVMInitializeX86AsmParser();
     llvm::Triple triple(tgt.empty() ? llvm::sys::getDefaultTargetTriple() : tgt);
     M.setTargetTriple(triple);
     std::string err;
@@ -542,15 +544,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             llvm::LLVMContext context;
             auto master_module = new llvm::Module("master_module", context);
 #ifdef __EMSCRIPTEN__
-            LLVMInitializeAArch64TargetInfo();
-            LLVMInitializeAArch64Target();
-            LLVMInitializeAArch64TargetMC();
-            LLVMInitializeARMTargetInfo();
-            LLVMInitializeARMTarget();
-            LLVMInitializeARMTargetMC();
-            LLVMInitializeX86TargetInfo();
-            LLVMInitializeX86Target();
-            LLVMInitializeX86TargetMC();
             LLVMInitializeWebAssemblyTargetInfo();
             LLVMInitializeWebAssemblyTarget();
             LLVMInitializeWebAssemblyTargetMC();
