@@ -1,6 +1,12 @@
+- Including C Headers (which means adding macro functions (c style) and type def (for compatiblity))
+- const pointers
+- const params
+- const stuff correctness
+- const methods fore const obhects
+- static & inline functions
+- Upgrade Include System
 - Variadic Generics (`class VaradicTypes<...Tys> { Tys elems; ...`) (not decided on syntax) 
 - Operator.
-- Function pointers
 - Private/Protected inheritance
 - Constexpr
 - Debug
@@ -18,12 +24,12 @@
 - user defined metadata tags
 - Compile-time assertions (assert, static_assert)
 - Decltype (get type of expr)
+- basically eextesion to make C^4 verilog output
 - noexcept (funciton modifier) (same update as const on functions and stuff)
 - change parent constructor and delegeating constructors
 - dynamic field access
 - has field, has method
 - _generic- manal overloading
-- rust like tags for enums, match.
 - cpp contracts
 - has_method, has_field, at
 - rule usertypes so userdefined const equiveleants and stuff
@@ -34,18 +40,18 @@
 - operator imp_cast<T>
     implicit cast operator overload
 - alloca builtin
-- unreachable
+- real u64 (ai64u_t (always i64 unsigned type)), u32 (unsigned int), u16 (unsigned short int) types
+- true i64 (ai64_t (always i64 type))
 - panic, assume
 - reflection, ^^ changes purposes
 - _ unsued variable
 - comptime-trycatch (catches compiel verrors)
 TOP PRIORITY:
-2. Tuples + Destruturing
-1. Function Pointers, prefhab better syntax than C-style. Maybe just allow passing a &function to a lambda
-1. Tagged enums, match (can only extract tags in match)
-3. CQB
-4. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
-5. Metadata
+1. Tuples + Destruturing
+1. Direct C header includes (and thus, ocnst correctness)
+2. CQB
+3. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
+4. Metadata
 ?likely? - likely marked
 ?unlikely? - marked unlikely
 ?inline? - pls inline >-<
@@ -67,12 +73,13 @@ TOP PRIORITY:
 ?experimental? - states that this tool is janky, subject to change, or flaky/expremintal
 ?unstable? - states this tool is janky, flaky, or unstable, but api won't change
 ?sentinel(value, msg, value, msg....)? - states this tool returns sentinel values with special meaning
-6. Preproccessers
+5. Preproccessers
 #line - somthing idk
-7. User-Defined metadata
-8. User-Defined macro _functions_ (the only good thing in rust)
-9. User defined literals
-10. Labels & goto/br
-11. co_await
-12. rest of featuers im forgetting
-13. self host
+6. User-Defined metadata
+7. User-Defined macro _functions_ (the only good thing in rust)
+8. User defined literals
+9. Labels & goto/br
+10. co_await
+11. rest of featuers im forgetting
+12. self host
+13. Direct _C++_ header includes (and thus, the rest of const stuff), but not all features (obviously, i don't hate myself).

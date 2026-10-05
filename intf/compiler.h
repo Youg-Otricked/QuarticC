@@ -1168,8 +1168,10 @@ class LLVMCompiler {
                 }
             }
             llvm::Value* addr = getVarAddress(name);
-            if (!addr && fallback) return emitExpr(node);
-            return addr;
+            if (addr) return addr;
+            if (llvm::Value *fn = resolveFunction(name)) return fn;
+            if (fallback) return emitExpr(node);
+            return nullptr;
         } else if (auto unary = std::get_if<UnaryOpNode*>(&node)) {
             if ((*unary)->op_tok.type == TokenType::MUL) { return emitExpr((*unary)->node); }
             if ((*unary)->op_tok.type == TokenType::AMPERSAND) { return emitLValue((*unary)->node); }

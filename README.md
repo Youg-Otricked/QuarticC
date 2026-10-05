@@ -101,8 +101,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.1.0 = "Tags on Enums"
-Next Version: x1.1.1 = "Function Pointers"
+Current Version: x1.1.1 = "Function pointers"
+Next Version: x1.2.0 = "Either tuples or something else"
 
 # Current Version Highlights
 
@@ -117,7 +117,7 @@ Moderate
 └─ Misc important
 
 Minor
-└─ Tagged Enums
+└─ Function pointers
 
 Patch
 └─ N/A
@@ -127,7 +127,7 @@ Patch
 
 These are deprecations in the past 3 moderate versions (`x0.27.* -> x1.1.*`)
 
-Jagged arrays will be deprecated at version x1.1.0.
+Jagged arrays will be deprecated at version x1.1.1.
 
 # Upcoming Deprecations:
 
