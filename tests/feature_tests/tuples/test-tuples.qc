@@ -4,6 +4,7 @@
 int, int unpackCoordinates((int, int) coord) {
     return coord.0, coord.1;
 }
+type Color = (byte, byte, byte);
 int main() {
     (int, int) coord = makeCoordinate(-1, 21);
     int x, int y = unpackCoordinates(coord);

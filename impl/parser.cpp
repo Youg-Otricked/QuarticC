@@ -4415,7 +4415,7 @@ Prs Parser::statement() {
             return tt == TokenType::STRING || tt == TokenType::IDENTIFIER || tt == TokenType::KEYWORD || tt == TokenType::INT ||
                    tt == TokenType::NIBBLE || tt == TokenType::FLOAT || tt == TokenType::DOUBLE || tt == TokenType::ADDR_T || tt == TokenType::BOOL ||
                    tt == TokenType::QBOOL || tt == TokenType::CHAR || tt == TokenType::LONG_INT || tt == TokenType::SHORT_INT ||
-                   tt == TokenType::LONG_DOUBLE || tt == TokenType::BYTE;
+                   tt == TokenType::LONG_DOUBLE || tt == TokenType::BYTE || tt == TokenType::LPAREN;
         };
 
         if (!is_type_or_literal_token(this->current_tok.type)) {

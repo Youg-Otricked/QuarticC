@@ -113,7 +113,7 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.2.0 = "Tuples"
+Current Version: x1.2.01 = "Tuples"
 Next Version: x1.2.1 = "Destructuring"
 
 # Current Version Highlights

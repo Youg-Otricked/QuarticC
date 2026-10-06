@@ -38,7 +38,7 @@ class Parser {
     }
     bool is_primitive_type(std::string& name) {
         return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool"})
-            .contains(name);
+            .contains(name) || (name.starts_with("(") && name.ends_with(")"));
     }
     bool is_known_type(std::string name) {
         std::string base = base_type_name(name);
