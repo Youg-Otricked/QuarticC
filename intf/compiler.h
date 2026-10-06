@@ -657,7 +657,7 @@ class LLVMCompiler {
             std::string currentType = getExpressionType(*((*propAcc)->base));
             if (currentType.ends_with("*") || currentType.ends_with("&")) { currentType.pop_back(); }
             std::string fieldName = (*propAcc)->property_name.value;
-            if (!std::all_of(fieldName.begin(), fieldName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
+            if (std::all_of(fieldName.begin(), fieldName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
                 size_t fieldIdx = std::stoull(fieldName);
                 return getTupleFieldType(currentType, fieldIdx);
             }

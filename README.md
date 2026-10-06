@@ -113,8 +113,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.2.01 = "Tuples"
-Next Version: x1.2.1 = "Destructuring"
+Current Version: x1.2.1 = "Tuples(Destructuring)"
+Next Version: x1.3.0 = "Major QOL (Direct C include, vtable ordering not need to be decl-specific"
 
 # Current Version Highlights
 
@@ -129,7 +129,7 @@ Moderate
 └─ Tuples
 
 Minor
-└─ N/A
+└─ Destructuring
 
 Patch
 └─ N/A
@@ -238,21 +238,6 @@ oops(README): forgot to re-add readme.md
 ## License
 
 MIT License - See [LICENSE](./LICENSE.txt) for details
-
----
-
-### i2 Primitive Type
-
-```cpp
-qbool qb = both;
-qif (qb && qtrue /* evaluates to both */) {
-    `qout("True path");   // Executes
-} qelse {
-    `qout("False path");
-}
-```
-
----
 
 ---
 

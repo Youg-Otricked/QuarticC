@@ -287,6 +287,13 @@ void Parser::fn(std::vector<ConceptInfo::Block>& blockList, ParseResult& res, st
                 case TokenType::RROT_EQ:
                 case TokenType::LROT_EQ:
                 case TokenType::COLLAPSE_AND: break;
+                case TokenType::LBRACE:
+                    this->advance();
+                    if (this->current_tok.type != TokenType::RBRACE) {
+                        res.failure(new InvalidSyntaxError("QC-S094: expected closing brace in operator{}", op_tok.pos));
+                        return;
+                    }
+                    break;
                 case TokenType::LPAREN:
                     this->advance();
                     if (this->current_tok.type != TokenType::RPAREN) {
@@ -362,6 +369,7 @@ void Parser::fn(std::vector<ConceptInfo::Block>& blockList, ParseResult& res, st
                 case TokenType::BITWISE_XOR: op_name = "operator$"; break;
                 case TokenType::PIPE: op_name = "operator|"; break;
                 case TokenType::AMPERSAND: op_name = "operator&"; break;
+                case TokenType::LBRACE: op_name = "operator{}"; break;
                 default: break;
                 }
                 name_tok = Token(TokenType::IDENTIFIER, op_name, op_tok.pos);
@@ -524,6 +532,13 @@ void Parser::fn(std::vector<ConceptInfo::Block>& blockList, ParseResult& res, st
                 case TokenType::RROT_EQ:
                 case TokenType::LROT_EQ:
                 case TokenType::COLLAPSE_AND: break;
+                case TokenType::LBRACE:
+                    this->advance();
+                    if (this->current_tok.type != TokenType::RBRACE) {
+                        res.failure(new InvalidSyntaxError("QC-S094: expected closing brace in operator{}", op_tok.pos));
+                        return;
+                    }
+                    break;
                 case TokenType::LPAREN:
                     this->advance();
                     if (this->current_tok.type != TokenType::RPAREN) {
@@ -599,6 +614,7 @@ void Parser::fn(std::vector<ConceptInfo::Block>& blockList, ParseResult& res, st
                 case TokenType::BITWISE_XOR: op_name = "operator$"; break;
                 case TokenType::PIPE: op_name = "operator|"; break;
                 case TokenType::AMPERSAND: op_name = "operator&"; break;
+                case TokenType::LBRACE: op_name = "operator{}"; break;
                 default: break;
                 }
                 name_tok = Token(TokenType::IDENTIFIER, op_name, op_tok.pos);
@@ -956,21 +972,12 @@ Prs Parser::try_catch_expr() {
             return res.to_prs();
         }
         this->advance();
-        if (this->current_tok.type != TokenType::KEYWORD && this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.value != "...") {
+        if (this->current_tok.type != TokenType::KEYWORD && this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.value != "..." && this->current_tok.type != TokenType::LPAREN) {
             res.failure(new InvalidSyntaxError("QC-S033: Expected type in catch declaration", this->current_tok.pos));
             return res.to_prs();
         }
         Token type_tok = this->current_tok;
-        this->advance();
-        if (this->current_tok.type == TokenType::AMPERSAND) {
-            this->advance();
-            type_tok.value += "&";
-        }
-
-        while (this->current_tok.type == TokenType::MUL) {
-            this->advance();
-            type_tok.value += "*";
-        }
+        type_tok.value = this->parseTypeString();
         std::string catch_type = type_tok.value;
         if (this->current_tok.type != TokenType::IDENTIFIER && catch_type != "...") {
             res.failure(new InvalidSyntaxError("QC-S034: Expected variable name in catch declaration", this->current_tok.pos));
@@ -2632,7 +2639,30 @@ Prs Parser::atom() {
         if (this->current_tok.type == TokenType::RPAREN) {
             this->advance();
             AnyNode base = any_expr;
-
+            if (TypeValueNode* ty = std::get_if<TypeValueNode>(&base)) {
+                if (this->current_tok.type == TokenType::LBRACE) {
+                    this->advance();
+                    ParseResult res2;
+                    Position start_pos = this->current_tok.pos;
+                    this->advance();
+                    auto first_key_expr = res2.reg(this->text_unops());
+                    if (res2.error) return res2.to_prs();
+                    std::vector<AnyNode> elements;
+                    elements.push_back(first_key_expr);
+                    while (this->current_tok.type == TokenType::COMMA) {
+                        this->advance();
+                        AnyNode e2 = res2.reg(this->text_unops());
+                        if (res2.error) return res2.to_prs();
+                        elements.push_back(e2);
+                    }
+                    if (this->current_tok.type != TokenType::RBRACE) {
+                        res2.failure(new InvalidSyntaxError("QC-S048: Expected '}' in initializer list", this->current_tok.pos));
+                        return res2.to_prs();
+                    }
+                    this->advance();
+                    return res2.success(new ArrayLiteralNode(elements, start_pos, ty->tok.value));
+                }
+            }
             while (this->current_tok.type == TokenType::DOT) {
                 this->advance();
 
@@ -3902,7 +3932,7 @@ Prs Parser::statement() {
                     this->current_tok = peek(0);
                 }
             }
-            if (this->current_tok.type != TokenType::KEYWORD && this->current_tok.type != TokenType::IDENTIFIER) {
+            if (this->current_tok.type != TokenType::KEYWORD && this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.type != TokenType::LPAREN) {
                 res.failure(new InvalidSyntaxError("QC-T004: Expected type or constructor in class body", this->current_tok.pos));
                 return res.to_prs();
             }
@@ -3981,6 +4011,13 @@ Prs Parser::statement() {
                 case TokenType::RROT_EQ:
                 case TokenType::LROT_EQ:
                 case TokenType::COLLAPSE_AND: break;
+                case TokenType::LBRACE:
+                    this->advance();
+                    if (this->current_tok.type != TokenType::RBRACE) {
+                        res.failure(new InvalidSyntaxError("QC-S094: expected closing brace in operator{}", op_tok.pos));
+                        return res.to_prs();
+                    }
+                    break;
                 case TokenType::LPAREN:
                     this->advance();
                     if (this->current_tok.type != TokenType::RPAREN) {
@@ -4056,6 +4093,7 @@ Prs Parser::statement() {
                 case TokenType::BITWISE_XOR: op_name = "operator$"; break;
                 case TokenType::PIPE: op_name = "operator|"; break;
                 case TokenType::AMPERSAND: op_name = "operator&"; break;
+                case TokenType::LBRACE: op_name = "operator{}"; break;
                 default: break;
                 }
                 name_tok = Token(TokenType::IDENTIFIER, op_name, op_tok.pos);
@@ -4858,6 +4896,13 @@ Prs Parser::statement() {
                         case TokenType::RROT_EQ:
                         case TokenType::LROT_EQ:
                         case TokenType::COLLAPSE_AND: break;
+                        case TokenType::LBRACE:
+                            this->advance();
+                            if (this->current_tok.type != TokenType::RBRACE) {
+                                res.failure(new InvalidSyntaxError("QC-S094: expected closing brace in operator{}", op_tok.pos));
+                                return res.to_prs();
+                            }
+                            break;
                         case TokenType::LPAREN:
                             this->advance();
                             if (this->current_tok.type != TokenType::RPAREN) {
@@ -4935,6 +4980,7 @@ Prs Parser::statement() {
                         case TokenType::BITWISE_XOR: op_name = "operator$"; break;
                         case TokenType::PIPE: op_name = "operator|"; break;
                         case TokenType::AMPERSAND: op_name = "operator&"; break;
+                        case TokenType::LBRACE: op_name = "operator{}"; break;
                         default: break;
                         }
                         name_tok = Token(TokenType::IDENTIFIER, op_name, op_tok.pos);
@@ -5084,6 +5130,37 @@ Prs Parser::statement() {
                     if (next_str.empty()) return res.to_prs();
                     return_types.push_back(Token(TokenType::KEYWORD, next_str, next_pos));
                 }
+            }
+        }
+        if (this->current_tok.type == TokenType::LBRACE) {
+            this->advance();
+            ParseResult res2;
+            Position start_pos = this->current_tok.pos;
+            auto first_key_expr = res2.reg(this->text_unops());
+            if (res2.error) return res2.to_prs();
+            std::vector<AnyNode> elements;
+            elements.push_back(first_key_expr);
+            while (this->current_tok.type == TokenType::COMMA) {
+                this->advance();
+                AnyNode e2 = res2.reg(this->text_unops());
+                if (res2.error) return res2.to_prs();
+                elements.push_back(e2);
+            }
+            if (this->current_tok.type != TokenType::RBRACE) {
+                res2.failure(new InvalidSyntaxError("QC-S048: Expected '}' in initializer list", this->current_tok.pos));
+                return res2.to_prs();
+            }
+            this->advance();
+            AnyNode node = new ArrayLiteralNode(elements, start_pos, type_tok.value);
+            Token op_tok = this->current_tok;
+            if (op_tok.type == TokenType::EQ) {
+                this->advance();
+                AnyNode right;
+                size_t next_i = index + 1;
+                right = res.reg(this->text_unops());
+                return res2.success(new AssignExprNode(node, op_tok, right));
+            } else {
+                return res2.success(node);
             }
         }
         if (this->current_tok.type != TokenType::IDENTIFIER) {

@@ -18,8 +18,6 @@
 - const params/returns and const correct methods
 - Copy VS Move assignment (no move only, im not rust), to make things faster.
 - more error stuff if i feel like it
-- destructuring (eg `Pair {abc, def} = ...`, operator{} which is your destructure handler (multi return baby!) (maybe))
-- tuples (like zig/rust tuples, .0 .1 .2 .3)
 - user defined literals (macros baby!)
 - user defined macro functions
 - user defined metadata tags
@@ -48,7 +46,6 @@
 - _ unsued variable
 - comptime-trycatch (catches compiel verrors)
 TOP PRIORITY:
-1. Destruturing
 1. VTables allowed to not be in decl order.
 1. Direct C header includes (and thus, ocnst correctness)
 2. CQB

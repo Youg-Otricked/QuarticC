@@ -5,8 +5,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <ctime>
-#include <filesystem>
-#include <fstream>
 #include <functional>
 #include <iostream>
 #include <list>
@@ -15,7 +13,6 @@
 #include <optional>
 #include <ranges>
 #include <string>
-#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -4323,11 +4320,230 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
             return rhsVal;
         }
     }
+    if (ArrayLiteralNode* destructure = safe_get<ArrayLiteralNode>((*asn)->target)) {
+        if (destructure->type.starts_with("(") && destructure->type.ends_with(")")) {
+            llvm::Value* tup = emitExpr((*asn)->value);
+            if (!tup) return nullptr;
+            llvm::StructType* st;
+            if (st = llvm::dyn_cast<llvm::StructType>(tup->getType()); !st || !st->isLiteral()) {
+                if (findMethodOverload(st->getName().str(), "operator{}", {}) != nullptr) {
+                    tup = emitVirtualOrDirectCall(st->getName().str(), "operator{}", tup, {});
+                    if (st = llvm::dyn_cast<llvm::StructType>(tup->getType()); !st || !st->isLiteral()) {
+                        cg_error(get_pos(destructure), "can only destructure tuples.", "QC-TPL2");
+                        return nullptr;
+                    }
+                } else if (module->getFunction((st->getName().str() + "_operator{}")) != nullptr) {
+                    tup = emitMethodCall(module->getFunction((st->getName().str() + "_operator{}")), tup, {}, "operator{}");
+                    if (st = llvm::dyn_cast<llvm::StructType>(tup->getType()); !st || !st->isLiteral()) {
+                        cg_error(get_pos(destructure), "can only destructure tuples.", "QC-TPL2");
+                        return nullptr;
+                    }
+                } else {
+                    cg_error(get_pos(destructure), "can only destructure tuples.", "QC-TPL2");
+                    return nullptr;
+                }
+            }
+            if (st->getNumElements() != destructure->elements.size()) {
+                cg_error(get_pos(*asn), "destructure element count must equal number of elements in tuple.", "QC-TPL3");
+                cg_note(get_pos(*asn),
+                        "got " + std::to_string(destructure->elements.size()) + ", expected " + std::to_string(st->getNumElements()) + ".",
+                        "QC-TPL3");
+                return nullptr;
+            }
+            for (size_t i = 0; i < destructure->elements.size(); i++) {
+                AnyNode node = destructure->elements[i];
+                llvm::Value* alloc = emitLValue(node);
+                if (!alloc) {
+                    if (VarAccessNode* va = safe_get<VarAccessNode>(node)) {
+                        std::string qcType = resolveTypeName(getTupleFieldType(destructure->type, i), false);
+                        llvm::Type* destTy = llvmTypeFor(qcType);
+                        if (!destTy) return nullptr;
+                        std::string name = va->var_name_tok.value;
+                        llvm::Value* rhs = builder->CreateExtractValue(tup, i);
+                        llvm::AllocaInst* var = createEntryAlloca(name, rhs->getType());
+                        llvm::Type* srcTy = rhs->getType();
+                        if (isUnionType(srcTy) && !isUnionType(destTy)) {
+                            llvm::Value* dataPtr = builder->CreateExtractValue(rhs, 1, "union_data");
+                            if (destTy->isPointerTy()) {
+                                rhs = builder->CreateBitCast(dataPtr, destTy);
+                            } else {
+                                llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
+                                rhs = builder->CreateLoad(destTy, typedPtr);
+                            }
+                            srcTy = destTy;
+                        }
+                        if (srcTy != destTy) {
+                            if (srcTy->isPointerTy() && !destTy->isPointerTy()) {
+                                llvm::Type* newbase = llvmTypeFor(resolveTypeName(getTupleFieldType(destructure->type, i), false));
+                                if (!newbase->isPointerTy()) {
+                                    rhs = builder->CreateLoad(newbase, rhs);
+                                    srcTy = newbase;
+                                }
+                            }
+                            if (srcTy->isFloatTy() && destTy->isDoubleTy()) {
+                                warn("implicit-extend", get_pos(va), "implicit extension in assignment", "QC-W012");
+                                rhs = builder->CreateFPExt(rhs, destTy, "f2d");
+                            } else if (srcTy->isArrayTy() && destTy->isPointerTy()) {
+                                rhs = this->decayArrayToPointer(rhs);
+                            } else if (srcTy->isPointerTy() && destTy->isArrayTy()) {
+                                auto* arr_alloca = builder->CreateAlloca(srcTy);
+                                builder->CreateStore(rhs, arr_alloca);
+                                rhs = builder->CreateGEP(srcTy, arr_alloca, {builder->getInt32(0), builder->getInt32(0)});
+                            } else if (srcTy->isArrayTy() && destTy->isArrayTy()) {
+                                auto* srcArrTy = llvm::cast<llvm::ArrayType>(srcTy);
+                                auto* destArrTy = llvm::cast<llvm::ArrayType>(destTy);
+                                if (srcArrTy->getElementType() != destArrTy->getElementType()) {
+                                    cg_error(va->var_name_tok.pos, "array element type mismatch in assignment", "QC-T032");
+                                    return nullptr;
+                                }
+                                uint64_t srcLen = srcArrTy->getNumElements();
+                                uint64_t destLen = destArrTy->getNumElements();
+                                if (srcLen > destLen) {
+                                    cg_error(va->var_name_tok.pos, "source array is larger than destination array", "QC-S148");
+                                    return nullptr;
+                                }
+                                if (!rhs->getType()->isPointerTy()) {
+                                    auto* tmp = createEntryAlloca("src_array_tmp", srcArrTy);
+                                    builder->CreateStore(rhs, tmp);
+                                    rhs = tmp;
+                                }
+                                llvm::AllocaInst* newArr = createEntryAlloca("array_copy", destArrTy);
+                                uint64_t bytes = srcLen * srcArrTy->getElementType()->getPrimitiveSizeInBits() / 8;
+                                builder->CreateMemCpy(newArr, llvm::MaybeAlign(), rhs, llvm::MaybeAlign(), bytes);
+                                if (destLen > srcLen) {
+                                    llvm::Value* zeroStart = builder->CreateGEP(destArrTy, newArr, {builder->getInt32(0), builder->getInt32(srcLen)});
+                                    uint64_t zeroBytes = (destLen - srcLen) * srcArrTy->getElementType()->getPrimitiveSizeInBits() / 8;
+                                    if (config.use_runtime) builder->CreateMemSet(zeroStart, builder->getInt8(0), zeroBytes, llvm::MaybeAlign());
+                                }
+                                rhs = newArr;
+                            } else if (srcTy->isDoubleTy() && destTy->isFloatTy()) {
+                                cg_error(va->var_name_tok.pos, "cannot assign double to float (loses percision)", "QC-S149");
+                                return nullptr;
+                            } else if (srcTy->isIntegerTy() && destTy->isIntegerTy()) {
+                                unsigned srcBits = srcTy->getIntegerBitWidth();
+                                unsigned destBits = destTy->getIntegerBitWidth();
+                                if (srcBits > destBits) {
+                                    warn("truncation", get_pos(va), "implicit truncation in assignment", "QC-W011");
+                                    rhs = builder->CreateTrunc(rhs, destTy, "trunc");
+                                } else if (srcBits < destBits) {
+                                    warn("implicit-extend", get_pos(va), "implicit extension in assignment", "QC-W012");
+                                    rhs = builder->CreateSExt(rhs, destTy, "sext");
+                                }
+                            } else if (srcTy->isIntegerTy() && destTy->isFloatingPointTy()) {
+                                warn("implicit-int-float", get_pos(va), "implicit cast between integer and decimal type in assignment", "QC-W013");
+                                rhs = builder->CreateSIToFP(rhs, destTy, "i2f");
+                            } else {
+                                cg_error(va->var_name_tok.pos, "type mismatch in assignment in compiled mode", "QC-T033");
+                                return nullptr;
+                            }
+                        }
+                        if (llvm::isa<llvm::ConstantAggregateZero>(rhs) && srcTy->isArrayTy()) {
+                            uint64_t bytes = module->getDataLayout().getTypeAllocSize(srcTy);
+                            builder->CreateMemSetInline(var, llvm::MaybeAlign(), builder->getInt8(0), builder->getInt64(bytes));
+                        } else {
+                            builder->CreateStore(rhs, var);
+                        }
+                        add_var_warning(name, va->var_name_tok.pos, false);
+                        std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
+                        locals[fullName] = var;
+                        varTypes[fullName] = qcType;
+                        volatileVars[fullName] = false;
+                        continue;
+                    } else {
+                        cg_error((*asn)->op_tok.pos,
+                                 "left side of assignment must be an L-value "
+                                 "(variable, property, dereference, etc)",
+                                 "QC-S155");
+                        return nullptr;
+                    }
+                }
+                llvm::Value* rhsVal = builder->CreateExtractValue(tup, i);
+                std::string rhsType = resolveTypeName(getTupleFieldType(destructure->type, i), false);
+                if (!rhsVal) {
+                    cg_error(get_pos((*asn)->value), "failed to compile right-hand side of assignment", "QC-S156");
+                    return nullptr;
+                }
+                std::string lhsTypeStr = resolveTypeName(getTupleFieldType(destructure->type, i), false);
+                llvm::Type* destTy = llvmTypeFor(lhsTypeStr);
+                if (!destTy) return nullptr;
+                llvm::Type* srcTy = rhsVal->getType();
+                for (auto& [unionName, unionTy] : unionTypes) {
+                    if (fixMangling(rhsType) == unionName) {
+                        llvm::Value* dataPtr = builder->CreateExtractValue(rhsVal, 1);
+                        if (destTy->isPointerTy()) {
+                            rhsVal = builder->CreateBitCast(dataPtr, destTy);
+                        } else {
+                            llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
+                            rhsVal = builder->CreateLoad(destTy, typedPtr, false);
+                        }
+                        destTy = srcTy;
+                        break;
+                    }
+                }
+                if (srcTy != destTy) {
+                    if (srcTy->isFloatTy() && destTy->isDoubleTy()) {
+                        rhsVal = builder->CreateFPExt(rhsVal, destTy, "f2d");
+                    } else if (srcTy->isIntegerTy() && destTy->isIntegerTy()) {
+                        unsigned srcBits = srcTy->getIntegerBitWidth();
+                        unsigned destBits = destTy->getIntegerBitWidth();
+                        if ((srcBits == 1 || srcBits == 2) && (destBits != srcBits)) {
+                            cg_error((*asn)->op_tok.pos, "cannot convert bool/qbool to other integer types", "QC-T038");
+                            return nullptr;
+                        }
+                        if (srcBits < destBits) {
+                            warn("implicit-extend", get_pos(*asn), "implicit extension in assignment", "QC-W012");
+                            rhsVal = builder->CreateSExt(rhsVal, destTy, "sext");
+                            srcTy = destTy;
+                        } else if (srcBits > destBits) {
+                            warn("truncation", get_pos(*asn), "implicit truncation in assignment", "QC-W011");
+                            rhsVal = builder->CreateTrunc(rhsVal, destTy, "trunc");
+                            srcTy = destTy;
+                        }
+                    } else if (srcTy->isIntegerTy() && destTy->isFloatTy()) {
+                        warn("implicit-int-float", get_pos(*asn), "implicit cast between integer and decimal type in assignment", "QC-W013");
+                        rhsVal = builder->CreateSIToFP(rhsVal, destTy, "i2f");
+                    } else if (srcTy->isIntegerTy() && destTy->isDoubleTy()) {
+                        warn("implicit-int-float", get_pos(*asn), "implicit cast between integer and decimal type in assignment", "QC-W013");
+                        rhsVal = builder->CreateSIToFP(rhsVal, destTy, "i2d");
+                    } else if (srcTy->isDoubleTy() && destTy->isFloatTy()) {
+                        cg_error((*asn)->op_tok.pos, "cannot narrow double to float (loses precision)", "QC-S157");
+                        return nullptr;
+                    } else if (srcTy->isFloatingPointTy() && destTy->isIntegerTy()) {
+                        cg_error((*asn)->op_tok.pos,
+                                 "cannot convert floating point to integer (loses "
+                                 "precision)",
+                                 "QC-S158");
+                        return nullptr;
+                    } else if (srcTy->isPointerTy() && !destTy->isPointerTy()) {
+                        if (lhsTypeStr.ends_with("&")) {
+                            rhsVal = builder->CreateLoad(destTy, rhsVal, "ref_peel");
+                            srcTy = rhsVal->getType();
+                        }
+                    } else if (llvm::StructType* sTy = llvm::dyn_cast<llvm::StructType>(destTy);
+                               sTy != nullptr && sTy->hasName() && classTypes.find(sTy->getName().str()) != classTypes.end()) {
+
+                    } else if (srcTy->isPointerTy() && destTy->isPointerTy()) {
+                        if (lhsTypeStr == "void*" || rhsType.ends_with("*") || lhsTypeStr == "@nullptr" || rhsType == "@nullptr") {
+                        } else if (lhsTypeStr == rhsType) {
+                        } else {
+                            cg_error((*asn)->op_tok.pos, "type mismatch in assignment", "QC-T037");
+                            return nullptr;
+                        }
+                    } else {
+                        cg_error((*asn)->op_tok.pos, "type mismatch in assignment", "QC-T037");
+                        return nullptr;
+                    }
+                }
+                builder->CreateStore(rhsVal, alloc);
+            }
+            return nullptr;
+        }
+    }
     llvm::Value* alloc = emitLValue((*asn)->target);
     if (!alloc) {
         cg_error((*asn)->op_tok.pos,
                  "left side of assignment must be an L-value "
-                 "(variable, property, or dereference)",
+                 "(variable, property, dereference, etc)",
                  "QC-S155");
         return nullptr;
     }
@@ -4752,6 +4968,7 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
             break;
         }
     }
+    bool isPostfix = (*unary)->is_postfix;
     if (auto structTy = llvm::dyn_cast<llvm::StructType>(operandTy)) {
         if (structTy->hasName()) {
             std::string className = structTy->getName().str();
@@ -4761,6 +4978,8 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
 
                 if (!opMethodName.empty()) {
                     std::vector<llvm::Value*> args = {};
+                    if (opMethodName == "operator++" || opMethodName == "operator--")
+                        args.push_back(isPostfix ? builder->getTrue() : builder->getFalse());
                     llvm::Function* opMethod = findMethodOverload(className, opMethodName, args);
 
                     if (opMethod) {
@@ -4768,6 +4987,7 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
                         builder->CreateStore(operand, temp);
 
                         std::vector<llvm::Value*> allArgs = {temp};
+                        allArgs.insert(allArgs.end(), args.begin(), args.end());
                         if (insideTry()) {
                             auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
                             llvm::InvokeInst* invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
@@ -4787,6 +5007,8 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
                         llvm::AllocaInst* temp = createEntryAlloca("temp_unary_this", operandTy);
                         builder->CreateStore(operand, temp);
                         std::vector<llvm::Value*> allArgs = {temp};
+                        if (opMethodName == "operator++" || opMethodName == "operator--")
+                            allArgs.push_back(isPostfix ? builder->getTrue() : builder->getFalse());
                         if (insideTry()) {
                             auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
                             auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
@@ -4834,7 +5056,6 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
         }
     }
     if ((*unary)->op_tok.type == TokenType::INCREMENT || (*unary)->op_tok.type == TokenType::DECREMENT) {
-        bool isPostfix = (*unary)->is_postfix;
         llvm::Value* lhsVal = operand;
         llvm::Value* lhs = emitLValue((*unary)->node);
         llvm::Type* type = lhsVal->getType();
@@ -5548,7 +5769,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 llvm::Value* dest_ptr = emitExpr(call.arg_nodes.front());
                 llvm::Value* size = emitExpr(call.arg_nodes.back());
                 llvm::Value* value = emitExpr(*std::next(call.arg_nodes.begin(), 1));
-                builder->CreateMemSet(dest_ptr, value, size, llvm::MaybeAlign(), false);
+                builder->CreateMemSetInline(dest_ptr, llvm::MaybeAlign(), value, size, false);
                 return nullptr;
             }
             if (funcName == "`memmove") {
@@ -5570,7 +5791,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 llvm::Value* dest_ptr = emitExpr(call.arg_nodes.front());
                 llvm::Value* size = emitExpr(call.arg_nodes.back());
                 llvm::Value* src_ptr = emitExpr(*std::next(call.arg_nodes.begin(), 1));
-                builder->CreateMemCpy(dest_ptr, llvm::MaybeAlign(), src_ptr, llvm::MaybeAlign(), size, false);
+                builder->CreateMemCpyInline(dest_ptr, llvm::MaybeAlign(), src_ptr, llvm::MaybeAlign(), size, false);
                 return nullptr;
             }
             if (funcName == "`atomic_load") {
