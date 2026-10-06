@@ -187,6 +187,17 @@ class Parser {
     bool in_foreign = false;
     std::string parseNoGenericString() {
         std::string type = "";
+        if (this->current_tok.type == TokenType::LPAREN) {
+            type = "(";
+            do {
+                this->advance();
+                if (type != "(") type += ", ";
+                type += this->parseTypeString();
+            } while (this->current_tok.type == TokenType::COMMA);
+            if (this->current_tok.type != TokenType::RPAREN) throw InvalidSyntaxError("QC-T060: missing closing paren on tuple type.", this->current_tok.pos);
+            this->advance();
+            return type + ")";
+        }
         if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "volatile") {
             type += "volatile ";
             this->advance();
@@ -328,6 +339,17 @@ class Parser {
             type += constraint;
             return type;
         }
+        if (this->current_tok.type == TokenType::LPAREN) {
+            type = "(";
+            do {
+                this->advance();
+                if (type != "(") type += ", ";
+                type += this->parseTypeString();
+            } while (this->current_tok.type == TokenType::COMMA);
+            if (this->current_tok.type != TokenType::RPAREN) throw InvalidSyntaxError("QC-T060: missing closing paren on tuple type.", this->current_tok.pos);
+            this->advance();
+            return type + ")";
+        }
         if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "volatile") {
             type += "volatile ";
             this->advance();
@@ -415,7 +437,6 @@ class Parser {
             type += "&";
             this->advance();
         }
-
         return type;
     }
     inline AnyNode prs_to_anynode(Prs st) {

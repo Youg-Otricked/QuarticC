@@ -112,6 +112,35 @@ llvm::Type* LLVMCompiler::llvmTypeFor(std::string qcType) {
     if (type == "qbool") return builder->getIntNTy(2);
     if (type == "string") return llvm::PointerType::get(context, 0);
     if (type == "@nullptr") return builder->getPtrTy();
+    if (type.starts_with("(")) {
+        std::vector<llvm::Type*> types;
+        std::string current_type;
+        size_t paren = 0; // please don't.
+        size_t angle = 0; // PLEASE DON'T
+        for (size_t i = 1; i < type.length() - 1; ++i) {
+            char c = type[i];
+            if (c == '(') {
+                paren++;
+                current_type += c;
+            } else if (c == ')') {
+                paren--;
+                current_type += c;
+            } else if (c == '<') {
+                angle++;
+                current_type += c;
+            } else if (c == '>') {
+                angle--;
+                current_type += c;
+            } else if (c == ',' && paren == 0 && angle == 0) {
+                types.push_back(llvmTypeFor(current_type));
+                current_type.clear();
+            } else {
+                if (c != ' ' || !current_type.empty()) { current_type += c; }
+            }
+        }
+        if (!current_type.empty()) { types.push_back(llvmTypeFor(current_type)); }
+        return llvm::StructType::get(context, types);
+    }
     if (classTypes.find(type) != classTypes.end() ||
         (genericClasses.find(baseTypeName(type)) != genericClasses.end() && genericClasses[baseTypeName(type)])) {
         return genericiseOrFindClass(resolveTypeName(qcType, false));
@@ -958,9 +987,7 @@ llvm::StructType* LLVMCompiler::generateGenericEnum(std::string enumName, UserTy
     for (size_t i = 0; i < enumInfo.enumEntries.size(); i++) {
         auto entry = enumInfo.enumEntries[i];
         std::string fullName = mangled_enum_name + "." + entry.memberName;
-        for (std::string& tag : entry.tags) {
-            tag = resolveTypeName(substituteGenerics(tag), false);
-        }
+        for (std::string& tag : entry.tags) { tag = resolveTypeName(substituteGenerics(tag), false); }
         enumMemberInfo[fullName] = std::make_pair(entry.value, entry.tags);
     }
     proveConceptsForTypeInfo(mangled_enum_name, enumInfo);
@@ -1244,9 +1271,7 @@ void LLVMCompiler::createUserTypes() {
             enumTypes[mapKey] = getOrCreateStructType(mapKey);
             for (size_t i = 0; i < info.enumEntries.size(); i++) {
                 auto entry = info.enumEntries[i];
-                for (std::string& tag : entry.tags) {
-                    tag = resolveTypeName(substituteGenerics(tag), false);
-                }
+                for (std::string& tag : entry.tags) { tag = resolveTypeName(substituteGenerics(tag), false); }
                 std::string fullName = mapKey + "." + entry.memberName;
                 enumMemberInfo[fullName] = std::make_pair(entry.value, entry.tags);
             }
@@ -4215,25 +4240,40 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                 cg_error(get_pos(*varAccess), "not a struct", "QC-S153");
                 return nullptr;
             }
-            std::string structName = structTy->getName().str();
-            int fieldIdx = getFlattenedFieldIndex(structName, fieldName);
+            size_t fieldIdx;
+            std::string resolvedFieldType;
+            if (structTy->isLiteral()) {
+                if (!std::all_of(fieldName.begin(), fieldName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
+                    cg_error(get_pos(*propAccess), "tuple indicies must be a integer", "QC-TPL0");
+                    return nullptr;
+                }
+                size_t fieldIdx = std::stoull(fieldName);
+                if (structTy->getNumElements() <= fieldIdx) {
+                    cg_error(get_pos(*propAccess), "tuple indice too big for tuple", "QC-TPL1");
+                    cg_note(get_pos(*propAccess), "tuple has " + std::to_string(structTy->getNumElements()) + " fields, got " + fieldName);
+                    return nullptr;
+                }
+                resolvedFieldType = getTupleFieldType(resolveVarType(varName), fieldIdx);
+            } else {
+                std::string structName = structTy->getName().str();
+                fieldIdx = getFlattenedFieldIndex(structName, fieldName);
+                std::function<bool(const std::string&)> findFieldType = [&](const std::string& cname) -> bool {
+                    auto& ci = userTypes.at(baseTypeName(baseTypeName(cname)));
+                    if (!ci.baseClassName.empty() && findFieldType(ci.baseClassName)) return true;
+                    for (auto& field : ci.fields) {
+                        if (field.name == fieldName) {
+                            resolvedFieldType = field.type;
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                findFieldType(baseTypeName(structName));
+            }
             llvm::Value* fieldPtr = builder->CreateStructGEP(structTy, locAlloc, fieldIdx);
             llvm::Type* fieldTy = structTy->getElementType(fieldIdx);
             llvm::Value* rhsVal = emitExpr((*asn)->value);
             TokenType op = (*asn)->op_tok.type;
-            std::string resolvedFieldType;
-            std::function<bool(const std::string&)> findFieldType = [&](const std::string& cname) -> bool {
-                auto& ci = userTypes.at(baseTypeName(baseTypeName(cname)));
-                if (!ci.baseClassName.empty() && findFieldType(ci.baseClassName)) return true;
-                for (auto& field : ci.fields) {
-                    if (field.name == fieldName) {
-                        resolvedFieldType = field.type;
-                        return true;
-                    }
-                }
-                return false;
-            };
-            findFieldType(baseTypeName(structName));
             if (op != TokenType::EQ) {
                 llvm::Value* oldVal = builder->CreateLoad(fieldTy, fieldPtr);
                 bool isFloat = fieldTy->isFloatingPointTy();
@@ -7298,8 +7338,25 @@ llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
     llvm::Type* baseTy = llvmTypeFor(exprType);
     bool isPtr = baseVal->getType()->isPointerTy();
     if (auto structTy = llvm::dyn_cast<llvm::StructType>(baseTy)) {
+        if (structTy->isLiteral()) {
+            if (!std::all_of(propName.begin(), propName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
+                cg_error(get_pos(*propAccess), "tuple indicies must be a integer", "QC-TPL0");
+                return nullptr;
+            }
+            size_t fieldIdx = std::stoull(propName);
+            if (structTy->getNumElements() <= fieldIdx) {
+                cg_error(get_pos(*propAccess), "tuple indice too big for tuple", "QC-TPL1");
+                cg_note(get_pos(*propAccess), "tuple has " + std::to_string(structTy->getNumElements()) + " fields, got " + propName);
+                return nullptr;
+            }
+            if (isPtr) {
+                llvm::Value* fieldPtr = builder->CreateStructGEP(structTy, baseVal, fieldIdx, propName + "_ptr");
+                return builder->CreateLoad(structTy->getElementType(fieldIdx), fieldPtr, propName);
+            } else {
+                return builder->CreateExtractValue(baseVal, fieldIdx, propName);
+            }
+        }
         std::string structName = structTy->getName().str();
-
         auto userTypeIt = userTypes.find(baseTypeName(structName));
         if (userTypeIt != userTypes.end() && userTypeIt->second.kind == UserTypeKind::Struct) {
             int fieldIdx = -1;
@@ -8259,6 +8316,16 @@ llvm::Value* LLVMCompiler::emitExpr(const AnyNode& node) {
         return llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0));
     } else if (auto mn = std::get_if<ModifierNode*>(&node)) {
         return emitModifierNode(*mn);
+    } else if (TupleValueNode* tuple = safe_get<TupleValueNode>(node)) {
+        std::vector<llvm::Type*> llvmTypes;
+        std::vector<llvm::Value*> values;
+        for (AnyNode& member : tuple->members) {
+            values.push_back(emitExpr(member));
+            llvmTypes.push_back(values.back()->getType());
+        }
+        llvm::Value* instance = llvm::UndefValue::get(llvm::StructType::get(context, llvmTypes));
+        for (size_t i = 0; i < values.size(); i++) { instance = builder->CreateInsertValue(instance, values[i], i); }
+        return instance;
     }
     return nullptr;
 }
@@ -10342,16 +10409,6 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         warn("unreachable-code", get_pos(node), "attempted to emit into terminated basic block (unreachable code)", "QC-W001");
         return;
     }
-    if (std::holds_alternative<VarAssignNode*>(node) || std::holds_alternative<AssignExprNode*>(node) || std::holds_alternative<BinOpNode*>(node) ||
-        std::holds_alternative<NumberNode>(node) || std::holds_alternative<VarAccessNode*>(node) || std::holds_alternative<BoolNode>(node) ||
-        std::holds_alternative<CharNode>(node) || std::holds_alternative<StringNode>(node) || std::holds_alternative<QBoolNode>(node) ||
-        std::holds_alternative<UnaryOpNode*>(node) || std::holds_alternative<CallNode*>(node) || std::holds_alternative<FuncDefNode*>(node) ||
-        std::holds_alternative<ArrayAccessNode*>(node) || std::holds_alternative<PropertyAccessNode*>(node) ||
-        std::holds_alternative<MethodCallNode*>(node) || std::holds_alternative<SpreadNode*>(node) ||
-        std::holds_alternative<FieldAssignNode*>(node) || std::holds_alternative<RefVarDeclNode*>(node)) {
-        emitExpr(node);
-        return;
-    }
     if (auto mret = safe_get<MultiReturnNode>(node)) {
         emitMultiRet(mret);
     } else if (auto ret = safe_get<ReturnNode>(node)) {
@@ -10411,6 +10468,9 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         return;
     } else if (auto match_node = safe_get<MatchNode>(node)) {
         emitMatch(match_node);
+    } else {
+        emitExpr(node);
+        return;
     }
 }
 std::pair<bool, int> LLVMCompiler::checkJagged(AnyNode& node) {

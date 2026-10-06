@@ -49,12 +49,13 @@ class NullptrNode;
 class TypeValueNode;
 class DeferNode;
 class ModifierNode;
+class TupleValueNode;
 using AnyNode = std::variant<std::monostate, NumberNode, StringNode, CharNode, BoolNode, QInNode, QBoolNode, RefVarDeclNode*, NullptrNode, BinOpNode*,
                              UnaryOpNode*, VarAccessNode*, VarAssignNode*, AssignExprNode*, IfNode*, QIfNode*, StatementsNode*, SwitchNode*,
                              QSwitchNode*, BreakNode*, UnreachableNode*, WhileNode*, ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*,
                              MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*,
                              PropertyAccessNode*, SpreadNode*, ForeachNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*,
-                             TryCatchNode*, TypeValueNode, DeferNode*, ModifierNode*, MatchNode*>;
+                             TryCatchNode*, TypeValueNode, DeferNode*, ModifierNode*, MatchNode*, TupleValueNode*>;
 struct GenericType {
     std::string name;
     bool isVariadic = false;
@@ -123,6 +124,13 @@ class TypeValueNode {
     TypeValueNode(Token tok);
     Position getPos() { return this->tok.pos; }
     std::string print() const;
+};
+class TupleValueNode {
+  public:
+    std::vector<AnyNode> members;
+    TupleValueNode(std::vector<AnyNode>& members) : members(members) {};
+    Position getPos() { return get_pos(this->members[0]); }
+    std::string print() const { return "tuple()"; }
 };
 class RefVarDeclNode {
   public:
@@ -621,6 +629,7 @@ class MultiVarDeclNode {
     Position getPos() { return var_names[0].pos; };
     MultiVarDeclNode(bool is_const, std::vector<Token> type_toks, std::vector<Token> var_names, AnyNode value)
         : is_const(is_const), type_toks(type_toks), var_names(var_names), value(value) {}
+    std::string print() const { return "(multi var decl)"; }
 };
 class ArrayDeclNode {
   public:
@@ -777,7 +786,7 @@ using Prs = std::variant<std::monostate, ParseResult, NumberNode, StringNode, Ch
                          ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*,
                          ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, SpreadNode*, ForeachNode*, QBoolNode, QInNode, QIfNode*,
                          QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, TryCatchNode*, RefVarDeclNode*,
-                         NullptrNode, TypeValueNode, DeferNode*, ModifierNode*>;
+                         NullptrNode, TypeValueNode, DeferNode*, ModifierNode*, TupleValueNode*>;
 class ParseResult {
   public:
     AnyNode node;

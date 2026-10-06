@@ -1048,7 +1048,7 @@ Prs Parser::match_stmt() {
                         data.second.push_back(this->current_tok.value);
                         this->advance();
                         if (this->current_tok.type == TokenType::COMMA) this->advance();
-                    } 
+                    }
                     if (this->current_tok.type != TokenType::RPAREN) {
                         res.failure(new InvalidSyntaxError("QC-S302: Expected ) after enum tags", current_tok.pos));
                         return res.to_prs();
@@ -2008,8 +2008,7 @@ Prs Parser::atom() {
 
             if (this->current_tok.type == TokenType::ARROW) {
                 this->advance();
-
-                if (this->current_tok.type != TokenType::IDENTIFIER) {
+                if (this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.type != TokenType::INT) {
                     res.failure(new InvalidSyntaxError("QC-S037: Expected property or method name after '->'", this->current_tok.pos));
                     return res.to_prs();
                 }
@@ -2143,7 +2142,7 @@ Prs Parser::atom() {
             } else if (this->current_tok.type == TokenType::DOT) {
                 this->advance();
 
-                if (this->current_tok.type != TokenType::IDENTIFIER) {
+                if (this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.type != TokenType::INT) {
                     res.failure(new InvalidSyntaxError("QC-S053: Expected property or method name after '.'", this->current_tok.pos));
                     return res.to_prs();
                 }
@@ -2310,7 +2309,7 @@ Prs Parser::atom() {
                 if (this->current_tok.type == TokenType::ARROW) {
                     this->advance();
 
-                    if (this->current_tok.type != TokenType::IDENTIFIER) {
+                    if (this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.type != TokenType::INT) {
                         res.failure(new InvalidSyntaxError("QC-S037: Expected property or method name after '->'", this->current_tok.pos));
                         return res.to_prs();
                     }
@@ -2444,7 +2443,7 @@ Prs Parser::atom() {
                 } else if (this->current_tok.type == TokenType::DOT) {
                     this->advance();
 
-                    if (this->current_tok.type != TokenType::IDENTIFIER) {
+                    if (this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.type != TokenType::INT) {
                         res.failure(new InvalidSyntaxError("QC-S053: Expected property or method name after '.'", this->current_tok.pos));
                         return res.to_prs();
                     }
@@ -2602,7 +2601,34 @@ Prs Parser::atom() {
         this->advance();
         AnyNode any_expr = res.reg(this->text_unops());
         if (res.error) return res.to_prs();
-
+        if (this->current_tok.type == TokenType::COMMA) {
+            std::vector<AnyNode> tupleValues = {any_expr};
+            bool is_all_types = std::get_if<TypeValueNode>(&any_expr) != nullptr;
+            while (this->current_tok.type == TokenType::COMMA) {
+                this->advance();
+                if (this->current_tok.type == TokenType::RPAREN) break;
+                any_expr = res.reg(this->text_unops());
+                if (res.error) return res.to_prs();
+                if (std::get_if<TypeValueNode>(&any_expr) == nullptr) { is_all_types = false; }
+                tupleValues.push_back(any_expr);
+            }
+            if (this->current_tok.type != TokenType::RPAREN) {
+                res.failure(new InvalidSyntaxError("QC-S050: Expected ')'", this->current_tok.pos));
+                return res.to_prs();
+            }
+            if (is_all_types) {
+                std::string stringified_type = "(";
+                for (size_t i = 0; i < tupleValues.size(); i++) {
+                    TypeValueNode* typeNode = std::get_if<TypeValueNode>(&tupleValues[i]);
+                    stringified_type += typeNode->tok.value;
+                    if (i < tupleValues.size() - 1) { stringified_type += ", "; }
+                }
+                stringified_type += ")";
+                any_expr = TypeValueNode(Token(TokenType::IDENTIFIER, stringified_type, get_pos(tupleValues[0])));
+            } else {
+                any_expr = new TupleValueNode(tupleValues);
+            }
+        }
         if (this->current_tok.type == TokenType::RPAREN) {
             this->advance();
             AnyNode base = any_expr;
@@ -2610,7 +2636,7 @@ Prs Parser::atom() {
             while (this->current_tok.type == TokenType::DOT) {
                 this->advance();
 
-                if (this->current_tok.type != TokenType::IDENTIFIER) {
+                if (this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.type != TokenType::INT) {
                     res.failure(new InvalidSyntaxError("QC-S053: Expected property or method name after '.'", this->current_tok.pos));
                     return res.to_prs();
                 }
@@ -4657,7 +4683,7 @@ Prs Parser::statement() {
         this->advance();
         tok = this->current_tok;
     }
-    if (tok.type == TokenType::KEYWORD || tok.type == TokenType::IDENTIFIER && tok.value != "this") {
+    if (tok.type == TokenType::KEYWORD || tok.type == TokenType::IDENTIFIER && tok.value != "this" || tok.type == TokenType::LPAREN) {
         if (tok.type == TokenType::IDENTIFIER) {
             Token saved_tok = this->current_tok;
             size_t saved_index = this->index;

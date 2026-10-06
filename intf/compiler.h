@@ -197,7 +197,7 @@ class LLVMCompiler {
         for (const EnumEntry& entry : info.enumEntries) {
             for (int i = 0; i < entry.tags.size(); i++) {
                 if (i >= sizes.size()) { sizes.push_back(0); }
-                llvm::Type *ty = llvmTypeFor(entry.tags[i]);
+                llvm::Type* ty = llvmTypeFor(entry.tags[i]);
                 if (!ty) {
                     cg_error(info.pos, "unknow type: " + entry.tags[i], "QC-EM05");
                     sizes.back() = 1;
@@ -253,7 +253,7 @@ class LLVMCompiler {
     std::unordered_map<std::string, std::vector<size_t>> genericMethodIndices;
     bool isEnumType(llvm::Type* ty, std::string* outName = nullptr) {
         auto* st = llvm::dyn_cast<llvm::StructType>(ty);
-        if (!st) return false;
+        if (!st || st->isLiteral()) return false;
 
         std::string name = st->getName().str();
         auto it = enumTypes.find(name);
@@ -264,8 +264,7 @@ class LLVMCompiler {
     }
     bool isUnionType(llvm::Type* ty, std::string* outName = nullptr) {
         auto* st = llvm::dyn_cast<llvm::StructType>(ty);
-        if (!st) return false;
-
+        if (!st || st->isLiteral()) return false;
         std::string name = st->getName().str();
         auto it = unionTypes.find(name);
         if (it == unionTypes.end()) return false;
@@ -510,6 +509,37 @@ class LLVMCompiler {
         }
         return sig;
     }
+    std::string getTupleFieldType(const std::string& currentType, size_t idx) {
+        std::vector<std::string> elements;
+        if (currentType.length() < 2 || currentType.front() != '(' || currentType.back() != ')') { return "unknown"; }
+        std::string current_element;
+        size_t paren = 0; // please don't.
+        size_t angle = 0; // PLEASE DON'T.
+        for (size_t i = 1; i < currentType.length() - 1; ++i) {
+            char c = currentType[i];
+            if (c == '(') {
+                paren++;
+                current_element += c;
+            } else if (c == ')') {
+                paren--;
+                current_element += c;
+            } else if (c == '<') {
+                angle++;
+                current_element += c;
+            } else if (c == '>') {
+                angle--;
+                current_element += c;
+            } else if (c == ',' && paren == 0 && angle == 0) {
+                elements.push_back(current_element);
+                current_element.clear();
+            } else {
+                if (c != ' ' || !current_element.empty()) { current_element += c; }
+            }
+        }
+        if (!current_element.empty()) { elements.push_back(current_element); }
+        if (elements.size() <= idx) return "unknown";
+        return elements[idx];
+    }
     std::string getExpressionType(AnyNode& node, bool strip = true) {
         if (auto mapLit = std::get_if<MapLiteralNode*>(&node)) {
             if (!(*mapLit)->struct_type.empty()) { return (*mapLit)->struct_type; }
@@ -627,6 +657,10 @@ class LLVMCompiler {
             std::string currentType = getExpressionType(*((*propAcc)->base));
             if (currentType.ends_with("*") || currentType.ends_with("&")) { currentType.pop_back(); }
             std::string fieldName = (*propAcc)->property_name.value;
+            if (!std::all_of(fieldName.begin(), fieldName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
+                size_t fieldIdx = std::stoull(fieldName);
+                return getTupleFieldType(currentType, fieldIdx);
+            }
             while (!currentType.empty() && userTypes.contains(baseTypeName(currentType))) {
                 auto& info = userTypes[baseTypeName(currentType)];
                 auto savedGenericTypeStrings = currentGenericTypeStrings;
@@ -960,6 +994,10 @@ class LLVMCompiler {
                 currentType = retType;
             }
             return currentType;
+        } else if (TupleValueNode *tup = safe_get<TupleValueNode>(node)) {
+            std::string res = "(";
+            for (AnyNode& node : tup->members) { if (res != "(") res += ", "; res += getExpressionType(node); }
+            return res + ")";
         }
         return "unknown";
     }
@@ -1049,6 +1087,20 @@ class LLVMCompiler {
             builder->CreateStore(rval, baseAddr);
         }
         std::string typeName = getExpressionType(*prop.base);
+        llvm::Type *sType = llvmTypeFor(typeName);
+        if (llvm::StructType *structType = llvm::dyn_cast<llvm::StructType>(sType); structType && structType->isLiteral()) {
+            if (!std::all_of(propName.begin(), propName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
+                cg_error(get_pos(&prop), "tuple indicies must be a integer", "QC-TPL0");
+                return nullptr;
+            }
+            size_t fieldIdx = std::stoull(propName);
+            if (structType->getNumElements() <= fieldIdx) {
+                cg_error(get_pos(&prop), "tuple indice too big for tuple", "QC-TPL1");
+                cg_note(get_pos(&prop), "tuple has " + std::to_string(structType->getNumElements()) + " fields, got " + propName);
+                return nullptr;
+            }
+            return builder->CreateStructGEP(structType, baseAddr, fieldIdx, propName + "_ptr");
+        }
         if (classTypes.count(typeName) || (genericClasses.count(baseTypeName(typeName)) && genericClasses[baseTypeName(typeName)])) {
             llvm::StructType* classTy = genericiseOrFindClass(typeName);
             int fieldIdx = getFlattenedFieldIndex(baseTypeName(typeName), propName);
@@ -1169,7 +1221,7 @@ class LLVMCompiler {
             }
             llvm::Value* addr = getVarAddress(name);
             if (addr) return addr;
-            if (llvm::Value *fn = resolveFunction(name)) return fn;
+            if (llvm::Value* fn = resolveFunction(name)) return fn;
             if (fallback) return emitExpr(node);
             return nullptr;
         } else if (auto unary = std::get_if<UnaryOpNode*>(&node)) {
@@ -1499,7 +1551,7 @@ class LLVMCompiler {
             srcTy = v->getType();
         }
         if (srcTy->isIntegerTy() && isEnumType(paramTy)) {
-            llvm::Value *structVal = llvm::ConstantAggregateZero::get(llvm::cast<llvm::StructType>(paramTy));
+            llvm::Value* structVal = llvm::ConstantAggregateZero::get(llvm::cast<llvm::StructType>(paramTy));
             v = builder->CreateInsertValue(structVal, v, {0});
         }
         if (srcTy->isIntegerTy() && paramTy->isIntegerTy()) {
@@ -3397,7 +3449,7 @@ class LLVMCompiler {
     std::string resolveTypeName(std::string name, bool strip = true) {
         if (name == "int" || name == "float" || name == "double" || name == "char" || name == "bool" || name == "qbool" || name == "string" ||
             name == "byte" || name == "void" || name == "auto" || name == "short int" || name == "long int" || name == "long double" ||
-            name == "addr_t" || name == "nibble") {
+            name == "addr_t" || name == "nibble" || name.starts_with("(")) {
             return name;
         }
         std::string suffix;
@@ -3962,9 +4014,7 @@ class LLVMCompiler {
         if (!v) return nullptr;
         llvm::Type* ty = v->getType();
         std::string unionName;
-        if (isEnumType(ty)) {
-            return builder->CreateExtractValue(v, 0, "enum_descriminant");
-        }
+        if (isEnumType(ty)) { return builder->CreateExtractValue(v, 0, "enum_descriminant"); }
         bool isUnion = isUnionType(ty, &unionName);
         if (!isUnion) { return v; }
         std::string typeName = unionName;
@@ -4008,33 +4058,33 @@ class LLVMCompiler {
         return builder->CreateLoad(voidPtrTy, tmp, "normalized");
     }
     [[gnu::noinline]]
-    void emitMultiRet(MultiReturnNode *mret);
+    void emitMultiRet(MultiReturnNode* mret);
     [[gnu::noinline]]
-    void emitRet(ReturnNode *ret);
+    void emitRet(ReturnNode* ret);
     [[gnu::noinline]]
-    void emitMultiVar(MultiVarDeclNode *mv);
+    void emitMultiVar(MultiVarDeclNode* mv);
     [[gnu::noinline]]
-    void emitIf(IfNode *if_node);
+    void emitIf(IfNode* if_node);
     [[gnu::noinline]]
-    void emitFor(ForNode *for_node);
+    void emitFor(ForNode* for_node);
     [[gnu::noinline]]
-    void emitWhile(WhileNode *while_node);
+    void emitWhile(WhileNode* while_node);
     [[gnu::noinline]]
-    void emitSwitch(SwitchNode *switch_node);
+    void emitSwitch(SwitchNode* switch_node);
     [[gnu::noinline]]
-    void emitQSwitch(QSwitchNode *qsw);
+    void emitQSwitch(QSwitchNode* qsw);
     [[gnu::noinline]]
-    void emitQIf(QIfNode *qif_node);
+    void emitQIf(QIfNode* qif_node);
     [[gnu::noinline]]
-    void emitArrAssign(ArrayAssignNode *arrAssign);
+    void emitArrAssign(ArrayAssignNode* arrAssign);
     [[gnu::noinline]]
-    void emitArrDecl(ArrayDeclNode *arrDecl);
+    void emitArrDecl(ArrayDeclNode* arrDecl);
     [[gnu::noinline]]
-    void emitTryCatch(TryCatchNode *trycatch);
+    void emitTryCatch(TryCatchNode* trycatch);
     [[gnu::noinline]]
-    void emitForeach(ForeachNode *foreach);
+    void emitForeach(ForeachNode* foreach);
     [[gnu::noinline]]
-    void emitMatch(MatchNode *match_node);
+    void emitMatch(MatchNode* match_node);
     void emitStmt(AnyNode node);
 };
 #endif

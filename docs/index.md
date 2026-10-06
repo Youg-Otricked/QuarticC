@@ -3,11 +3,18 @@
 # Welcome To The Quartic-C Documentation!
 
 ```cpp
+struct Register {
+    volatile addr_t value;
+};
 int main() {
-    qbool state = both;
-    qif (state) {
-        qout("Quantum!\n");
-    }
+    volatile addr_t *p = `mapped_ptr(0xB8000);
+    *p = 0x0543056305690574;
+    *(p + 1) = 0x0572056105750551;
+    Register *reg = `malloc(sizeof Register);
+    defer `free(reg);
+    *reg = Register{};
+    reg->value = 0xdeadbeefdeadbeef;
+    return reg->value == 0xdeadbeefdeadbeef ? 0 : 1;  
 }
 ```
 
@@ -83,6 +90,8 @@ int main() {
 
 [Try/Catch](./trycatch.md)
 
+[Tuples](./tuples.md)
+
 ## 'Philosophy'
 
 - No hidden behavior
@@ -95,9 +104,6 @@ Quartic C favors clarity over convenience, and explicitness over brevity.
 ## Non-goals
 
 - Quartic C is not trying to do 'hand-holding' or be beginner - friendly.  
-  It is designed to be **used**, **taught**, and **to teach** — and this can be **verified directly**:  
-  simply pass `-a -tkn -r` before any input file to see the compiler output that demonstrates all three.
-
 - Quartic C does not hide memory costs
 - Quartic C does not auto-correct ambiguous logic
 - Quartic C does not _make_ ambiguous logic

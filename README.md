@@ -3,9 +3,21 @@
 ### The 4th Evolution of C
 
 ```qc
+struct Register {
+    volatile addr_t value;
+};
+
 int main() {
-    `qout("Hello, World!");
-    return 0;
+    volatile addr_t *p = `mapped_ptr(0xB8000);
+    *p = 0x0543056305690574;
+    *(p + 1) = 0x0572056105750551;
+
+    Register *reg = `malloc(sizeof Register);
+    defer `free(reg);
+    *reg = Register{};
+    reg->value = 0xdeadbeefdeadbeef;
+
+    return reg->value == 0xdeadbeefdeadbeef ? 0 : 1;
 }
 ```
 
@@ -60,7 +72,7 @@ qc [flags]
 - [Include System](#include-system)
 - [Why QuarticC?](#why-quarticc)
 - [Code Conventions](#conventions)
-- [Type collections and aliases](#type-collections-and-aliases)
+- [Type collections, Collection types](#type-collections-and-collection-types)
 - [Systems-y stuff](#c-interop-and-inline-asm)
 - [Generics and Iterators](#generics)
 - [Misc.](#performance-comparison)
@@ -101,8 +113,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.1.1 = "Function pointers"
-Next Version: x1.2.0 = "Either tuples or something else"
+Current Version: x1.2.0 = "Tuples"
+Next Version: x1.2.1 = "Destructuring"
 
 # Current Version Highlights
 
@@ -114,10 +126,10 @@ Major
 └─ N/A
 
 Moderate
-└─ Misc important
+└─ Tuples
 
 Minor
-└─ Function pointers
+└─ N/A
 
 Patch
 └─ N/A
@@ -125,12 +137,11 @@ Patch
 
 # Recent Deprecations / Breaking Changes
 
-These are deprecations in the past 3 moderate versions (`x0.27.* -> x1.1.*`)
+These are deprecations in the past 3 moderate versions (`x1.0.* -> x1.2.*`)
 
-Jagged arrays will be deprecated at version x1.1.1.
+Jagged Arrays
 
 # Upcoming Deprecations:
-
 
 ## Feature Roadmap
 
@@ -288,15 +299,15 @@ Want to learn more? Check out the [docs for it](https://youg-otricked.github.io/
 
 ## Why QuarticC?
 
-| **Feature**                 | **C++**              | **Zig**              | **Rust**       | **QuarticC**     | **C**                           |
-| --------------------------- | -------------------- | -------------------- | -------------- | ---------------- | ------------------------------- |
-| **Comp + Run**              | Medium               | Fast                 | Medium-Slow    | Medium-Fast      | Fastest                         |
-| **Compile Time (relative)** | Slow                 | Fast (Direct-to-ASM) | (Really) Slow  | Medium           | Fastest                         |
-| **Runtime**                 | Fast                 | Fast                 | Fast           | Fast             | Fast                            |
-| **Memory safety**           | Manual               | GPA                  | Borrow checker | Manual           | Manual                          |
-| **Multi-return**            | Structs              | Tuples               | Tuples         | **Native**       | Structs                         |
-| **Generics**                | Templates + Concepts | Type as Argument     | Trait Based    | Constraint-Based | No (Macro Hell does not count.) |
-| **Memory Control**          | Yes                  | Yes                  | Ehhh           | Yes              | Yes                             |
+| **Feature**                 | **C++**              | **Zig**              | **Rust**       | **QuarticC**           | **C**                           |
+| --------------------------- | -------------------- | -------------------- | -------------- | ---------------------- | ------------------------------- |
+| **Comp + Run**              | Medium               | Fast                 | Medium-Slow    | Medium-Fast            | Fastest                         |
+| **Compile Time (relative)** | Slow                 | Fast (Direct-to-ASM) | (Really) Slow  | Medium                 | Fastest                         |
+| **Runtime**                 | Fast                 | Fast                 | Fast           | Fast                   | Fast                            |
+| **Memory safety**           | Manual               | GPA                  | Borrow checker | Manual                 | Manual                          |
+| **Multi-return**            | Structs              | Tuples               | Tuples         | **Native** (Or tuples) | Structs                         |
+| **Generics**                | Templates + Concepts | Type as Argument     | Trait Based    | Constraint-Based       | No (Macro Hell does not count.) |
+| **Memory Control**          | Yes                  | Yes                  | Ehhh           | Yes                    | Yes                             |
 
 Based on the last reliable benchmark results, QuarticC showed performance in the same general range as C++, while offering a similar set of quality-of-life improvements found in languages such as Zig.According to most recent benchmarks, in tested cases C^4 runs either at a similar or faster speed than C++, with equal or faster compiles.
 
@@ -407,20 +418,69 @@ int main() {
 }
 ```
 
-## Type collections and aliases
+## Type collections and collection types.
 
-Define variables that can hold multiple types using a simple `|` syntax. The parser automatically distinguishes these from standard aliases:
+Union types and aliases use the exact same syntax.
 
 ```cpp
 int main() {
-    // A Union Type (TypeScript-style)
+    // Union type. No narrowing. Compiled to LLVM. I SPENT HOURS ON THIS.
     type IdT = int | string;
     IdT id = 101;
-    id = "A101"; // Perfectly valid
+    id = "A101"; // Valid
 
-    // A Standard Alias
+    // Alias
     type UserID = int;
     UserID myId = 5;
+}
+```
+
+Unions require exactly 0 narrowing.
+
+### Tagged Enums
+
+Enums can have tags.
+
+```qc
+enum MyEnum {
+    OK(int);
+    NONE;
+}
+```
+
+You construct enums like this:
+
+```qc
+MyEnum.OK(123);
+MyEnum.NONE;
+```
+
+Normally, you can only access the descriminant of a enum. To access the tag, you must use a `match` (yes, C⁴ has both `switch` and `match`)
+
+```qc
+match (value) {
+    MyEnum.OK(x) => ...
+    ...
+}
+```
+
+(You can also match on integers)
+
+### Tuples
+
+Tuples use the Zig-style syntax.
+
+```qc
+(int, int) makeCoordinate(int x, int y) {
+    return (x, y);
+}
+```
+
+This means you can use both tuples and raw values for multireturn, or make functions to unpack tuples.
+
+```qc
+int, int unpackCoordinate((int, int) coord) {
+    return coord.0, coord.1;
 }
 ```
 
