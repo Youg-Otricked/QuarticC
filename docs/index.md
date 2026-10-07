@@ -18,6 +18,9 @@ int main() {
 }
 ```
 
+# Note: Prefer the book to the docs.
+## [Book](https://youg-otricked.github.io/QCBook)
+
 ## Video
 
 <div style="position: relative; padding-bottom: calc(51.0933% + 41px); height: 0; width: 100%; max-width: 900px; margin: 0 auto;">

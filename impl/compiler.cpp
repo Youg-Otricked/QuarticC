@@ -600,8 +600,6 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             }
         }
     }
-    std::vector<llvm::Constant*> vtableFuncs;
-    std::vector<std::string> slotOrder;
     std::unordered_map<std::string, int> nameCounts;
     for (auto& method : classInfo.classMethods) { nameCounts[method.name_tok.value]++; }
     for (size_t methodIdx = 0; methodIdx < classInfo.classMethods.size(); methodIdx++) {
@@ -616,9 +614,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             continue;
         }
         std::string methodName = mangled_class_name + "_" + method.name_tok.value;
-        if (nameCounts[method.name_tok.value] > 1) {
-            for (auto& param : method.params) { methodName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
-        }
+        for (auto& param : method.params) { methodName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
         std::vector<llvm::Type*> paramTypes;
         paramTypes.push_back(llvm::PointerType::get(context, 0));
         llvm::FunctionType* baseFuncTy = llvmFuncTypeFor(method.return_types, method.params);
@@ -644,21 +640,13 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             if (method.params[i - 1].type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
         }
         classMethods[mangled_class_name][method.name_tok.value].push_back(fn);
-        vtableFuncs.push_back(fn);
-        slotOrder.push_back(methodName);
     }
-    for (size_t i = 0; i < slotOrder.size(); i++) { vtableSlotIndex[mangled_class_name][slotOrder[i]] = i; }
-    auto* arrTy = llvm::ArrayType::get(llvm::PointerType::get(context, 0), vtableFuncs.size());
-    auto* vtableInit = llvm::ConstantArray::get(arrTy, vtableFuncs);
-    auto* vtable = getOrCreateVtable(mangled_class_name + "_vtable", arrTy, vtableInit);
-    vtables[mangled_class_name] = vtable;
+    generateVtable(mangled_class_name, &classInfo);
     for (size_t methodIdx = 0; methodIdx < classInfo.classMethods.size(); methodIdx++) {
         auto& method = classInfo.classMethods[methodIdx];
         if (!method.is_static) continue;
         std::string mangledName = mangled_class_name + "::" + method.name_tok.value;
-        if (nameCounts[method.name_tok.value] > 1) {
-            for (auto& param : method.params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
-        }
+        for (auto& param : method.params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
         llvm::FunctionType* fnTy = llvmFuncTypeFor(method.return_types, method.params);
         llvm::Function* fn = module->getFunction(mangledName);
         if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, mangledName, module); }
@@ -1294,7 +1282,7 @@ void LLVMCompiler::createUserTypes() {
                     std::unordered_set<std::string> parentFields;
                     for (const auto& field : parentInfo.classFields) { parentFields.insert(field.name); }
                     for (const auto& field : info.classFields) {
-                        if (!field.isStatic && field.name != "__vptr" && field.name != "__vptr" && parentFields.contains(field.name)) {
+                        if (!field.isStatic && field.name != "__vptr" && parentFields.contains(field.name)) {
                             cg_error(info.pos, "Parent field " + field.name + " redeclared in child class.", "QC-CS02");
                         }
                     }
@@ -1340,21 +1328,6 @@ void LLVMCompiler::createUserTypes() {
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind != UserTypeKind::Class) continue;
         if (!info.generics.empty()) continue;
-        if (!info.baseClassName.empty()) {
-            auto base_it = userTypes.find(info.baseClassName);
-            if (base_it != userTypes.end()) {
-                auto& baseInfo = base_it->second;
-                for (auto& method : info.classMethods) {
-                    for (auto& baseMethod : baseInfo.classMethods) {
-                        if (baseMethod.name_tok.value == method.name_tok.value && baseMethod.is_final) {
-                            cg_error(method.name_tok.pos,
-                                     "Cannot override final method '" + baseMethod.name_tok.value + "' from base class '" + info.baseClassName + "'",
-                                     "QC-S097");
-                        }
-                    }
-                }
-            }
-        }
         auto oldNamespaceStack = namespaceStack;
         namespaceStack.clear();
         if (!info.namespace_path.empty()) {
@@ -1367,41 +1340,35 @@ void LLVMCompiler::createUserTypes() {
             namespaceStack.push_back(info.namespace_path.substr(start));
         }
         llvm::StructType* classTy = genericiseOrFindClass(mapKey);
-        std::vector<llvm::Constant*> vtableFuncs;
-        std::vector<std::string> slotOrder;
         std::unordered_map<std::string, int> nameCounts;
         for (auto& method : info.classMethods) { nameCounts[method.name_tok.value]++; }
-        for (auto& [mapKey, info] : userTypes) {
-            if (info.kind != UserTypeKind::Class || !info.generics.empty()) continue;
-            for (size_t methodIdx = 0; methodIdx < info.classMethods.size(); methodIdx++) {
-                auto& method = info.classMethods[methodIdx];
-                if (!method.is_static) continue;
-                std::string mangledName = mapKey + "::" + method.name_tok.value;
-                if (nameCounts[method.name_tok.value] > 1) {
-                    for (auto& param : method.params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
-                }
-                llvm::FunctionType* fnTy = llvmFuncTypeFor(method.return_types, method.params);
-                llvm::Function* fn = module->getFunction(mangledName);
-                if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, mangledName, module); }
-                llvm::SmallVector<llvm::Metadata*, 4> retTypes;
-                for (auto& ret : method.return_types) { retTypes.push_back(llvm::MDString::get(context, ret.value)); }
-                if (method.is_volatile) {
-                    fn->addFnAttr(llvm::Attribute::NoInline);
-                    fn->addFnAttr(llvm::Attribute::OptimizeNone);
-                    fn->addFnAttr("noipa");
-                }
-                fn->setMetadata("qc.return_types", llvm::MDNode::get(context, retTypes));
-                for (size_t i = 0; i < method.params.size(); i++) {
-                    if (method.params[i].type.value.starts_with("out ")) {
-                        fn->addParamAttr(i, llvm::Attribute::WriteOnly);
-                        fn->addParamAttr(i, llvm::Attribute::getWithCaptureInfo(context, llvm::CaptureInfo::none()));
-                    } else if (method.params[i].type.value.starts_with("inout ")) {
-                        fn->addParamAttr(i, llvm::Attribute::getWithCaptureInfo(context, llvm::CaptureInfo::none()));
-                    }
-                    if (method.params[i].type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
-                }
-                functionDefs[mangledName] = funcDefFromClassMethod(method, mapKey);
+        if (info.kind != UserTypeKind::Class || !info.generics.empty()) continue;
+        for (size_t methodIdx = 0; methodIdx < info.classMethods.size(); methodIdx++) {
+            auto& method = info.classMethods[methodIdx];
+            if (!method.is_static) continue;
+            std::string mangledName = mapKey + "::" + method.name_tok.value;
+            for (auto& param : method.params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
+            llvm::FunctionType* fnTy = llvmFuncTypeFor(method.return_types, method.params);
+            llvm::Function* fn = module->getFunction(mangledName);
+            if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, mangledName, module); }
+            llvm::SmallVector<llvm::Metadata*, 4> retTypes;
+            for (auto& ret : method.return_types) { retTypes.push_back(llvm::MDString::get(context, ret.value)); }
+            if (method.is_volatile) {
+                fn->addFnAttr(llvm::Attribute::NoInline);
+                fn->addFnAttr(llvm::Attribute::OptimizeNone);
+                fn->addFnAttr("noipa");
             }
+            fn->setMetadata("qc.return_types", llvm::MDNode::get(context, retTypes));
+            for (size_t i = 0; i < method.params.size(); i++) {
+                if (method.params[i].type.value.starts_with("out ")) {
+                    fn->addParamAttr(i, llvm::Attribute::WriteOnly);
+                    fn->addParamAttr(i, llvm::Attribute::getWithCaptureInfo(context, llvm::CaptureInfo::none()));
+                } else if (method.params[i].type.value.starts_with("inout ")) {
+                    fn->addParamAttr(i, llvm::Attribute::getWithCaptureInfo(context, llvm::CaptureInfo::none()));
+                }
+                if (method.params[i].type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
+            }
+            functionDefs[mangledName] = funcDefFromClassMethod(method, mapKey);
         }
         for (size_t methodIdx = 0; methodIdx < info.classMethods.size(); methodIdx++) {
             auto& method = info.classMethods[methodIdx];
@@ -1415,9 +1382,7 @@ void LLVMCompiler::createUserTypes() {
                 continue;
             }
             std::string methodName = mapKey + "_" + method.name_tok.value;
-            if (nameCounts[method.name_tok.value] > 1) {
-                for (auto& param : method.params) { methodName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
-            }
+            for (auto& param : method.params) { methodName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
             std::vector<llvm::Type*> paramTypes;
             paramTypes.push_back(llvm::PointerType::get(context, 0));
             llvm::FunctionType* baseFuncTy = llvmFuncTypeFor(method.return_types, method.params);
@@ -1443,15 +1408,11 @@ void LLVMCompiler::createUserTypes() {
                 if (method.params[i - 1].type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
             }
             classMethods[mapKey][method.name_tok.value].push_back(fn);
-            vtableFuncs.push_back(fn);
-            slotOrder.push_back(methodName);
         }
-        for (size_t i = 0; i < slotOrder.size(); i++) { vtableSlotIndex[mapKey][slotOrder[i]] = i; }
-        auto* arrTy = llvm::ArrayType::get(llvm::PointerType::get(context, 0), vtableFuncs.size());
-        auto* vtableInit = llvm::ConstantArray::get(arrTy, vtableFuncs);
-        auto* vtable = getOrCreateVtable(mapKey + "_vtable", arrTy, vtableInit);
-        vtables[mapKey] = vtable;
         namespaceStack = oldNamespaceStack;
+    }
+    for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::Class && info.generics.empty()) generateVtable(mapKey);
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Struct) { generateStruct(mapKey, info); }
@@ -3417,10 +3378,10 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             llvm::Value* len = builder->getInt32((*arrLit)->elements.size());
             rhsVal = decayArrayToPointer(rhsVal);
             if (rhsVal == nullptr) { return nullptr; }
-            llvm::Function* opMethod = findMethodOverload(buildMangledName(qcType, genericParams), "operator[]=", {rhsVal, len});
             std::string mangledName = buildMangledName(qcType, genericParams);
+            llvm::Function* opMethod = findMethodOverload(mangledName, "operator[]=", {rhsVal, len});
             if (opMethod) {
-                emitMethodCall(opMethod, instance, {rhsVal, len}, "operator[]=");
+                emitVirtualOrDirectCall(mangledName, "operator[]=", instance, {rhsVal, len});
                 std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
                 locals[fullName] = instance;
                 varTypes[fullName] = mangledName;
@@ -4762,7 +4723,7 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
             }
         }
     }
-    llvm::Value* newVal = nullptr;
+    llvm::Value* newVal = rhsVal;
     bool isFloatTy = destTy->isFloatingPointTy();
     if ((*asn)->op_tok.type == TokenType::PLUS_EQ && (lhsTypeStr == "char*" || lhsTypeStr == "string") &&
         std::unordered_set<std::string>({"string", "char*"}).contains(rhsType)) {
@@ -8338,10 +8299,8 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
     auto vtableIt = vtables.find(targetClass);
     auto slotIt = vtableSlotIndex.find(targetClass);
     if (vtableIt != vtables.end() && slotIt != vtableSlotIndex.end()) {
-        std::string mangledName = targetClass + "_" + methodName;
-        if (info && classMethods[targetClass][methodName].size() > 1) {
-            for (auto& param : info->params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
-        }
+        std::string mangledName = methodName;
+        if (info) for (auto& param : info->params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
         auto indexIt = slotIt->second.find(mangledName);
         if (indexIt != slotIt->second.end()) {
             int slotIndex = indexIt->second;

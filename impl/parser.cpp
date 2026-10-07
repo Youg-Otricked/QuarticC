@@ -972,7 +972,8 @@ Prs Parser::try_catch_expr() {
             return res.to_prs();
         }
         this->advance();
-        if (this->current_tok.type != TokenType::KEYWORD && this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.value != "..." && this->current_tok.type != TokenType::LPAREN) {
+        if (this->current_tok.type != TokenType::KEYWORD && this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.value != "..." &&
+            this->current_tok.type != TokenType::LPAREN) {
             res.failure(new InvalidSyntaxError("QC-S033: Expected type in catch declaration", this->current_tok.pos));
             return res.to_prs();
         }
@@ -3362,6 +3363,7 @@ Prs Parser::func_def_multi(std::vector<Token> return_types, std::optional<Token>
         return res.to_prs();
     }
     this->advance();
+    bool is_override = this->current_tok.value == "override" ? (this->advance(), true) : false;
     if (this->current_tok.type == TokenType::ARROW) {
         this->advance();
         while (true) {
@@ -3444,7 +3446,7 @@ Prs Parser::func_def_multi(std::vector<Token> return_types, std::optional<Token>
     std::list<Parameter> params_list((params.begin()), (params.end()));
     this->current_generics = old_generics;
     return res.success(new FuncDefNode(return_types, func_name, params_list, body, currentNamespace, this->in_extern, this->in_foreign, generics,
-                                       is_volatile, false, modifiers));
+                                       is_volatile, false, modifiers, is_override));
 }
 Prs Parser::statement() {
     ParseResult res;
@@ -3688,6 +3690,7 @@ Prs Parser::statement() {
         auto saved_generics = this->current_generics;
         this->current_generics.insert(this->current_generics.end(), generics.begin(), generics.end());
         std::string baseName = "";
+        bool has_vptr = false;
         if (this->current_tok.type == TokenType::COLON) {
             this->advance();
             if (this->current_tok.type != TokenType::IDENTIFIER) {
@@ -3732,6 +3735,7 @@ Prs Parser::statement() {
                 res.failure(new InvalidSyntaxError("QC-S089: Cannot inherit from final class '" + base_type_name(baseName) + "'", class_name.pos));
                 return res.to_prs();
             }
+            if (base_ptr) has_vptr = base_ptr->has_vptr;
         }
         if (this->current_tok.type == TokenType::SEMICOLON) {
             this->advance();
@@ -3754,11 +3758,6 @@ Prs Parser::statement() {
         this->advance();
         UserTypeInfo dummy;
         UserTypeInfo info;
-        ClassField vp;
-        vp.name = "__vptr";
-        vp.type = (currentNamespace.empty() ? class_name.value : currentNamespace + "::" + class_name.value) + "*";
-        vp.access = "public";
-        info.classFields.push_back(vp);
         dummy.baseClassName = baseName;
         dummy.is_final_class = is_final_class;
         dummy.kind = UserTypeKind::Class;
@@ -3775,7 +3774,6 @@ Prs Parser::statement() {
         dummy.namespace_path = currentNamespace;
         info.namespace_path = currentNamespace;
         user_types[base_type_name(full_key)] = dummy;
-
         while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
 
             std::string access = "public";
@@ -3790,6 +3788,12 @@ Prs Parser::statement() {
                 (this->current_tok.value == "public" || this->current_tok.value == "private" || this->current_tok.value == "protected")) {
                 access = this->current_tok.value;
                 this->advance();
+            }
+            bool is_virtual = false;
+            if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "virtual") {
+                is_virtual = true;
+                this->advance();
+                has_vptr = true;
             }
             if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "static") {
                 is_static = true;
@@ -3932,7 +3936,8 @@ Prs Parser::statement() {
                     this->current_tok = peek(0);
                 }
             }
-            if (this->current_tok.type != TokenType::KEYWORD && this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.type != TokenType::LPAREN) {
+            if (this->current_tok.type != TokenType::KEYWORD && this->current_tok.type != TokenType::IDENTIFIER &&
+                this->current_tok.type != TokenType::LPAREN) {
                 res.failure(new InvalidSyntaxError("QC-T004: Expected type or constructor in class body", this->current_tok.pos));
                 return res.to_prs();
             }
@@ -4170,6 +4175,8 @@ Prs Parser::statement() {
                 mi.is_volatile = is_volatile_method;
                 mi.generics = genericsM;
                 mi.is_static = is_static;
+                mi.is_virtual = is_virtual;
+                mi.is_override = fn->is_override;
                 info.classMethods.push_back(mi);
                 continue;
             }
@@ -4217,7 +4224,15 @@ Prs Parser::statement() {
             }
             info.classFields.push_back(cf);
         }
-
+        if (has_vptr) {
+            ClassField vp;
+            vp.name = "__vptr";
+            vp.type = (currentNamespace.empty() ? class_name.value : currentNamespace + "::" + class_name.value) + "*";
+            vp.access = "public";
+            info.classFields.push_back(vp);
+            info.classFields.insert(info.classFields.begin(), vp);
+        }
+        info.has_vptr = has_vptr;
         if (this->current_tok.type != TokenType::RBRACE) {
             res.failure(new InvalidSyntaxError("QC-S098: Expected '}' at end of class", this->current_tok.pos));
             return res.to_prs();

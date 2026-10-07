@@ -1,4 +1,5 @@
-- VTables not needing in-decl-order
+- raw_union
+- typedef
 - Including C Headers (which means adding macro functions (c style) and type def (for compatiblity))
 - const pointers
 - const params
@@ -46,7 +47,6 @@
 - _ unsued variable
 - comptime-trycatch (catches compiel verrors)
 TOP PRIORITY:
-1. VTables allowed to not be in decl order.
 1. Direct C header includes (and thus, ocnst correctness)
 2. CQB
 3. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS

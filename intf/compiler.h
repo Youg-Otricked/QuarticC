@@ -305,6 +305,70 @@ class LLVMCompiler {
         }
         return returnType;
     }
+    void generateVtable(const std::string& mapKey, UserTypeInfo *inf = nullptr) {
+        if (vtables.count(mapKey)) return;
+        auto& info = inf ? *inf : userTypes.at(mapKey);
+        auto* ptrTy = llvm::PointerType::get(context, 0);
+        std::vector<std::string> keys;
+        std::vector<llvm::Constant*> fs;
+        if (!info.baseClassName.empty()) {
+            std::string baseKey = baseTypeName(info.baseClassName);
+            if (userTypes.count(baseKey)) {
+                generateVtable(info.baseClassName, &userTypes.at(baseKey));
+                llvm::Constant* init = vtables[baseKey]->getInitializer();
+                unsigned n = llvm::cast<llvm::ArrayType>(init->getType())->getNumElements();
+                keys.resize(n);
+                for (auto& [k, idx] : vtableSlotIndex[baseKey]) keys[idx] = k;
+                for (unsigned i = 0; i < n; i++) fs.push_back(init->getAggregateElement(i));
+            }
+        }
+        for (auto& m : info.classMethods) {
+            if (m.is_static || m.is_constructor) continue;
+            if (!m.is_virtual && !m.is_override) continue;
+            std::string key = m.name_tok.value;
+            for (auto& p : m.params) key += "_" + (p.signature.has_value() ? std::string("fn") : p.type.value);
+            llvm::Constant* fn = module->getFunction(mapKey + "_" + key);
+            if (!fn) fn = llvm::ConstantPointerNull::get(ptrTy);
+            auto it = std::find(keys.begin(), keys.end(), key);
+            if (m.is_override) {
+                if (it == keys.end()) {
+                    cg_error(m.name_tok.pos, "method marked 'override' but nothing to override", "QC-V002");
+                    continue;
+                }
+                bool is_final = false;
+                for (std::string c = info.baseClassName; !c.empty() && !is_final;) {
+                    auto bi = userTypes.find(baseTypeName(c));
+                    if (bi == userTypes.end()) break;
+                    for (auto& bm : bi->second.classMethods) {
+                        if (!bm.is_final) continue;
+                        std::string bkey = bm.name_tok.value;
+                        for (auto& p : bm.params) bkey += "_" + (p.signature.has_value() ? std::string("fn") : p.type.value);
+                        if (bkey == key) {
+                            is_final = true;
+                            break;
+                        }
+                    }
+                    c = bi->second.baseClassName;
+                }
+                if (is_final) {
+                    cg_error(m.name_tok.pos, "cannot override final method '" + m.name_tok.value + "'", "QC-S097");
+                    continue;
+                }
+                fs[it - keys.begin()] = fn;
+            } else {
+                if (it != keys.end()) {
+                    cg_error(m.name_tok.pos, "'" + m.name_tok.value + "' is already virtual in a base class; did you mean 'override'?", "QC-V001");
+                    continue;
+                }
+                keys.push_back(key);
+                fs.push_back(fn);
+            }
+        }
+        if (keys.empty()) return;
+        auto* arr = llvm::ArrayType::get(ptrTy, fs.size());
+        vtables[mapKey] = getOrCreateVtable(mapKey + "_vtable", arr, llvm::ConstantArray::get(arr, fs));
+        for (size_t i = 0; i < keys.size(); i++) vtableSlotIndex[mapKey][keys[i]] = i;
+    }
     std::unordered_map<std::string, std::pair<std::string, std::vector<std::string>>> enumMemberInfo;
     std::unordered_map<std::string, llvm::StructType*> enumTypes;
     std::unordered_map<std::string, std::string> typeAliases;
@@ -994,9 +1058,12 @@ class LLVMCompiler {
                 currentType = retType;
             }
             return currentType;
-        } else if (TupleValueNode *tup = safe_get<TupleValueNode>(node)) {
+        } else if (TupleValueNode* tup = safe_get<TupleValueNode>(node)) {
             std::string res = "(";
-            for (AnyNode& node : tup->members) { if (res != "(") res += ", "; res += getExpressionType(node); }
+            for (AnyNode& node : tup->members) {
+                if (res != "(") res += ", ";
+                res += getExpressionType(node);
+            }
             return res + ")";
         }
         return "unknown";
@@ -1087,8 +1154,8 @@ class LLVMCompiler {
             builder->CreateStore(rval, baseAddr);
         }
         std::string typeName = getExpressionType(*prop.base);
-        llvm::Type *sType = llvmTypeFor(typeName);
-        if (llvm::StructType *structType = llvm::dyn_cast<llvm::StructType>(sType); structType && structType->isLiteral()) {
+        llvm::Type* sType = llvmTypeFor(typeName);
+        if (llvm::StructType* structType = llvm::dyn_cast<llvm::StructType>(sType); structType && structType->isLiteral()) {
             if (!std::all_of(propName.begin(), propName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
                 cg_error(get_pos(&prop), "tuple indicies must be a integer", "QC-TPL0");
                 return nullptr;
@@ -1640,6 +1707,7 @@ class LLVMCompiler {
     }
     int getFlattenedFieldIndex(const std::string& className, const std::string& fieldName) {
         int index = 0;
+        bool seenVptr = false;
         std::function<bool(const std::string&)> searchFields = [&](const std::string& currentClass) -> bool {
             auto& classInfo = userTypes[currentClass];
             if (!classInfo.baseClassName.empty()) {
@@ -1655,8 +1723,12 @@ class LLVMCompiler {
                 if (searchFields(baseTypeName(baseClass))) { return true; }
             }
             for (auto& field : classInfo.classFields) {
-                if (field.name == "__vptr") { continue; }
-                if (field.name == fieldName) { return true; }
+                if (field.isStatic) continue;
+                if (field.name == "__vptr") {
+                    if (seenVptr) continue;
+                    seenVptr = true;
+                }
+                if (field.name == fieldName) return true;
                 index++;
             }
             return false;
@@ -1666,7 +1738,6 @@ class LLVMCompiler {
             std::string qualified = getCurrentNamespace() + "::" + className;
             if (userTypes.find(qualified) != userTypes.end()) { resolvedClass = qualified; }
         }
-        index = 1;
         if (searchFields(resolvedClass)) { return index; }
         return -1;
     }
@@ -2348,10 +2419,8 @@ class LLVMCompiler {
         auto vtableIt = vtables.find(ty);
         auto slotIt = vtableSlotIndex.find(ty);
         if (vtableIt != vtables.end() && slotIt != vtableSlotIndex.end()) {
-            std::string mangledName = ty + "_" + methodName;
-            if (info && classMethods[ty][methodName].size() > 1) {
-                for (auto& param : info->params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
-            }
+            std::string mangledName = methodName;
+            for (auto& param : info->params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
             auto indexIt = slotIt->second.find(mangledName);
             if (indexIt != slotIt->second.end()) {
                 int slotIndex = indexIt->second;

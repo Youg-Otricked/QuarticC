@@ -113,8 +113,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.2.1 = "Tuples(Destructuring)"
-Next Version: x1.3.0 = "Major QOL (Direct C include, vtable ordering not need to be decl-specific"
+Current Version: x1.3.0 = "Fixed vtable ordering, changed to manual override and virtual"
+Next Version: x1.3.1 = "Direct C include"
 
 # Current Version Highlights
 
@@ -126,10 +126,10 @@ Major
 └─ N/A
 
 Moderate
-└─ Tuples
+└─ QOL
 
 Minor
-└─ Destructuring
+└─ VTable improvment 
 
 Patch
 └─ N/A
@@ -137,7 +137,7 @@ Patch
 
 # Recent Deprecations / Breaking Changes
 
-These are deprecations in the past 3 moderate versions (`x1.0.* -> x1.2.*`)
+These are deprecations in the past 3 moderate versions (`x1.1.* -> x1.3.*`)
 
 Jagged Arrays
 
@@ -610,10 +610,6 @@ QuarticC also has a special operator for _logical_ right shift: :>. This is beca
 1. Built-in rotations: `<<<` and `|>>` and `LROT` and `RROT`, allowing 1 instruction rotations instead of 6+.
 2. - and - have lower priority than shifts. `3 << 3 + 2 == 26`. This is because the shift expression `l << r` is equivalent to `l * 2 ^ r`. If r was 2 + 2, that would be `l * 2 ^ 2 + 2`, which would be l * 4 + 2.
 
-## Inheritance
-
-All methods are virtual. If you want to use polymorphism, inherited methods MUST be defined in the same order as the parent class, and new methods must be defined after.
-
 ## Generics
 
 QuarticC generics have simple syntax:
@@ -1029,6 +1025,9 @@ AdvQBool
 Math
 Utils
 OSInterop
+Unordered
+Filesystem
+Owned
 ```
 
 Made by [Luca Fazio](https://github.com/Youg-Otricked)

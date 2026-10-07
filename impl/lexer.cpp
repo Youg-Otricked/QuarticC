@@ -198,7 +198,7 @@ Token Lexer::make_identifier() {
         /* loops */ id == "break" || id == "while" || id == "loop" || id == "do" || id == "for" || id == "continue" || id == "foreach" ||
         id == "in" || id == "unreachable" ||
         /* special types */ id == "void" || id == "auto" ||
-        /* functions / lambdas */ id == "return" || id == "function" || id == "fn" ||
+        /* functions / lambdas */ id == "return" || id == "fn" ||
         /* q stuff */ id == "qif" || id == "qelse" || id == "qelif" || id == "qswitch" ||
         /* usertypes */ id == "class" || id == "struct" || id == "enum" || id == "type" ||
         /* extern */ id == "foreign" || id == "extern" ||
@@ -212,7 +212,7 @@ Token Lexer::make_identifier() {
         /* storage modifiers */ id == "out" || id == "inout" || id == "volatile" || id == "restrict" ||
         /* more types */ id == "byte" || id == "nibble" || id == "addr_t" ||
         /* class stuff */ id == "friend" || id == "friendly" || id == "static" || id == "abstract" || id == "final" ||
-        /* more  class stuff */ id == "public" || id == "protected" || id == "private" ||
+        /* more  class stuff */ id == "public" || id == "protected" || id == "private" || id == "virtual" || id == "override" ||
         /* defer */ id == "defer" ||
         /* concepts */ id == "concept" || id == "proves" || id == "with_proof" || id == "_of" || id == "at_least" || id == "all_of" ||
         id == "proved_by" ||

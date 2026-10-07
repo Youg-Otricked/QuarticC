@@ -227,11 +227,14 @@ class ClassMethodInfo {
     bool is_final = false;
     bool is_volatile = false;
     bool is_static = false;
+    bool is_override = false;
+    bool is_virtual = false;
     std::vector<Token> modifiers;
     std::vector<GenericType> generics;
     std::string print() {
         std::string res = is_volatile ? "volatile " : "";
-        if (is_final) res += " final ";
+        if (is_final) res += "final ";
+        if (is_virtual) res += "virtual ";
         res += access + " " + name_tok.value + "(";
         for (int i = 0; i < return_types.size(); i++) {
             res += return_types[i].value;
@@ -241,6 +244,8 @@ class ClassMethodInfo {
             res += params[i].toString();
             if (i + 1 < return_types.size()) res += ", ";
         }
+        res += ")";
+        if (is_override) res += " override";
         return res;
     }
 };
@@ -300,6 +305,7 @@ class ConceptProvee {
 
 struct UserTypeInfo {
     Position pos;
+    bool has_vptr;
     std::string enumType;
     UserTypeKind kind;
     ModifierInfo modifierInfo;
@@ -551,6 +557,7 @@ class ContinueNode {
 
 class FuncDefNode {
   public:
+    bool is_override = false;
     std::vector<Token> return_types;
     std::optional<Token> name_tok;
     std::list<Parameter> params;
@@ -565,8 +572,8 @@ class FuncDefNode {
     bool is_header = true;
     FuncDefNode(std::vector<Token> ret_types, std::optional<Token> name, std::list<Parameter> parameters, StatementsNode* func_body,
                 std::string ns = "", bool is_ex = false, bool is_f = false, std::vector<GenericType> generics = {}, bool is_volatile = false,
-                bool is_header = false, std::vector<Token> modifiers = {})
-        : return_types(ret_types), name_tok(name), params(parameters), body(func_body), namespace_path(ns), modifiers(modifiers) {
+                bool is_header = false, std::vector<Token> modifiers = {}, bool is_override = false)
+        : return_types(ret_types), name_tok(name), params(parameters), body(func_body), namespace_path(ns), modifiers(modifiers), is_override(is_override) {
         this->is_extern = is_ex;
         this->is_foreign = is_f;
         this->generics = generics;
