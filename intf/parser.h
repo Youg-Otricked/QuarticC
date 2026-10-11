@@ -1,9 +1,9 @@
 #ifndef PARSER_H
 #define PARSER_H
 #include "nodes.h"
-#include <vector>
-#include <unordered_set>
 #include <functional>
+#include <unordered_set>
+#include <vector>
 enum class MainType { NA, RT_ARRAY, C_STYLE };
 inline MainType main_type = MainType::NA;
 
@@ -13,7 +13,7 @@ class Parser {
     void parseGenerics(std::vector<GenericType>& genericsM, ParseResult& res);
     [[gnu::noinline]]
     void fn(std::vector<ConceptInfo::Block>& blockList, ParseResult& res, std::vector<ConceptInfo::Block>& blocks,
-            std::vector<std::pair<int, ConceptInfo::DefaultBlock>>& defaultBlocks); 
+            std::vector<std::pair<int, ConceptInfo::DefaultBlock>>& defaultBlocks);
     std::vector<GenericType> current_generics;
     std::string base_type_name(std::string full_type) {
         size_t open_bracket = full_type.find('<');
@@ -38,7 +38,8 @@ class Parser {
     }
     bool is_primitive_type(std::string& name) {
         return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool"})
-            .contains(name) || (name.starts_with("(") && name.ends_with(")"));
+                   .contains(name) ||
+               (name.starts_with("(") && name.ends_with(")"));
     }
     bool is_known_type(std::string name) {
         std::string base = base_type_name(name);
@@ -194,7 +195,8 @@ class Parser {
                 if (type != "(") type += ", ";
                 type += this->parseTypeString();
             } while (this->current_tok.type == TokenType::COMMA);
-            if (this->current_tok.type != TokenType::RPAREN) throw InvalidSyntaxError("QC-T060: missing closing paren on tuple type.", this->current_tok.pos);
+            if (this->current_tok.type != TokenType::RPAREN)
+                throw InvalidSyntaxError("QC-T060: missing closing paren on tuple type.", this->current_tok.pos);
             this->advance();
             return type + ")";
         }
@@ -260,6 +262,14 @@ class Parser {
         while (this->current_tok.type == TokenType::MUL) {
             type += "*";
             this->advance();
+            while (this->current_tok.type == TokenType::MUL) {
+                type += "*";
+                this->advance();
+                if (this->current_tok.value == "const") {
+                    type += "const";
+                    this->advance();
+                }
+            }
         }
         if (this->current_tok.type == TokenType::AMPERSAND) {
             type += "&";
@@ -346,7 +356,8 @@ class Parser {
                 if (type != "(") type += ", ";
                 type += this->parseTypeString();
             } while (this->current_tok.type == TokenType::COMMA);
-            if (this->current_tok.type != TokenType::RPAREN) throw InvalidSyntaxError("QC-T060: missing closing paren on tuple type.", this->current_tok.pos);
+            if (this->current_tok.type != TokenType::RPAREN)
+                throw InvalidSyntaxError("QC-T060: missing closing paren on tuple type.", this->current_tok.pos);
             this->advance();
             return type + ")";
         }
@@ -432,6 +443,10 @@ class Parser {
         while (this->current_tok.type == TokenType::MUL) {
             type += "*";
             this->advance();
+            if (this->current_tok.value == "const") {
+                type += "const";
+                this->advance();
+            }
         }
         if (this->current_tok.type == TokenType::AMPERSAND) {
             type += "&";

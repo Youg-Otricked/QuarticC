@@ -290,7 +290,7 @@ class ConceptInfo {
 struct ModifierInfo {
     std::vector<std::pair<Token, StatementsNode*>> handlers;
 };
-enum class UserTypeKind { Struct, Alias, Union, Enum, Class, Concept, Modifier };
+enum class UserTypeKind { Struct, Alias, Union, Enum, Class, Concept, Modifier, RawUnion };
 
 struct UnionMember {
     std::string type;

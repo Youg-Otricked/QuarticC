@@ -217,7 +217,8 @@ Token Lexer::make_identifier() {
         /* concepts */ id == "concept" || id == "proves" || id == "with_proof" || id == "_of" || id == "at_least" || id == "all_of" ||
         id == "proved_by" ||
         /* modifiers */ id == "modifier" || id == "on_call" || id == "on_return" || id == "on_use" ||
-        /* comptime */ id == "comptime") {
+        /* comptime */ id == "comptime" ||
+        /* raw unions */ id == "union") {
         return Token(TokenType::KEYWORD, id, start_pos);
     }
     if (id == "true" || id == "false") { return Token(TokenType::BOOL, id, start_pos); }

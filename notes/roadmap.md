@@ -1,10 +1,11 @@
-- raw_union
-- typedef
-- Including C Headers (which means adding macro functions (c style) and type def (for compatiblity))
-- const pointers
-- const params
-- const stuff correctness
+- default type generics (e.g. = void in generic types)
+- returning keyword for loops, e.g.
+int x = returning for (int i = 0; i < 10; i++) {
+    ...
+} int (x); // fallback expression for missing break
+- Including C Headers
 - const methods fore const obhects
+- const references
 - static & inline functions
 - Upgrade Include System
 - Variadic Generics (`class VaradicTypes<...Tys> { Tys elems; ...`) (not decided on syntax) 

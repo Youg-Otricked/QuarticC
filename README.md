@@ -113,8 +113,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.3.0 = "Fixed vtable ordering, changed to manual override and virtual"
-Next Version: x1.3.1 = "Direct C include"
+Current Version: x1.3.1 = "Raw Unions"
+Next Version: x1.3.2 = "Direct C include"
 
 # Current Version Highlights
 
@@ -129,7 +129,7 @@ Moderate
 └─ QOL
 
 Minor
-└─ VTable improvment 
+└─ Raw Unions
 
 Patch
 └─ N/A

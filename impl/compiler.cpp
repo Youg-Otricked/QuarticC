@@ -146,6 +146,10 @@ llvm::Type* LLVMCompiler::llvmTypeFor(std::string qcType) {
         (genericStructs.find(baseTypeName(type)) != genericStructs.end() && genericStructs[baseTypeName(type)])) {
         return genericiseOrFindStruct(type);
     }
+    if (rawUnionTypes.find(type) != rawUnionTypes.end() ||
+        (genericRawUnions.find(baseTypeName(type)) != genericRawUnions.end() && genericRawUnions[baseTypeName(type)])) {
+        return genericiseOrFindRawUnion(type);
+    }
     if (enumTypes.find(type) != enumTypes.end() ||
         (genericEnums.find(baseTypeName(type)) != genericEnums.end() && genericEnums[baseTypeName(type)])) {
         return genericiseOrFindEnum(type);
@@ -448,6 +452,8 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             generateStruct(base, userTypes.at(base));
         } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
             generateEnum(resolved, userTypes.at(resolved));
+        } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
+            generateRawUnion(resolved, userTypes.at(resolved));
         }
     }
     std::string mangled_class_name = className + "<";
@@ -559,6 +565,8 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                             generateClass(resolved, userTypes.at(resolved));
                         } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
                             generateEnum(resolved, userTypes.at(resolved));
+                        } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
+                            generateRawUnion(resolved, userTypes.at(resolved));
                         }
                     }
                 }
@@ -869,6 +877,8 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
             generateStruct(base, userTypes.at(base));
         } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
             generateEnum(resolved, userTypes.at(resolved));
+        } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
+            generateRawUnion(resolved, userTypes.at(resolved));
         }
     }
     std::string mangled_struct_name = structName + "<";
@@ -919,6 +929,8 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
                     generateClass(resolved, userTypes.at(resolved));
                 } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
                     generateEnum(resolved, userTypes.at(resolved));
+                } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
+                    generateRawUnion(resolved, userTypes.at(resolved));
                 }
             }
         }
@@ -934,6 +946,48 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
     this->currentGenericTypeStrings = oldGenericTypeStrings;
     currentNonTypeGenericValues = oldNonTypeGenerics;
     return structTy;
+}
+llvm::StructType* LLVMCompiler::generateGenericRawUnion(std::string rawUnionName, UserTypeInfo rawUnionInfo, std::vector<std::string> genericParams) {
+    std::string mangled_rawUnion_name = rawUnionName + "<";
+    for (int j = 0; j < rawUnionInfo.generics.size(); j++) {
+        std::string val;
+        if (genericParams.size() <= j) {
+            val = rawUnionInfo.generics[j].defaultValue;
+        } else {
+            val = genericParams[j];
+        }
+        mangled_rawUnion_name += val;
+        if (j != rawUnionInfo.generics.size() - 1) { mangled_rawUnion_name += ","; }
+    }
+    mangled_rawUnion_name += ">";
+    if (inProgressGenerics.count(mangled_rawUnion_name)) return {};
+    if (rawUnionTypes.find(mangled_rawUnion_name) != rawUnionTypes.end()) { return genericiseOrFindEnum(mangled_rawUnion_name); }
+    auto oldNamespaceStack = namespaceStack;
+    namespaceStack.clear();
+    if (!rawUnionInfo.namespace_path.empty()) {
+        size_t start = 0;
+        size_t pos;
+        while ((pos = rawUnionInfo.namespace_path.find("::", start)) != std::string::npos) {
+            namespaceStack.push_back(rawUnionInfo.namespace_path.substr(start, pos - start));
+            start = pos + 2;
+        }
+        namespaceStack.push_back(rawUnionInfo.namespace_path.substr(start));
+    }
+    llvm::StructType* rawUnionTy = getOrCreateStructType(mangled_rawUnion_name);
+    inProgressGenerics.insert(mangled_rawUnion_name);
+    auto oldGenericTypes = this->currentGenericTypes;
+    auto oldGenericTypeStrings = currentGenericTypeStrings;
+    auto oldNonTypeGenerics = currentNonTypeGenericValues;
+    if (!fulfillsGenericConstraints(rawUnionInfo.generics, genericParams, rawUnionInfo.pos)) return nullptr;
+    rawUnionTy->setBody({getLargestRUType(rawUnionInfo)});
+    rawUnionTypes[mangled_rawUnion_name] = rawUnionTy;
+    proveConceptsForTypeInfo(mangled_rawUnion_name, rawUnionInfo);
+    namespaceStack = oldNamespaceStack;
+    inProgressGenerics.erase(mangled_rawUnion_name);
+    this->currentGenericTypes = oldGenericTypes;
+    this->currentGenericTypeStrings = oldGenericTypeStrings;
+    currentNonTypeGenericValues = oldNonTypeGenerics;
+    return rawUnionTy;
 }
 llvm::StructType* LLVMCompiler::generateGenericEnum(std::string enumName, UserTypeInfo enumInfo, std::vector<std::string> genericParams) {
     std::string mangled_enum_name = enumName + "<";
@@ -1089,6 +1143,8 @@ void LLVMCompiler::generateStruct(const std::string& mapKey, const UserTypeInfo&
                 generateClass(resolved, userTypes.at(resolved));
             } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
                 generateEnum(resolved, userTypes.at(resolved));
+            } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
+                generateRawUnion(resolved, userTypes.at(resolved));
             }
         }
         llvm::Type* ty = llvmTypeFor(field.type);
@@ -1192,6 +1248,8 @@ void LLVMCompiler::generateClass(const std::string& mapKey, const UserTypeInfo& 
                         generateClass(resolved, userTypes.at(resolved));
                     } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
                         generateEnum(resolved, userTypes.at(resolved));
+                    } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
+                        generateRawUnion(resolved, userTypes.at(resolved));
                     }
                 }
                 if (field.isStatic) {
@@ -1247,6 +1305,16 @@ void LLVMCompiler::createUserTypes() {
         }
     }
     for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::RawUnion) {
+            if (!info.generics.empty()) {
+                genericRawUnions[mapKey] = true;
+                continue;
+            }
+            genericRawUnions[mapKey] = false;
+            rawUnionTypes[mapKey] = getOrCreateStructType(mapKey);
+        }
+    }
+    for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Enum) {
             if (!info.generics.empty()) {
                 genericEnums[mapKey] = true;
@@ -1299,6 +1367,9 @@ void LLVMCompiler::createUserTypes() {
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Class) { generateClass(mapKey, info); }
+    }
+    for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::RawUnion) { generateRawUnion(mapKey, info); }
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Enum) { generateEnum(mapKey, info); }
@@ -3150,7 +3221,9 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
 llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
     std::string name = (*va)->var_name_tok.value;
     add_var_warning(name, (*va)->var_name_tok.pos, (*va)->is_const);
+    std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
     std::string qcType = (*va)->type_tok.value;
+    qcType = make_consts(fullName, ((*va)->is_const ? "const " : "") + qcType);
     bool isVolatile = false;
     if (qcType.starts_with("volatile ")) {
         isVolatile = true;
@@ -3307,7 +3380,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                     break;
                 }
             }
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             locals[fullName] = instance;
             varTypes[fullName] = qcType;
             volatileVars[fullName] = isVolatile;
@@ -3382,7 +3454,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             llvm::Function* opMethod = findMethodOverload(mangledName, "operator[]=", {rhsVal, len});
             if (opMethod) {
                 emitVirtualOrDirectCall(mangledName, "operator[]=", instance, {rhsVal, len});
-                std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
                 locals[fullName] = instance;
                 varTypes[fullName] = mangledName;
                 volatileVars[fullName] = isVolatile;
@@ -3413,7 +3484,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             }
             builder->CreateStore(rhs, instance, isVolatile);
         }
-        std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
         locals[fullName] = instance;
         volatileVars[fullName] = isVolatile;
         varTypes[fullName] = buildMangledName(qcType, genericParams);
@@ -3449,7 +3519,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
             llvm::Value* zeroVal = llvm::ConstantAggregateZero::get(structTy);
             builder->CreateStore(zeroVal, structAlloc, isVolatile);
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             locals[fullName] = structAlloc;
             varTypes[fullName] = qcType;
             volatileVars[fullName] = isVolatile;
@@ -3495,7 +3564,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             }
             llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
             builder->CreateStore(structVal, structAlloc, isVolatile);
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             locals[fullName] = structAlloc;
             varTypes[fullName] = buildMangledName(qcType, genericParams);
             volatileVars[fullName] = isVolatile;
@@ -3541,7 +3609,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             }
             llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
             builder->CreateStore(structVal, structAlloc, isVolatile);
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             locals[fullName] = structAlloc;
             varTypes[fullName] = buildMangledName(qcType, genericParams);
             volatileVars[fullName] = isVolatile;
@@ -3549,21 +3616,21 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         } else {
             llvm::StructType* structTy = genericiseOrFindStruct(buildMangledName(qcType, genericParams));
             llvm::Value* rhs = emitExpr((*va)->value_node);
-            if (!rhs) return nullptr;
-            if (rhs->getType()->isPointerTy()) {
-                if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(structTy)) {
-                    rhs = builder->CreateLoad(structTy, rhs, "strip_ref");
+            if (rhs) {
+                if (rhs->getType()->isPointerTy()) {
+                    if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(structTy)) {
+                        rhs = builder->CreateLoad(structTy, rhs, "strip_ref");
+                    }
                 }
-            }
-            if (rhs->getType() != structTy) {
-                cg_error((*va)->var_name_tok.pos, "cannot initialize " + buildMangledName(qcType, genericParams) + " from struct of different type.",
-                         "QC-T028");
-                return nullptr;
+                if (rhs->getType() != structTy) {
+                    cg_error((*va)->var_name_tok.pos,
+                             "cannot initialize " + buildMangledName(qcType, genericParams) + " from struct of different type.", "QC-T028");
+                    return nullptr;
+                }
             }
             llvm::Value* structAlloc = getVarAddress(name);
             if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
             builder->CreateStore(rhs, structAlloc, isVolatile);
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
             varTypes[fullName] = buildMangledName(qcType, genericParams);
             volatileVars[fullName] = isVolatile;
@@ -3576,34 +3643,33 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         llvm::StructType* unionTy = unionTypes[resolveTypeName(saved_qc_type, false)];
         llvm::AllocaInst* unionAlloc = createEntryAlloca(name, unionTy);
         llvm::Value* rhs = emitExpr((*va)->value_node);
-        if (!rhs) return nullptr;
-        if (rhs->getType() == unionTy) {
-            builder->CreateStore(rhs, unionAlloc);
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
-            locals[fullName] = unionAlloc;
-            return nullptr;
-        }
-        int tag = findUnionVariantTag(qcType, (*va)->value_node, rhs);
+        if (rhs) {
+            if (rhs->getType() == unionTy) {
+                builder->CreateStore(rhs, unionAlloc);
+                locals[fullName] = unionAlloc;
+                return nullptr;
+            }
+            int tag = findUnionVariantTag(qcType, (*va)->value_node, rhs);
 
-        if (tag == -1) {
-            cg_error((*va)->var_name_tok.pos, "value does not match any variant of union " + qcType, "QC-S143");
-            return nullptr;
+            if (tag == -1) {
+                cg_error((*va)->var_name_tok.pos, "value does not match any variant of union " + qcType, "QC-S143");
+                return nullptr;
+            }
+            auto& member = info.members[tag];
+            bool isLiteral = member.type.find(':') != std::string::npos;
+            llvm::Type* rhsTy = rhs->getType();
+            std::string baseType = isLiteral ? member.type.substr(0, member.type.find(':')) : member.type;
+            llvm::Type* memberTy = llvmTypeFor(baseType);
+            if (!rhsTy->isPointerTy() && rhsTy != memberTy) {
+                cg_error((*va)->var_name_tok.pos, "union literal variant type mismatch", "QC-T030");
+                return nullptr;
+            }
+            llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
+            unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
+            llvm::Value* dataPtr = storeAndGetPointer(rhs);
+            unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
+            builder->CreateStore(unionVal, unionAlloc, isVolatile);
         }
-        auto& member = info.members[tag];
-        bool isLiteral = member.type.find(':') != std::string::npos;
-        llvm::Type* rhsTy = rhs->getType();
-        std::string baseType = isLiteral ? member.type.substr(0, member.type.find(':')) : member.type;
-        llvm::Type* memberTy = llvmTypeFor(baseType);
-        if (!rhsTy->isPointerTy() && rhsTy != memberTy) {
-            cg_error((*va)->var_name_tok.pos, "union literal variant type mismatch", "QC-T030");
-            return nullptr;
-        }
-        llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
-        unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-        llvm::Value* dataPtr = storeAndGetPointer(rhs);
-        unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
-        builder->CreateStore(unionVal, unionAlloc, isVolatile);
-        std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
         locals[fullName] = unionAlloc;
         varTypes[fullName] = fixMangling(saved_qc_type);
         volatileVars[fullName] = isVolatile;
@@ -3615,7 +3681,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
             llvm::Value* zeroVal = llvm::ConstantAggregateZero::get(structTy);
             builder->CreateStore(zeroVal, structAlloc, isVolatile);
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             locals[fullName] = structAlloc;
             varTypes[fullName] = qcType;
             volatileVars[fullName] = isVolatile;
@@ -3658,7 +3723,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 }
                 structVal = builder->CreateInsertValue(structVal, val, i);
             }
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             llvm::Value* structAlloc = getVarAddress(name);
             if (auto* gv = llvm::dyn_cast_or_null<llvm::GlobalVariable>(structAlloc)) {
                 auto* constant = llvm::dyn_cast<llvm::Constant>(structVal);
@@ -3723,7 +3787,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
 
                 structVal = builder->CreateInsertValue(structVal, fieldValue, fieldIndex);
             }
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             llvm::Value* structAlloc = getVarAddress(name);
             if (auto* gv = llvm::dyn_cast_or_null<llvm::GlobalVariable>(structAlloc)) {
                 auto* constant = llvm::dyn_cast<llvm::Constant>(structVal);
@@ -3745,20 +3808,20 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         } else {
             llvm::StructType* structTy = genericiseOrFindStruct(qcType);
             llvm::Value* rhs = emitExpr((*va)->value_node);
-            if (!rhs) return nullptr;
-            if (rhs->getType()->isPointerTy()) {
-                if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(structTy)) {
-                    rhs = builder->CreateLoad(structTy, rhs, "strip_ref");
-                }
-            }
-            if (rhs->getType() != structTy) {
-                cg_error((*va)->var_name_tok.pos, "cannot initialize " + qcType + " from struct of different type.", "QC-T028");
-                return nullptr;
-            }
             llvm::Value* structAlloc = getVarAddress(name);
             if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
-            builder->CreateStore(rhs, structAlloc, isVolatile);
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
+            if (rhs) {
+                if (rhs->getType()->isPointerTy()) {
+                    if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(structTy)) {
+                        rhs = builder->CreateLoad(structTy, rhs, "strip_ref");
+                    }
+                }
+                if (rhs->getType() != structTy) {
+                    cg_error((*va)->var_name_tok.pos, "cannot initialize " + qcType + " from struct of different type.", "QC-T028");
+                    return nullptr;
+                }
+                builder->CreateStore(rhs, structAlloc, isVolatile);
+            }
             locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
             varTypes[fullName] = qcType;
             volatileVars[fullName] = isVolatile;
@@ -3792,7 +3855,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                     break;
                 }
             }
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
             locals[fullName] = instance;
             varTypes[fullName] = qcType;
             volatileVars[fullName] = isVolatile;
@@ -3843,17 +3905,18 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             }
             if (!handled) {
                 llvm::Value* rhs = emitExpr((*va)->value_node);
-                if (!rhs) return nullptr;
-                if (rhs->getType()->isPointerTy()) {
-                    if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(classTy)) {
-                        rhs = builder->CreateLoad(classTy, rhs, "strip_ref");
+                if (rhs) {
+                    if (rhs->getType()->isPointerTy()) {
+                        if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(classTy)) {
+                            rhs = builder->CreateLoad(classTy, rhs, "strip_ref");
+                        }
                     }
+                    if (rhs->getType() != classTy) {
+                        cg_error((*va)->var_name_tok.pos, "cannot initialize " + qcType + " from class of different type.", "QC-T028");
+                        return nullptr;
+                    }
+                    builder->CreateStore(rhs, instance, isVolatile);
                 }
-                if (rhs->getType() != classTy) {
-                    cg_error((*va)->var_name_tok.pos, "cannot initialize " + qcType + " from class of different type.", "QC-T028");
-                    return nullptr;
-                }
-                builder->CreateStore(rhs, instance, isVolatile);
             }
         } else if (auto arrLit = std::get_if<ArrayLiteralNode*>(&(*va)->value_node)) {
             llvm::Value* rhsVal = emitExpr(*arrLit);
@@ -3863,7 +3926,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             llvm::Function* opMethod = findMethodOverload(qcType, "operator[]=", {rhsVal, len});
             if (opMethod) {
                 emitMethodCall(opMethod, instance, {rhsVal, len}, "operator[]=");
-                std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
                 locals[fullName] = instance;
                 varTypes[fullName] = qcType;
                 volatileVars[fullName] = isVolatile;
@@ -3880,19 +3942,19 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             return nullptr;
         } else {
             llvm::Value* rhs = emitExpr((*va)->value_node);
-            if (!rhs) return nullptr;
-            if (rhs->getType()->isPointerTy()) {
-                if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(classTy)) {
-                    rhs = builder->CreateLoad(classTy, rhs, "strip_ref");
+            if (rhs) {
+                if (rhs->getType()->isPointerTy()) {
+                    if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(classTy)) {
+                        rhs = builder->CreateLoad(classTy, rhs, "strip_ref");
+                    }
                 }
+                if (rhs->getType() != classTy) {
+                    cg_error((*va)->var_name_tok.pos, "cannot initialize " + qcType + " from class of different type.", "QC-T028");
+                    return nullptr;
+                }
+                builder->CreateStore(rhs, instance, isVolatile);
             }
-            if (rhs->getType() != classTy) {
-                cg_error((*va)->var_name_tok.pos, "cannot initialize " + qcType + " from class of different type.", "QC-T028");
-                return nullptr;
-            }
-            builder->CreateStore(rhs, instance, isVolatile);
         }
-        std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
         locals[fullName] = instance;
         varTypes[fullName] = qcType;
         volatileVars[fullName] = isVolatile;
@@ -3903,50 +3965,73 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         llvm::Value* unionAlloc = getVarAddress(name);
         if (!unionAlloc) unionAlloc = createEntryAlloca(name, unionTy);
         llvm::Value* rhs = emitExpr((*va)->value_node);
-        if (!rhs) return nullptr;
-        auto storeUnion = [&](llvm::Value* value) {
-            if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(unionAlloc)) {
-                auto* constant = llvm::dyn_cast<llvm::Constant>(value);
-                if (!constant) {
-                    cg_error((*va)->var_name_tok.pos, "global union initializer must be constant", "QC-S145");
+        if (rhs) {
+            auto storeUnion = [&](llvm::Value* value) {
+                if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(unionAlloc)) {
+                    auto* constant = llvm::dyn_cast<llvm::Constant>(value);
+                    if (!constant) {
+                        cg_error((*va)->var_name_tok.pos, "global union initializer must be constant", "QC-S145");
+                        return false;
+                    }
+                    gv->setInitializer(constant);
                     return false;
+                } else {
+                    builder->CreateStore(value, unionAlloc, isVolatile);
                 }
-                gv->setInitializer(constant);
-                return false;
-            } else {
-                builder->CreateStore(value, unionAlloc, isVolatile);
+                return true;
+            };
+            if (rhs->getType() == unionTy) {
+                if (!storeUnion(rhs)) return nullptr;
+                locals[fullName] = llvm::cast<llvm::AllocaInst>(unionAlloc);
+                volatileVars[fullName] = isVolatile;
+                return nullptr;
             }
-            return true;
-        };
-        if (rhs->getType() == unionTy) {
-            if (!storeUnion(rhs)) return nullptr;
-            std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
-            locals[fullName] = llvm::cast<llvm::AllocaInst>(unionAlloc);
-            volatileVars[fullName] = isVolatile;
-            return nullptr;
+            int tag = findUnionVariantTag(qcType, (*va)->value_node, rhs);
+            if (tag == -1) {
+                cg_error((*va)->var_name_tok.pos, "value does not match any variant of union " + qcType, "QC-S143");
+                return nullptr;
+            }
+            auto& member = userTypes.at(baseTypeName(qcType)).members[tag];
+            bool isLiteral = member.type.find(':') != std::string::npos;
+            llvm::Type* rhsTy = rhs->getType();
+            std::string baseType = isLiteral ? member.type.substr(0, member.type.find(':')) : member.type;
+            llvm::Type* memberTy = llvmTypeFor(baseType);
+            if (!rhsTy->isPointerTy() && rhsTy != memberTy) {
+                cg_error((*va)->var_name_tok.pos, "union literal variant type mismatch", "QC-T030");
+                return nullptr;
+            }
+            llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
+            unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
+            llvm::Value* dataPtr = storeAndGetPointer(rhs);
+            unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
+            if (!storeUnion(unionVal)) return nullptr;
         }
-        int tag = findUnionVariantTag(qcType, (*va)->value_node, rhs);
-        if (tag == -1) {
-            cg_error((*va)->var_name_tok.pos, "value does not match any variant of union " + qcType, "QC-S143");
-            return nullptr;
-        }
-        auto& member = userTypes.at(baseTypeName(qcType)).members[tag];
-        bool isLiteral = member.type.find(':') != std::string::npos;
-        llvm::Type* rhsTy = rhs->getType();
-        std::string baseType = isLiteral ? member.type.substr(0, member.type.find(':')) : member.type;
-        llvm::Type* memberTy = llvmTypeFor(baseType);
-        if (!rhsTy->isPointerTy() && rhsTy != memberTy) {
-            cg_error((*va)->var_name_tok.pos, "union literal variant type mismatch", "QC-T030");
-            return nullptr;
-        }
-        llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
-        unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-        llvm::Value* dataPtr = storeAndGetPointer(rhs);
-        unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
-        if (!storeUnion(unionVal)) return nullptr;
-        std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
         locals[fullName] = llvm::cast<llvm::AllocaInst>(unionAlloc);
         varTypes[fullName] = qcType;
+        volatileVars[fullName] = isVolatile;
+        return nullptr;
+    }
+    if (userTypeIt != userTypes.end() && userTypeIt->second.kind == UserTypeKind::RawUnion) {
+        llvm::Type* uTy = genericiseOrFindRawUnion(resolveTypeName(saved_qc_type, false));
+        if (!uTy) return nullptr;
+        llvm::Value* uAlloc = getVarAddress(name);
+        if (!uAlloc) uAlloc = createEntryAlloca(name, uTy);
+        llvm::Value* rhs = emitExpr((*va)->value_node);
+        if (rhs) {
+            if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(uAlloc)) {
+                auto* constant = llvm::dyn_cast<llvm::Constant>(rhs);
+                if (!constant) {
+                    cg_error((*va)->var_name_tok.pos, "global union initializer must be constant", "QC-S146");
+                    return nullptr;
+                }
+                gv->setInitializer(constant);
+                return nullptr;
+            } else {
+                builder->CreateStore(rhs, uAlloc, isVolatile);
+            }
+        }
+        locals[fullName] = llvm::cast<llvm::AllocaInst>(uAlloc);
+        varTypes[fullName] = fixMangling(resolveTypeName(saved_qc_type, false));
         volatileVars[fullName] = isVolatile;
         return nullptr;
     }
@@ -3956,19 +4041,19 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         llvm::Value* enumAlloc = getVarAddress(name);
         if (!enumAlloc) enumAlloc = createEntryAlloca(name, enumTy);
         llvm::Value* rhs = emitExpr((*va)->value_node);
-        if (!rhs) return nullptr;
-        if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(enumAlloc)) {
-            auto* constant = llvm::dyn_cast<llvm::Constant>(rhs);
-            if (!constant) {
-                cg_error((*va)->var_name_tok.pos, "global enum initializer must be constant", "QC-S146");
+        if (rhs) {
+            if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(enumAlloc)) {
+                auto* constant = llvm::dyn_cast<llvm::Constant>(rhs);
+                if (!constant) {
+                    cg_error((*va)->var_name_tok.pos, "global enum initializer must be constant", "QC-S146");
+                    return nullptr;
+                }
+                gv->setInitializer(constant);
                 return nullptr;
+            } else {
+                builder->CreateStore(rhs, enumAlloc, isVolatile);
             }
-            gv->setInitializer(constant);
-            return nullptr;
-        } else {
-            builder->CreateStore(rhs, enumAlloc, isVolatile);
         }
-        std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
         locals[fullName] = llvm::cast<llvm::AllocaInst>(enumAlloc);
         varTypes[fullName] = fixMangling(resolveTypeName(saved_qc_type, false));
         volatileVars[fullName] = isVolatile;
@@ -3995,7 +4080,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         return nullptr;
     }
     llvm::Value* existingAlloc = getVarAddress(name);
-    std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
     if (!existingAlloc) {
         llvm::Type* ty = llvmTypeFor(qcType);
         if (!ty) {
@@ -4183,6 +4267,14 @@ llvm::Value* LLVMCompiler::emitVarAccess(VarAccessNode* const* acc) {
     return nullptr;
 }
 llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
+    if (auto va = std::get_if<VarAccessNode*>(&(*asn)->target)) {
+        if (!resolveVarConsts((*va)->var_name_tok.value).empty()) {
+            if (resolveVarConsts((*va)->var_name_tok.value).back()) {
+                cg_error(get_pos(*va), "attempted to reassign a constant variable " + (*va)->var_name_tok.value, "QC-CNST");
+                return nullptr;
+            }
+        }
+    }
     if (auto propAccess = std::get_if<PropertyAccessNode*>(&(*asn)->target)) {
         std::string fieldName = (*propAccess)->property_name.value;
         if (auto varAccess = std::get_if<VarAccessNode*>(&*(*propAccess)->base)) {
@@ -5084,6 +5176,8 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
                     generateClass(resolved, userTypes.at(resolved));
                 } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
                     generateEnum(resolved, userTypes.at(resolved));
+                } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
+                    generateRawUnion(resolved, userTypes.at(resolved));
                 }
             }
             llvm::Type* ty = llvmTypeFor(val->tok.value);
@@ -5101,6 +5195,8 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
                     generateClass(resolved, userTypes.at(resolved));
                 } else if (enumTypes.count(resolved) && enumTypes.at(resolved)->isOpaque()) {
                     generateEnum(resolved, userTypes.at(resolved));
+                } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
+                    generateRawUnion(resolved, userTypes.at(resolved));
                 }
             }
             llvm::Type* ty = llvmTypeFor(t->tok.value);
@@ -7519,6 +7615,21 @@ llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
     if (exprType.ends_with("*") || exprType.ends_with("&")) { exprType.pop_back(); }
     llvm::Type* baseTy = llvmTypeFor(exprType);
     bool isPtr = baseVal->getType()->isPointerTy();
+    if (isRawUnionType(baseTy)) {
+        std::string type = getUnionFieldType(exprType, propName);
+        if (type == "unknown") {
+            cg_error(get_pos(*propAccess), "Unknown field on union " + exprType + ": " + propName + ".", "QC-RU02");
+            return nullptr;
+        }
+        if (isPtr) {
+            llvm::Type* memberTy = llvmTypeFor(type);
+            return builder->CreateLoad(memberTy, baseVal);
+        }
+        llvm::Value* raw = createEntryAlloca("extract_raw_union", baseVal->getType());
+        builder->CreateStore(baseVal, raw);
+        llvm::Type* memberTy = llvmTypeFor(type);
+        return builder->CreateLoad(memberTy, raw);
+    }
     if (auto structTy = llvm::dyn_cast<llvm::StructType>(baseTy)) {
         if (structTy->isLiteral()) {
             if (!std::all_of(propName.begin(), propName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
@@ -8300,7 +8411,8 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
     auto slotIt = vtableSlotIndex.find(targetClass);
     if (vtableIt != vtables.end() && slotIt != vtableSlotIndex.end()) {
         std::string mangledName = methodName;
-        if (info) for (auto& param : info->params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
+        if (info)
+            for (auto& param : info->params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
         auto indexIt = slotIt->second.find(mangledName);
         if (indexIt != slotIt->second.end()) {
             int slotIndex = indexIt->second;

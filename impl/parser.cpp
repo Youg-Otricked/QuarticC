@@ -4313,6 +4313,101 @@ Prs Parser::statement() {
 
         return res.success(new NamespaceNode(nsName.value, body, nsName.pos));
     }
+    if (tok.type == TokenType::KEYWORD && tok.value == "union") {
+        this->advance();
+
+        if (this->current_tok.type != TokenType::IDENTIFIER) {
+            res.failure(new InvalidSyntaxError("QC-S065: Expected union name", this->current_tok.pos));
+            return res.to_prs();
+        }
+        Token union_name = this->current_tok;
+        this->advance();
+        std::vector<GenericType> generics;
+        parseGenerics(generics, res);
+        if (res.error) return res.to_prs();
+        auto saved_generics = this->current_generics;
+        if (this->current_tok.type == TokenType::SEMICOLON) {
+            this->advance();
+            UserTypeInfo tempInfo;
+            tempInfo.kind = UserTypeKind::RawUnion;
+            tempInfo.pos = union_name.pos;
+            tempInfo.baseFile = SourceManager::instance().get(this->current_tok.pos.file_id).filename;
+            std::string full_key = currentNamespace.empty() ? union_name.value : currentNamespace + "::" + union_name.value;
+            user_types[full_key] = tempInfo;
+            return res.success(std::monostate{});
+        }
+        this->current_generics.insert(this->current_generics.end(), generics.begin(), generics.end());
+        if (this->current_tok.type != TokenType::LBRACE) {
+            res.failure(new InvalidSyntaxError("QC-S003: Expected '{' after union name", this->current_tok.pos));
+            return res.to_prs();
+        }
+        this->advance();
+
+        std::vector<StructField> fields;
+
+        while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
+
+            std::string field_type;
+            bool is_user_type = false;
+            if (this->current_tok.type == TokenType::IDENTIFIER) {
+                field_type = parseTypeString();
+            } else if (this->current_tok.type == TokenType::KEYWORD) {
+                field_type = parseTypeString();
+            } else {
+                res.failure(new InvalidSyntaxError("QC-S071: Expected field type in union", this->current_tok.pos));
+                return res.to_prs();
+            }
+
+            if (this->current_tok.type != TokenType::IDENTIFIER) {
+                res.failure(new InvalidSyntaxError("QC-S072: Expected field name in union", this->current_tok.pos));
+                return res.to_prs();
+            }
+            Token field_name = this->current_tok;
+            this->advance();
+
+            int array_dims = 0;
+            while (this->current_tok.type == TokenType::LBRACKET) {
+                this->advance();
+                if (this->current_tok.type == TokenType::INT) { this->advance(); }
+                if (this->current_tok.type != TokenType::RBRACKET) {
+                    res.failure(new InvalidSyntaxError("QC-S061: Expected ']' after '[' in array", this->current_tok.pos));
+                    return res.to_prs();
+                }
+                this->advance();
+                array_dims++;
+            }
+
+            for (int i = 0; i < array_dims; ++i) field_type += "[]";
+
+            if (this->current_tok.type != TokenType::SEMICOLON) {
+                res.failure(new MissingSemicolonError(this->current_tok.pos));
+                return res.to_prs();
+            }
+            this->advance();
+            if (std::ranges::any_of(fields, [&](const StructField& thing) { return thing.name == field_name.value; })) {
+                res.failure(new InvalidSyntaxError("QC-UN01: Duplicate field in union", this->current_tok.pos));
+                return res.to_prs();
+            }
+            fields.push_back({field_name.value, field_type});
+        }
+        if (this->current_tok.type != TokenType::RBRACE) {
+            res.failure(new InvalidSyntaxError("QC-S073: Expected '}' at end of union", this->current_tok.pos));
+            return res.to_prs();
+        }
+        this->advance();
+        std::string full_key = currentNamespace.empty() ? union_name.value : currentNamespace + "::" + union_name.value;
+        if (this->current_tok.type == TokenType::SEMICOLON) { this->advance(); }
+        UserTypeInfo info;
+        info.baseFile = SourceManager::instance().get(this->current_tok.pos.file_id).filename;
+        info.kind = UserTypeKind::RawUnion;
+        info.fields = fields;
+        info.pos = union_name.pos;
+        info.generics = generics;
+        info.namespace_path = currentNamespace;
+        user_types[base_type_name(full_key)] = info;
+        this->current_generics = std::move(saved_generics);
+        return res.success(std::monostate{});
+    }
     if (tok.type == TokenType::KEYWORD && tok.value == "struct") {
         this->advance();
 

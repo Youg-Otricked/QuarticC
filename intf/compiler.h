@@ -191,6 +191,21 @@ class LLVMCompiler {
     }
     void generateStructReprFunctions();
     llvm::Value* callStringConcat(llvm::Value* a, llvm::Value* b);
+    llvm::Type* getLargestRUType(const UserTypeInfo& info) {
+        size_t size = 0;
+        auto& DL = module->getDataLayout();
+        for (const StructField& field : info.fields) {
+            llvm::Type* ty = llvmTypeFor(field.type);
+            if (!ty) {
+                cg_error(info.pos, "unknow type: " + field.type, "QC-RU01");
+                size = 1;
+                continue;
+            }
+            size_t sz = DL.getTypeAllocSize(ty);
+            if (sz > size) size = sz;
+        }
+        return llvm::ArrayType::get(builder->getIntNTy(8), size);
+    }
     std::vector<llvm::Type*> getLargestDiscriminantType(const UserTypeInfo& info) {
         std::vector<size_t> sizes;
         auto& DL = module->getDataLayout();
@@ -210,6 +225,14 @@ class LLVMCompiler {
         std::vector<llvm::Type*> res = {llvmTypeFor(info.enumType)};
         for (size_t size : sizes) { res.push_back(llvm::ArrayType::get(builder->getIntNTy(8), size)); }
         return res;
+    }
+    llvm::Type* generateRawUnion(const std::string& name, const UserTypeInfo& info) {
+        if (!info.generics.empty()) return nullptr;
+        auto it = rawUnionTypes.find(resolveTypeName(name));
+        if (it == rawUnionTypes.end()) return nullptr;
+        llvm::StructType* ty = it->second;
+        if (ty->isOpaque()) ty->setBody({getLargestRUType(info)});
+        return ty;
     }
     llvm::Type* generateEnum(const std::string& name, const UserTypeInfo& info) {
         if (!info.generics.empty()) return nullptr;
@@ -262,6 +285,17 @@ class LLVMCompiler {
         if (outName) *outName = name;
         return true;
     }
+    bool isRawUnionType(llvm::Type* ty, std::string* outName = nullptr) {
+        auto* st = llvm::dyn_cast<llvm::StructType>(ty);
+        if (!st || st->isLiteral()) return false;
+        std::string name = st->getName().str();
+        auto it = rawUnionTypes.find(name);
+        if (it == rawUnionTypes.end()) return false;
+
+        if (outName) *outName = name;
+        return true;
+    }
+
     bool isUnionType(llvm::Type* ty, std::string* outName = nullptr) {
         auto* st = llvm::dyn_cast<llvm::StructType>(ty);
         if (!st || st->isLiteral()) return false;
@@ -305,7 +339,7 @@ class LLVMCompiler {
         }
         return returnType;
     }
-    void generateVtable(const std::string& mapKey, UserTypeInfo *inf = nullptr) {
+    void generateVtable(const std::string& mapKey, UserTypeInfo* inf = nullptr) {
         if (vtables.count(mapKey)) return;
         auto& info = inf ? *inf : userTypes.at(mapKey);
         auto* ptrTy = llvm::PointerType::get(context, 0);
@@ -370,6 +404,7 @@ class LLVMCompiler {
         for (size_t i = 0; i < keys.size(); i++) vtableSlotIndex[mapKey][keys[i]] = i;
     }
     std::unordered_map<std::string, std::pair<std::string, std::vector<std::string>>> enumMemberInfo;
+    std::unordered_map<std::string, llvm::StructType*> rawUnionTypes;
     std::unordered_map<std::string, llvm::StructType*> enumTypes;
     std::unordered_map<std::string, std::string> typeAliases;
     std::unordered_map<std::string, llvm::StructType*> structTypes;
@@ -382,6 +417,7 @@ class LLVMCompiler {
     std::unordered_map<std::string, bool> genericEnums;
     std::unordered_map<std::string, bool> genericStructs;
     std::unordered_map<std::string, bool> genericAliases;
+    std::unordered_map<std::string, bool> genericRawUnions;
     std::unordered_map<std::string, bool> genericUnions;
     std::unordered_map<std::string, bool> genericConcepts;
     std::unordered_map<std::string, ConceptInfo> concepts;
@@ -477,6 +513,7 @@ class LLVMCompiler {
     llvm::Value* emitSpreadFunctionCall(llvm::Value* calleeVal, llvm::FunctionType* fnTy, CallNode& call);
     bool fulfillsGenericConstraints(std::vector<GenericType> generics, std::vector<std::string> genericParams, Position pos = Position());
     llvm::StructType* generateGenericEnum(std::string enumName, UserTypeInfo enumInfo, std::vector<std::string> genericParams);
+    llvm::StructType* generateGenericRawUnion(std::string runionName, UserTypeInfo runionInfo, std::vector<std::string> genericParams);
     ConceptInfo generateGenericConcept(std::string conceptName, UserTypeInfo conceptInfo, std::vector<std::string> genericParams);
     llvm::StructType* generateGenericClass(std::string className, UserTypeInfo classInfo, std::vector<std::string> genericParams);
     llvm::StructType* generateGenericStruct(std::string structName, UserTypeInfo structInfo, std::vector<std::string> genericParams);
@@ -488,6 +525,7 @@ class LLVMCompiler {
     std::vector<std::unordered_map<std::string, std::string>> arrayTypeStringsStack;
     std::vector<std::unordered_map<std::string, int>> arrayLengthsStack;
     std::vector<std::unordered_map<std::string, std::string>> varTypesStack;
+    std::vector<std::unordered_map<std::string, std::vector<bool>>> constsStack;
     std::vector<std::unordered_map<std::string, llvm::AllocaInst*>> localsStack;
     std::vector<std::unordered_map<std::string, bool>> volatileVarsStack;
     std::unordered_map<std::string, llvm::AllocaInst*> runtimeArraySizes;
@@ -508,16 +546,19 @@ class LLVMCompiler {
 #define hasArrayType(name) foundInStack(arrayTypeStringsStack, name)
 #define hasArrayLength(name) foundInStack(arrayLengthsStack, name)
 #define hasVolatileVar(name) foundInStack(volatileVarsStack, name)
+#define hasConst(name) foundInStack(constsStack, name)
 #define volatileVars (volatileVarsStack.back())
 #define arrayLengths (arrayLengthsStack.back())
 #define locals (localsStack.back())
 #define varTypes (varTypesStack.back())
 #define arrayTypeStrings (arrayTypeStringsStack.back())
+#define consts (constsStack.back())
 #define findLocal(name) findInStack(localsStack, name)
 #define findVolatileVar(name) findInStack(volatileVarsStack, name)
 #define findArrayLength(name) findInStack(arrayLengthsStack, name)
 #define findVarType(name) findInStack(varTypesStack, name)
 #define findArrayType(name) findInStack(arrayTypeStringsStack, name)
+#define findConst(name) findInStack(constsStack, name)
     void enterScope() {
         defersStack.push_back({});
         localsStack.push_back({});
@@ -525,6 +566,7 @@ class LLVMCompiler {
         arrayLengthsStack.push_back({});
         varTypesStack.push_back({});
         volatileVarsStack.push_back({});
+        constsStack.push_back({});
     }
 
     void exitScope() {
@@ -536,6 +578,92 @@ class LLVMCompiler {
         arrayTypeStringsStack.pop_back();
         arrayLengthsStack.pop_back();
         varTypesStack.pop_back();
+        constsStack.pop_back();
+    }
+    std::string strip_consts(std::string type) {
+        std::string n;
+        bool baseConst = false;
+        bool afterPointer = false;
+        std::vector<std::string> tokens;
+        std::string token;
+        for (char c : type) {
+            if (std::isspace(static_cast<unsigned char>(c))) {
+                if (!token.empty()) {
+                    tokens.push_back(token);
+                    token.clear();
+                }
+            } else if (c == '*') {
+                if (!token.empty()) {
+                    tokens.push_back(token);
+                    token.clear();
+                }
+                tokens.emplace_back("*");
+            } else {
+                token += c;
+            }
+        }
+        if (!token.empty()) tokens.push_back(token);
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            const std::string& t = tokens[i];
+            if (t == "const") {
+            } else if (t == "*") {
+                afterPointer = true;
+                n += "*";
+            } else {
+                if (!afterPointer) {
+                    if (!n.empty()) n += " ";
+                    n += t;
+                }
+            }
+        }
+        return n;
+    }
+    std::string make_consts(std::string fullName, std::string type) {
+        std::vector<bool> values;
+        std::string n;
+        bool baseConst = false;
+        bool afterPointer = false;
+        std::vector<std::string> tokens;
+        std::string token;
+        for (char c : type) {
+            if (std::isspace(static_cast<unsigned char>(c))) {
+                if (!token.empty()) {
+                    tokens.push_back(token);
+                    token.clear();
+                }
+            } else if (c == '*') {
+                if (!token.empty()) {
+                    tokens.push_back(token);
+                    token.clear();
+                }
+                tokens.emplace_back("*");
+            } else {
+                token += c;
+            }
+        }
+        if (!token.empty()) tokens.push_back(token);
+        values.push_back(false);
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            const std::string& t = tokens[i];
+            if (t == "const") {
+                if (!afterPointer) {
+                    values[0] = true;
+                } else {
+                    if (!values.empty()) values.back() = true;
+                }
+            } else if (t == "*") {
+                values.push_back(false);
+                afterPointer = true;
+                n += "*";
+            } else {
+                if (!afterPointer) {
+                    if (!n.empty()) n += " ";
+                    n += t;
+                }
+            }
+        }
+        consts[fullName] = values;
+        return n;
     }
     size_t targetDeferDepth = 0;
     std::vector<size_t> loopStack;
@@ -725,6 +853,7 @@ class LLVMCompiler {
                 size_t fieldIdx = std::stoull(fieldName);
                 return getTupleFieldType(currentType, fieldIdx);
             }
+            if (rawUnionTypes.count(currentType) || genericRawUnions.count(currentType)) { return getUnionFieldType(currentType, fieldName); }
             while (!currentType.empty() && userTypes.contains(baseTypeName(currentType))) {
                 auto& info = userTypes[baseTypeName(currentType)];
                 auto savedGenericTypeStrings = currentGenericTypeStrings;
@@ -1168,6 +1297,14 @@ class LLVMCompiler {
             }
             return builder->CreateStructGEP(structType, baseAddr, fieldIdx, propName + "_ptr");
         }
+        if (isRawUnionType(sType)) {
+            std::string type = getUnionFieldType(typeName, propName);
+            if (type == "unknown") {
+                cg_error(get_pos(&prop), "Unknown field on union " + typeName + ": " + propName + ".", "QC-RU02");
+                return nullptr;
+            }
+            return baseAddr;
+        }
         if (classTypes.count(typeName) || (genericClasses.count(baseTypeName(typeName)) && genericClasses[baseTypeName(typeName)])) {
             llvm::StructType* classTy = genericiseOrFindClass(typeName);
             int fieldIdx = getFlattenedFieldIndex(baseTypeName(typeName), propName);
@@ -1275,6 +1412,18 @@ class LLVMCompiler {
         }
     }
 #endif
+    std::vector<bool> getConsts(const AnyNode& node) {
+        if (auto var = std::get_if<VarAccessNode*>(&node)) {
+            std::string name = (*var)->var_name_tok.value;
+            if (name == "this") { return {false, false}; }
+            return resolveVarConsts(name);
+        } else if (auto unary = std::get_if<UnaryOpNode*>(&node)) {
+            auto copy = getConsts((*unary)->node);
+            copy.pop_back();
+            return copy;
+        }
+        return {};
+    }
     llvm::Value* emitLValue(AnyNode& node, bool fallback = false) {
         if (auto var = std::get_if<VarAccessNode*>(&node)) {
             std::string name = (*var)->var_name_tok.value;
@@ -1292,7 +1441,11 @@ class LLVMCompiler {
             if (fallback) return emitExpr(node);
             return nullptr;
         } else if (auto unary = std::get_if<UnaryOpNode*>(&node)) {
-            if ((*unary)->op_tok.type == TokenType::MUL) { return emitExpr((*unary)->node); }
+            if ((*unary)->op_tok.type == TokenType::MUL) {
+                if (!getConsts(*unary).empty() && getConsts(*unary).back()) {
+                } else
+                    return emitExpr((*unary)->node);
+            }
             if ((*unary)->op_tok.type == TokenType::AMPERSAND) { return emitLValue((*unary)->node); }
             if (fallback) return emitExpr(node);
         } else if (auto prop = std::get_if<PropertyAccessNode*>(&node)) {
@@ -1704,6 +1857,18 @@ class LLVMCompiler {
         }
 
         return {nullptr, ""};
+    }
+    std::string getUnionFieldType(const std::string& unionName, const std::string& fieldName) {
+        std::string resolvedUnion = unionName;
+        if (unionName.find("::") == std::string::npos && !getCurrentNamespace().empty()) {
+            std::string qualified = getCurrentNamespace() + "::" + unionName;
+            if (userTypes.find(qualified) != userTypes.end()) { resolvedUnion = qualified; }
+        }
+        auto& Info = userTypes[resolvedUnion];
+        for (auto& field : Info.fields) {
+            if (field.name == fieldName) return resolveTypeName(field.type, false);
+        }
+        return "";
     }
     int getFlattenedFieldIndex(const std::string& className, const std::string& fieldName) {
         int index = 0;
@@ -3456,6 +3621,22 @@ class LLVMCompiler {
         }
         return nullptr;
     }
+    llvm::StructType* genericiseOrFindRawUnion(const std::string& baseName) {
+        const auto base = baseTypeName(baseName);
+        if (genericRawUnions.contains(base) && genericRawUnions.at(base)) {
+            if (auto it = rawUnionTypes.find(baseName); it != rawUnionTypes.end()) { return it->second; }
+            auto userIt = userTypes.find(base);
+            if (userIt == userTypes.end()) { return nullptr; }
+            return generateGenericRawUnion(base, userIt->second, genericParamsFromName(baseName));
+        }
+        if (auto it = rawUnionTypes.find(baseName); it != rawUnionTypes.end()) {
+            auto userIt = userTypes.find(base);
+            if (userIt == userTypes.end()) { return it->second; }
+            return llvm::cast<llvm::StructType>(generateRawUnion(baseName, userIt->second));
+        }
+        return nullptr;
+    }
+
     llvm::StructType* genericiseOrFindEnum(const std::string& baseName) {
         const auto base = baseTypeName(baseName);
         if (genericEnums.contains(base) && genericEnums.at(base)) {
@@ -3521,6 +3702,7 @@ class LLVMCompiler {
             name == "addr_t" || name == "nibble" || name.starts_with("(")) {
             return name;
         }
+        name = strip_consts(name);
         std::string suffix;
         while (!name.empty() && (name.ends_with("*") || name.ends_with("&") || name.ends_with("[]"))) {
             if (name.ends_with("[]")) {
@@ -3545,8 +3727,10 @@ class LLVMCompiler {
             if (genericStructs.find(name) != genericStructs.end()) return finish(strip ? name : savedName);
             if (genericUnions.find(name) != genericUnions.end()) return finish(strip ? name : savedName);
             if (genericEnums.find(name) != genericEnums.end()) return finish(strip ? name : savedName);
+            if (genericRawUnions.find(name) != genericRawUnions.end()) return finish(strip ? name : savedName);
             if (structTypes.find(savedName) != structTypes.end()) return finish(strip ? name : savedName);
             if (enumTypes.find(savedName) != enumTypes.end()) return finish(strip ? name : savedName);
+            if (rawUnionTypes.find(savedName) != rawUnionTypes.end()) return finish(strip ? name : savedName);
             if (unionTypes.find(savedName) != unionTypes.end()) return finish(strip ? name : savedName);
             if (typeAliases.find(savedName) != typeAliases.end()) return finish(strip ? name : savedName);
             if (concepts.find(savedName) != concepts.end()) return finish(strip ? name : savedName);
@@ -3564,12 +3748,14 @@ class LLVMCompiler {
             if (typeAliases.count(fullSavedName)) return finish(result);
             if (classTypes.count(fullSavedName)) return finish(result);
             if (genericClasses.count(fullName)) return finish(result);
+            if (genericRawUnions.count(fullName)) return finish(result);
             if (genericStructs.count(fullName)) return finish(result);
             if (genericUnions.count(fullName)) return finish(result);
             if (structTypes.count(fullSavedName)) return finish(result);
             if (enumTypes.count(fullSavedName)) return finish(result);
             if (genericEnums.count(fullName)) return finish(result);
             if (unionTypes.count(fullSavedName)) return finish(result);
+            if (rawUnionTypes.count(fullSavedName)) return finish(result);
             if (hasArrayType(fullSavedName)) return finish(result);
             if (current.empty()) break;
             size_t pos = current.rfind("::");
@@ -3667,6 +3853,21 @@ class LLVMCompiler {
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
         }
         return vars;
+    }
+    std::vector<bool> resolveVarConsts(const std::string& name) {
+        if (name.find("::") != std::string::npos) {
+            if (hasConst(name)) return findConst(name)->second;
+        }
+        std::string current = getCurrentNamespace();
+        while (true) {
+            std::string fullName = current.empty() ? name : current + "::" + name;
+            if (hasConst(fullName)) return findConst(fullName)->second;
+            if (current.empty()) break;
+            size_t pos = current.rfind("::");
+            current = (pos == std::string::npos) ? "" : current.substr(0, pos);
+        }
+        if (hasConst(name)) return findConst(name)->second;
+        return std::vector<bool>();
     }
     std::string resolveVarType(const std::string& name) {
         if (name.find("::") != std::string::npos) {
