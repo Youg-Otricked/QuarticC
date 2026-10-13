@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_map>
 #include "nodes.h"
+#include "translate.h"
 extern "C" const char _binary_runtime_ll_start[];
 extern "C" const size_t _binary_runtime_ll_size;
 namespace run {
@@ -131,6 +132,8 @@ struct RunConfig {
         {"__quarticc", "\"x1.0.48R\""}};
     bool progress = false;
     std::unordered_map<std::string, WarningLevel> warnings;
+    bool translate_c = false;
+    std::vector<std::string> c_args;
 };
 Mer run(std::string file, std::string text, RunConfig config);
 } // namespace Run

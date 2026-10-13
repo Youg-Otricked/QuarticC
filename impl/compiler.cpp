@@ -96,14 +96,15 @@ llvm::Type* LLVMCompiler::llvmTypeFor(std::string qcType) {
         return llvm::ArrayType::get(elemTy, count);
     }
     if (type.ends_with("&") || type.ends_with("*")) { return builder->getPtrTy(); }
-    if (type == "int") return builder->getInt32Ty();
-    if (type == "short int") return builder->getInt16Ty();
+    if (type == "int" || type == "i32u_t") return builder->getInt32Ty();
+    if (type == "short int" || type == "i16u_t") return builder->getInt16Ty();
     if (type == "long int") return builder->getIntNTy(getPtrSize());
     if (type == "float") return builder->getFloatTy();
     if (type == "double") return builder->getDoubleTy();
     if (type == "long double") return builder->getDoubleTy();
     if (type == "nibble") return builder->getIntNTy(4);
     if (type == "addr_t") return builder->getIntNTy(getPtrSize());
+    if (type == "ai64u_t" || type == "ai64_t") return builder->getInt64Ty();
     if (type == "char" || type == "byte") return builder->getInt8Ty();
     if (type == "bool") return builder->getInt1Ty();
     if (type == "qbool") return builder->getIntNTy(2);
@@ -186,16 +187,13 @@ bool LLVMCompiler::fulfillsGenericConstraints(std::vector<GenericType> generics,
                     return false;
                 }
             } else if (generic.constraint == "numeric") {
-                if (!(std::unordered_set<std::string>({"int", "double", "float", "byte", "nibble", "addr_t", "long double", "short int", "long int"})
-                          .contains(value))) {
+                if (!is_primint_type(value)) {
                     cg_error(pos, "numeric generic constrain " + generic.name + " expectes numeric type, got " + value, "QC-G008");
                     return false;
                 }
             } else if (generic.constraint == "primitive" || generic.constraint == "usertype") {
-                static const std::unordered_set<std::string> native_types = {
-                    "int", "double", "float", "addr_t", "long double", "short int", "long int", "char", "bool", "byte", "nibble", "qbool", "string"};
                 auto clean_view = value | std::views::filter([](char c) { return c != '*' && c != '&' && c != '[' && c != ']'; });
-                if (native_types.contains(std::string(clean_view.begin(), clean_view.end()))) {
+                if (is_primitive_type(std::string(clean_view.begin(), clean_view.end()))) {
                     if (generic.constraint == "usertype") {
                         cg_error(pos, "usertype generic constrain " + generic.name + " expectes usertype type, got " + value, "QC-G009");
                         return false;
@@ -831,7 +829,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                 }
                 functions["proceed"] = proceedFunc;
                 if (modInfo.onCall) {
-                    for (auto& stmt : modInfo.onCall->statements) { emitStmt(stmt); }
+                    emitStmt(modInfo.onCall);
                 } else {
                     if (fTy->getReturnType()->isVoidTy()) {
                         builder->CreateCall(proceedFunc, forwardArgs);
@@ -1657,8 +1655,10 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
         if (!dstTy) return nullptr;
         llvm::Type* srcTy = value->getType();
         if (srcTy == dstTy) return value;
-        bool srcSigned = std::unordered_set<std::string>({"addr_t", "byte", "nibble"}).contains(getExpressionType((*bin)->left_node));
-        bool dstSigned = std::unordered_set<std::string>({"addr_t", "byte", "nibble"}).contains(typeNode->tok.value);
+        bool srcSigned = std::unordered_set<std::string>({"addr_t", "byte", "nibble", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+                             .contains(getExpressionType((*bin)->left_node));
+        bool dstSigned = std::unordered_set<std::string>({"addr_t", "byte", "nibble", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+                             .contains(typeNode->tok.value);
         if (srcTy->isIntegerTy() && dstTy->isIntegerTy()) {
             unsigned srcBits = srcTy->getIntegerBitWidth();
             unsigned dstBits = dstTy->getIntegerBitWidth();
@@ -5769,6 +5769,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                                                                               {"`to_qbool", "qc_to_qbool_from_string"},
                                                                               {"`to_long_int", "qc_to_long_int_from_string"},
                                                                               {"`to_short_int", "qc_to_short_int_from_string"},
+                                                                              // todo: to (type) primitive.
                                                                               {"`qout", ""},
                                                                               {"`open", "qc_open"},
                                                                               {"`close", "qc_close"},
@@ -6123,8 +6124,10 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 if (!dstTy) return nullptr;
                 llvm::Type* srcTy = value->getType();
                 if (srcTy == dstTy) return value;
-                bool srcSigned = std::unordered_set<std::string>({"addr_t", "byte", "nibble"}).contains(getExpressionType(call.arg_nodes.front()));
-                bool dstSigned = std::unordered_set<std::string>({"addr_t", "byte", "nibble"}).contains(typeNode->tok.value);
+                bool srcSigned = std::unordered_set<std::string>({"addr_t", "byte", "nibble", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+                                     .contains(getExpressionType(call.arg_nodes.front()));
+                bool dstSigned = std::unordered_set<std::string>({"addr_t", "byte", "nibble", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+                                     .contains(typeNode->tok.value);
                 if (srcTy->isIntegerTy() && dstTy->isIntegerTy()) {
                     unsigned srcBits = srcTy->getIntegerBitWidth();
                     unsigned dstBits = dstTy->getIntegerBitWidth();
@@ -6367,7 +6370,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                             cg_error((*varAccess)->var_name_tok.pos,
                                      "%u formater takes an int-like (int, "
                                      "long int, short "
-                                     "int, addr_t, nibble, byte)",
+                                     "int, addr_t, nibble, byte, etc)",
                                      "QC-S197");
                             return nullptr;
                         }
@@ -9149,7 +9152,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
             }
             functions["proceed"] = proceedFunc;
             if (modInfo.onCall) {
-                for (auto& stmt : modInfo.onCall->statements) { emitStmt(stmt); }
+                emitStmt(modInfo.onCall);
             } else {
                 if (fTy->getReturnType()->isVoidTy()) {
                     builder->CreateCall(proceedFunc, forwardArgs);
@@ -9272,7 +9275,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
         idx++;
     }
 
-    for (auto& stmt : fn.body->statements) { emitStmt(stmt); }
+    emitStmt(fn.body);
 
     if (!builder->GetInsertBlock()->getTerminator()) {
         if (fn.is_multi_return()) {
@@ -9619,7 +9622,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
         llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(context, "ifcont", currentFunction);
         enterScope();
         if (comptimeValue->getZExtValue() != 0) {
-            for (auto& stmt : if_node->then_branch->statements) { emitStmt(stmt); }
+            emitStmt(if_node->then_branch);
         } else {
             bool emitedBranch = false;
             for (size_t i = 0; i < if_node->elif_branches.size(); i++) {
@@ -9631,7 +9634,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
                     return;
                 }
                 if (comptimeValue->getZExtValue() != 0) {
-                    for (auto& stmt : if_node->elif_branches[i].second->statements) { emitStmt(stmt); }
+                    emitStmt(if_node->elif_branches[i].second);
                     if (!builder->GetInsertBlock()->getTerminator()) {
                         emitDefersDownTo(outerDepth + 2);
                         builder->CreateBr(mergeBB);
@@ -9641,7 +9644,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
                 }
             }
             if (!emitedBranch && if_node->else_branch) {
-                for (auto& stmt : if_node->else_branch->statements) { emitStmt(stmt); }
+                emitStmt(if_node->else_branch);
                 if (!builder->GetInsertBlock()->getTerminator()) {
                     emitDefersDownTo(outerDepth + 2);
                     builder->CreateBr(mergeBB);
@@ -9682,7 +9685,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
         builder->CreateCondBr(cond, thenBB, nextBB);
         builder->SetInsertPoint(thenBB);
         enterScope();
-        for (auto& stmt : if_node->then_branch->statements) { emitStmt(stmt); }
+        emitStmt(if_node->then_branch);
         if (if_node->then_branch->statements.empty()) { warn("empty-body", get_pos(if_node), "if body is empty", "QC-W16"); }
         if (!builder->GetInsertBlock()->getTerminator()) {
             emitDefersDownTo(outerDepth + 2);
@@ -9705,7 +9708,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
 
             builder->SetInsertPoint(elifBlocks[i].second);
             enterScope();
-            for (auto& stmt : if_node->elif_branches[i].second->statements) { emitStmt(stmt); }
+            emitStmt(if_node->elif_branches[i].second);
             if (if_node->elif_branches[i].second->statements.empty()) { warn("empty-body", get_pos(if_node), "else if body is empty", "QC-W16"); }
             if (!builder->GetInsertBlock()->getTerminator()) {
                 emitDefersDownTo(outerDepth + 2);
@@ -9716,7 +9719,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
         if (elseBB) {
             builder->SetInsertPoint(elseBB);
             enterScope();
-            for (auto& stmt : if_node->else_branch->statements) { emitStmt(stmt); }
+            emitStmt(if_node->else_branch);
             if (if_node->else_branch->statements.empty()) { warn("empty-body", get_pos(if_node), "else body is empty", "QC-W16"); }
             if (!builder->GetInsertBlock()->getTerminator()) {
                 emitDefersDownTo(outerDepth + 2);
@@ -9752,7 +9755,7 @@ void LLVMCompiler::emitWhile(WhileNode* while_node) {
     if (!cond) return;
     builder->CreateCondBr(cond, bodyBB, endBB);
     builder->SetInsertPoint(bodyBB);
-    for (auto& stmt : while_node->body->statements) { emitStmt(stmt); }
+    emitStmt(while_node->body);
     if (while_node->body->statements.empty()) { warn("empty-body", get_pos(while_node), "while body is empty", "QC-W16"); }
 
     if (!builder->GetInsertBlock()->getTerminator()) {
@@ -9787,7 +9790,7 @@ void LLVMCompiler::emitFor(ForNode* for_node) {
     if (!cond) return;
     builder->CreateCondBr(cond, bodyBB, endBB);
     builder->SetInsertPoint(bodyBB);
-    for (auto& stmt : for_node->body->statements) { emitStmt(stmt); }
+    emitStmt(for_node->body);
     if (!builder->GetInsertBlock()->getTerminator()) {
         emitDefersDownTo(outerDepth + 1);
         builder->CreateBr(incBB);
@@ -9881,7 +9884,7 @@ void LLVMCompiler::emitSwitch(SwitchNode* switch_node) {
     currentBreakBB = endBB;
     for (size_t i = 0; i < switch_node->sections.size(); i++) {
         builder->SetInsertPoint(sectionBlocks[i]);
-        for (auto& stmt : switch_node->sections[i].body->statements) { emitStmt(stmt); }
+        emitStmt(switch_node->sections[i].body);
         if (!builder->GetInsertBlock()->getTerminator()) {
             if (i + 1 < sectionBlocks.size()) {
                 builder->CreateBr(sectionBlocks[i + 1]);
@@ -9915,7 +9918,7 @@ void LLVMCompiler::emitQIf(QIfNode* qif_node) {
 
     builder->SetInsertPoint(qifBodyBB);
     enterScope();
-    for (auto& stmt : qif_node->then_branch->statements) { emitStmt(stmt); }
+    emitStmt(qif_node->then_branch);
     if (!builder->GetInsertBlock()->getTerminator()) {
         emitDefersDownTo(outerDepth + 2);
         builder->CreateBr(endBB);
@@ -9936,7 +9939,7 @@ void LLVMCompiler::emitQIf(QIfNode* qif_node) {
         builder->CreateCondBr(elif_is_true, elifBodyBB, nextElifBB);
         builder->SetInsertPoint(elifBodyBB);
         enterScope();
-        for (auto& stmt : qif_node->qelif_branches[i].second->statements) { emitStmt(stmt); }
+        emitStmt(qif_node->qelif_branches[i].second);
         if (!builder->GetInsertBlock()->getTerminator()) {
             emitDefersDownTo(outerDepth + 2);
             builder->CreateBr(endBB);
@@ -9961,7 +9964,7 @@ void LLVMCompiler::emitQIf(QIfNode* qif_node) {
 
         builder->SetInsertPoint(qelseBodyBB);
         enterScope();
-        for (auto& stmt : qif_node->qelse_branch->statements) { emitStmt(stmt); }
+        emitStmt(qif_node->qelse_branch);
         if (!builder->GetInsertBlock()->getTerminator()) {
             emitDefersDownTo(outerDepth + 2);
             builder->CreateBr(endBB);
@@ -10021,7 +10024,7 @@ void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
     builder->CreateCondBr(is_none, case_n_block ? case_n_block : qswitch_end, qswitch_end);
     if (case_t_block && qsw->case_t) {
         builder->SetInsertPoint(case_t_block);
-        for (auto& stmt : qsw->case_t->statements) { emitStmt(stmt); }
+        emitStmt(qsw->case_t);
         if (!builder->GetInsertBlock()->getTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(qswitch_end);
@@ -10030,7 +10033,7 @@ void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
 
     if (case_f_block && qsw->case_f) {
         builder->SetInsertPoint(case_f_block);
-        for (auto& stmt : qsw->case_f->statements) { emitStmt(stmt); }
+        emitStmt(qsw->case_f);
         if (!builder->GetInsertBlock()->getTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(qswitch_end);
@@ -10039,7 +10042,7 @@ void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
 
     if (case_n_block && qsw->case_n) {
         builder->SetInsertPoint(case_n_block);
-        for (auto& stmt : qsw->case_n->statements) { emitStmt(stmt); }
+        emitStmt(qsw->case_n);
         if (!builder->GetInsertBlock()->getTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(qswitch_end);
@@ -10047,7 +10050,7 @@ void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
     }
     if (case_b_block && qsw->case_b) {
         builder->SetInsertPoint(case_b_block);
-        for (auto& stmt : qsw->case_b->statements) { emitStmt(stmt); }
+        emitStmt(qsw->case_b);
         if (!builder->GetInsertBlock()->getTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(qswitch_end);
@@ -10660,28 +10663,25 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
     for (size_t i = 0; i < match_node->sections.size(); i++) {
         builder->SetInsertPoint(sectionBlocks[i]);
         enterScope();
-
-        for (auto& stmt : match_node->sections[i].body->statements) {
-            if (match_node->is_enum) {
-                auto& section = match_node->sections[i].enum_case;
-                for (unsigned int i = 0; i < section.second.size(); i++) {
-                    std::string fullName = getCurrentNamespace().empty() ? section.second[i] : getCurrentNamespace() + "::" + section.second[i];
-                    std::vector<std::string> types = enumMemberInfo[section.first].second;
-                    varTypes[fullName] = types[i];
-                    llvm::Value* raw = builder->CreateExtractValue(matchVal, {i + 1});
-                    llvm::AllocaInst* rawAlloc = builder->CreateAlloca(raw->getType(), nullptr, "match_raw");
-                    builder->CreateStore(raw, rawAlloc);
-                    llvm::AllocaInst* alloc = createEntryAlloca(fullName, llvmTypeFor(types[i]));
-                    uint64_t size = module->getDataLayout().getTypeStoreSize(llvmTypeFor(types[i]));
-                    builder->CreateMemCpyInline(alloc, llvm::MaybeAlign(), rawAlloc, llvm::MaybeAlign(),
-                                                llvm::ConstantInt::get(builder->getInt64Ty(), size));
-                    locals[fullName] = alloc;
-                    varTypes[fullName] = types[i];
-                    volatileVars[fullName] = false;
-                }
+        if (match_node->is_enum) {
+            auto& section = match_node->sections[i].enum_case;
+            for (unsigned int i = 0; i < section.second.size(); i++) {
+                std::string fullName = getCurrentNamespace().empty() ? section.second[i] : getCurrentNamespace() + "::" + section.second[i];
+                std::vector<std::string> types = enumMemberInfo[section.first].second;
+                varTypes[fullName] = types[i];
+                llvm::Value* raw = builder->CreateExtractValue(matchVal, {i + 1});
+                llvm::AllocaInst* rawAlloc = builder->CreateAlloca(raw->getType(), nullptr, "match_raw");
+                builder->CreateStore(raw, rawAlloc);
+                llvm::AllocaInst* alloc = createEntryAlloca(fullName, llvmTypeFor(types[i]));
+                uint64_t size = module->getDataLayout().getTypeStoreSize(llvmTypeFor(types[i]));
+                builder->CreateMemCpyInline(alloc, llvm::MaybeAlign(), rawAlloc, llvm::MaybeAlign(),
+                                            llvm::ConstantInt::get(builder->getInt64Ty(), size));
+                locals[fullName] = alloc;
+                varTypes[fullName] = types[i];
+                volatileVars[fullName] = false;
             }
-            emitStmt(stmt);
         }
+        emitStmt(match_node->sections[i].body);
         exitScope();
         if (!builder->GetInsertBlock()->getTerminator()) {
             if (i + 1 < sectionBlocks.size()) {
@@ -10744,6 +10744,18 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         emitForeach(foreach);
     } else if (auto stmts = safe_get<StatementsNode>(node)) {
         if (stmts->is_scoped) enterScope();
+        for (auto& stmt : stmts->statements) {
+            if (LabelNode* label = std::get_if<LabelNode>(&stmt)) {
+                if (scope_labels.count(label->name.value) || all_labels.count(label->name.value)) {
+                    warn("shadow", get_pos(*label), "attempted to shadow label " + label->name.value, "QC-W022");
+                }
+                llvm::BasicBlock *bb = llvm::BasicBlock::Create(context, label->name.value, currentFunction); 
+                scope_labels[label->name.value] = std::make_pair(bb,
+                                                                 defersStack.size());
+                all_labels[label->name.value] = std::make_pair(bb,
+                                                               defersStack.size());
+            }
+        }
         for (auto& stmt : stmts->statements) { emitStmt(stmt); }
         if (stmts->is_scoped) exitScope();
         return;
@@ -10751,7 +10763,6 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         namespaceStack.push_back(ns->name);
         for (auto& decl : ns->body) { emitStmt(decl); }
         namespaceStack.pop_back();
-
         return;
     } else if (auto trycatch = safe_get<TryCatchNode>(node)) {
         emitTryCatch(trycatch);
@@ -10760,6 +10771,25 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         return;
     } else if (auto match_node = safe_get<MatchNode>(node)) {
         emitMatch(match_node);
+    } else if (LabelNode* label = std::get_if<LabelNode>(&node)) {
+        llvm::BasicBlock* block = resolveLabel(label->name.value).second.first;
+        if (!block) {
+            cg_error(get_pos(*label), "could not create label", "QC-LBL1");
+            return;
+        }
+        if (!builder->GetInsertBlock()->getTerminator()) { builder->CreateBr(block); }
+        builder->SetInsertPoint(block);
+    } else if (GotoNode* goto_stmt = std::get_if<GotoNode>(&node)) {
+        auto info = resolveLabel(goto_stmt->togo.value);
+        if (!info.second.first) {
+            cg_error(get_pos(*goto_stmt), "no such label '" + goto_stmt->togo.value + "'", "QC-LBL2");
+            return;
+        }
+        if (info.first)
+            emitDefersDownTo(2);
+        else
+            emitDefersDownTo(info.second.second);
+        builder->CreateBr(info.second.first);
     } else {
         emitExpr(node);
         return;
@@ -11091,7 +11121,7 @@ std::vector<CTError> LLVMCompiler::compile(
                     }
                     functions["proceed"] = proceedFunc;
                     if (modInfo.onCall) {
-                        for (auto& stmt : modInfo.onCall->statements) { emitStmt(stmt); }
+                        emitStmt(modInfo.onCall);
                     } else {
                         if (fTy->getReturnType()->isVoidTy()) {
                             builder->CreateCall(proceedFunc, forwardArgs);

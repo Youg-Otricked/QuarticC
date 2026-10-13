@@ -191,7 +191,7 @@ Token Lexer::make_identifier() {
         this->advance();
     }
     if (
-        /* primitives */ id == "int" || id == "float" || id == "double" || id == "bool" || id == "string" || id == "qbool" || id == "char" ||
+        /* primitives */ id == "int" || id == "float" || id == "double" || id == "bool" || id == "string" || id == "qbool" || id == "char" || id == "ai64u_t" || id == "ai64_t" || id == "i32u_t" || id == "i16u_t" ||
         /* storage modifiers */ id == "long" || id == "short" || id == "const" || id == "atomic" ||
         /* switch */ id == "case" || id == "switch" || id == "default" || id == "match" ||
         /* if else */ id == "if" || id == "else" ||
@@ -218,7 +218,8 @@ Token Lexer::make_identifier() {
         id == "proved_by" ||
         /* modifiers */ id == "modifier" || id == "on_call" || id == "on_return" || id == "on_use" ||
         /* comptime */ id == "comptime" ||
-        /* raw unions */ id == "union") {
+        /* raw unions */ id == "union" ||
+        /* goto */ id == "goto" || id == "jmp") {
         return Token(TokenType::KEYWORD, id, start_pos);
     }
     if (id == "true" || id == "false") { return Token(TokenType::BOOL, id, start_pos); }

@@ -306,6 +306,8 @@ class LLVMCompiler {
         if (outName) *outName = name;
         return true;
     }
+    std::unordered_map<std::string, std::pair<llvm::BasicBlock*, size_t>> all_labels;
+    std::unordered_map<std::string, std::pair<llvm::BasicBlock*, size_t>> scope_labels;
     std::unordered_map<std::string, UserTypeInfo>& userTypes;
     std::string getMethodReturnTypeName(const std::string& typeName, const std::string& methodName) {
         auto it = userTypes.find(baseTypeName(typeName));
@@ -560,6 +562,12 @@ class LLVMCompiler {
 #define findArrayType(name) findInStack(arrayTypeStringsStack, name)
 #define findConst(name) findInStack(constsStack, name)
     void enterScope() {
+        if (defersStack.size() == 0) {
+            all_labels = {};
+        }
+        if (defersStack.size() <= 1) {
+            scope_labels = {};
+        }
         defersStack.push_back({});
         localsStack.push_back({});
         arrayTypeStringsStack.push_back({});
@@ -573,12 +581,23 @@ class LLVMCompiler {
         auto* currentBlock = builder->GetInsertBlock();
         if (currentBlock && !currentBlock->getTerminator()) { emitDefersDownTo(defersStack.size()); }
         defersStack.pop_back();
+        if (defersStack.size() <= 1) scope_labels = {};
+        if (defersStack.size() == 0) all_labels = {};
         localsStack.pop_back();
         volatileVarsStack.pop_back();
         arrayTypeStringsStack.pop_back();
         arrayLengthsStack.pop_back();
         varTypesStack.pop_back();
         constsStack.pop_back();
+    }
+    std::pair<bool, std::pair<llvm::BasicBlock*, size_t>> resolveLabel(std::string name) {
+        for (auto& label : scope_labels) {
+            if (label.first == name) return std::make_pair(false, label.second);
+        }
+        for (auto& label : all_labels) {
+            if (label.first == name) return std::make_pair(true, label.second);
+        }
+        return std::make_pair(false, std::make_pair(nullptr, 0));
     }
     std::string strip_consts(std::string type) {
         std::string n;
@@ -1197,6 +1216,16 @@ class LLVMCompiler {
         }
         return "unknown";
     }
+    bool is_primitive_type(const std::string& name) {
+        return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool",
+                                                "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+            .contains(name);
+    }
+    bool is_primint_type(const std::string& name) {
+        return std::unordered_set<std::string>({"int", "byte", "nibble", "addr_t", "short int", "long int", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+            .contains(name);
+    }
+
     llvm::Value* emitModifierNode(ModifierNode* node) {
         if (!node || node->modifiers.empty()) { return emitExpr(node->node); }
         llvm::Value* currentValue = emitExpr(node->node);
@@ -3699,7 +3728,8 @@ class LLVMCompiler {
     std::string resolveTypeName(std::string name, bool strip = true) {
         if (name == "int" || name == "float" || name == "double" || name == "char" || name == "bool" || name == "qbool" || name == "string" ||
             name == "byte" || name == "void" || name == "auto" || name == "short int" || name == "long int" || name == "long double" ||
-            name == "addr_t" || name == "nibble" || name.starts_with("(")) {
+            name == "addr_t" || name == "nibble" || name == "ai64u_t" || name == "ai64_t" || name == "i32u_t" || name == "i16u_t" ||
+            name.starts_with("(")) {
             return name;
         }
         name = strip_consts(name);

@@ -1,30 +1,29 @@
 #include "main.h"
-#include "nodes.h"
 #include "filesystem"
+#include "nodes.h"
 #ifndef __EMSCRIPTEN__
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Plugins/PassPlugin.h>
 #endif
-#include <llvm/IR/LegacyPassManager.h>
-#include <fstream>
-#include <iostream>
 #include "compiler.h"
-#include "shared_globals.h"
-#include <llvm/Target/TargetMachine.h>
-#include <llvm/Target/TargetOptions.h>
-#include "parser.h"
-#include "lexer.h"
 #include "errors.h"
+#include "lexer.h"
+#include "parser.h"
 #include "preproccesser.h"
+#include "shared_globals.h"
+#include <fstream>
 #include <functional>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/MC/TargetRegistry.h>
-#include <llvm/Target/TargetOptions.h>
-#include <llvm/TargetParser/Host.h>
-#include <llvm/Support/TargetSelect.h>
+#include <iostream>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Linker/Linker.h>
-#include <llvm/IR/Verifier.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/Target/TargetOptions.h>
+#include <llvm/TargetParser/Host.h>
 namespace run {
 std::string collapse_inline_brackets(const std::string& s) {
     std::string out;
@@ -342,6 +341,23 @@ int emitObjectFile(llvm::Module& M, const std::string& outputPath, bool debug, s
 #endif
 }
 Mer run(std::string file, std::string text, RunConfig config = {}) {
+    if (config.translate_c) {
+        TranslateCtx context{.header = file, .args = config.c_args};
+        Translator translator(&context);
+        int result = translator.translate_header();
+        if (result) {
+            std::vector<Diagnostic> diag;
+            if (!context.errors.empty()) {
+                for (auto& err : context.errors)
+                    diag.push_back({new CTError(err->details, err->pos), "Error"});
+            }
+            return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, "", diag};
+        }
+        if (config.output_file == "a.out") {
+            std::cout << translator.result_file << '\n';
+        }
+        return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, ""};
+    }
     // Check for inline directives
     definitions = config.definitions;
     definitions["__FILE__"] = "\"" + file + "\"";
@@ -678,8 +694,8 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 }
                 if (!errs.empty()) {
                     for (auto& err : errs)
-                        diagnostics.push_back(
-                            {new CTError(err.details, err.pos, err.is_warning, err.error_name, err.notes, err.helps, err.insights), err.is_warning ? "Warning" : "Error"});
+                        diagnostics.push_back({new CTError(err.details, err.pos, err.is_warning, err.error_name, err.notes, err.helps, err.insights),
+                                               err.is_warning ? "Warning" : "Error"});
                     break;
                 }
                 db_sigs[filepath] = comp.functionSignatures;
@@ -856,4 +872,4 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
     } catch (...) { std::cout << "unknown error\n"; }
     return Mer{ast, resp, "", std::vector<Diagnostic>{}};
 }
-}
+} // namespace run

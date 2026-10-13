@@ -20,7 +20,7 @@
 #if defined(_WIN32) || defined(_WIN64)
 #include <print>
 #endif
-const std::string ver = "x1.3.1";
+const std::string ver = "x1.3.2";
 #include <random>
 bool slow = false;
 void slow_print(const std::string& text, const std::string& color = "\033[0m", int min_delay_ms = 100, int max_delay_ms = 450) {
@@ -188,9 +188,6 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--compile" || arg == "-c") {
             config.compile_mode = true;
             config.interpret_mode = false;
-        } else if (arg == "--test-compile" || arg == "-tc") {
-            config.compile_mode = true;
-            config.interpret_mode = true;
         } else if (arg == "--suspense" || arg == "-s") {
             slow = true;
         } else if (arg == "-co" || arg == "--compile-only") {
@@ -320,6 +317,8 @@ Examples:
             }
         } else if (arg.starts_with("-D") || arg.starts_with("--define")) {
             config.definitions[argv[++i]] = "1";
+        } else if (arg == "--translate-c" || arg == "-tc") {
+            config.translate_c = true;
         } else {
             filename = arg;
         }

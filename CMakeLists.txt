@@ -3,9 +3,11 @@ project(qc LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(X86_ONLY "Build for X86 only" OFF)
+set(CMAKE_CXX_COMPILER "clang++")
 if(APPLE OR EMSCRIPTEN)
     set(CMAKE_CXX_STANDARD 20)
 endif()
+find_package(Clang REQUIRED CONFIG)
 find_package(LLVM REQUIRED CONFIG)
 if(LLVM_VERSION_MAJOR LESS 21)
     message(FATAL_ERROR "LLVM 21+ required, found ${LLVM_VERSION_MAJOR}")
@@ -43,8 +45,8 @@ else()
     set(RUNTIMENEEDS_LL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/runtimeneeds.ll")
     add_custom_command(
         OUTPUT "${RUNTIMENEEDS_LL_PATH}"
-        COMMAND ${COMPILER_FOR_RUNTIME} ${RUNTIME_TARGET_FLAGS} -S -emit-llvm -O3 
-            "${CMAKE_CURRENT_SOURCE_DIR}/runtimeneeds.cpp" 
+        COMMAND ${COMPILER_FOR_RUNTIME} ${RUNTIME_TARGET_FLAGS} -S -emit-llvm -O3
+            "${CMAKE_CURRENT_SOURCE_DIR}/runtimeneeds.cpp"
             -o "${RUNTIMENEEDS_LL_PATH}"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/runtimeneeds.cpp"
         VERBATIM
@@ -53,7 +55,7 @@ else()
         OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/runtime.ll"
         COMMAND "${QC_EXECUTABLE}" -co -nrt ${RUNTIME_TARGET_FLAGS} -O3
             "${CMAKE_CURRENT_SOURCE_DIR}/runtime.qc"
-            -o "${CMAKE_CURRENT_SOURCE_DIR}/runtime.ll"    
+            -o "${CMAKE_CURRENT_SOURCE_DIR}/runtime.ll"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/runtime.qc"
         VERBATIM
     )
@@ -70,6 +72,7 @@ add_custom_command(
     VERBATIM
 )
 set(SOURCES
+    impl/translate.cpp
     impl/parser.cpp
     impl/main.cpp
     impl/lexer.cpp
@@ -100,9 +103,11 @@ if(ENABLE_LLVM)
     target_compile_definitions(qc PRIVATE ENABLE_LLVM)
     target_include_directories(qc PRIVATE ${LLVM_INCLUDE_DIRS})
     target_link_directories(qc PRIVATE ${LLVM_LIBRARY_DIRS})
+    include_directories(${CLANG_INCLUDE_DIRS})
     target_link_libraries(qc PRIVATE
         LLVM
         ${LLVM_SYSTEM_LIBS}
+        libclang
     )
 endif()
 target_include_directories(qc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -114,7 +119,7 @@ if(EMSCRIPTEN)
         set(LLVM_WASM_PATH "/usr/lib/llvm-21")
     endif()
     include_directories("${LLVM_WASM_PATH}/include")
-    set_target_properties(qc PROPERTIES 
+    set_target_properties(qc PROPERTIES
         OUTPUT_NAME "qc"
         SUFFIX ".js"
         LINK_FLAGS "\

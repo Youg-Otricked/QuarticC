@@ -41,17 +41,18 @@ int x = returning for (int i = 0; i < 10; i++) {
 - operator imp_cast<T>
     implicit cast operator overload
 - alloca builtin
-- real u64 (ai64u_t (always i64 unsigned type)), u32 (unsigned int), u16 (unsigned short int) types
+- real u64 (ai64u_t (always i64 unsigned type)), i32u_t, i16u_t types
 - true i64 (ai64_t (always i64 type))
 - panic, assume
 - reflection, ^^ changes purposes
 - _ unsued variable
 - comptime-trycatch (catches compiel verrors)
 TOP PRIORITY:
-1. Direct C header includes (and thus, ocnst correctness)
-2. CQB
-3. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
-4. Metadata
+1. Labels & goto/br
+2. Full C handling translatino (so full c includes!)
+3. CQB
+4. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
+5. Metadata
 ?likely? - likely marked
 ?unlikely? - marked unlikely
 ?inline? - pls inline >-<
@@ -73,12 +74,11 @@ TOP PRIORITY:
 ?experimental? - states that this tool is janky, subject to change, or flaky/expremintal
 ?unstable? - states this tool is janky, flaky, or unstable, but api won't change
 ?sentinel(value, msg, value, msg....)? - states this tool returns sentinel values with special meaning
-5. Preproccessers
+6. Preproccessers
 #line - somthing idk
-6. User-Defined metadata
-7. User-Defined macro _functions_ (the only good thing in rust)
-8. User defined literals
-9. Labels & goto/br
+7. User-Defined metadata
+8. User-Defined macro _functions_ (the only good thing in rust)
+9. User defined literals
 10. co_await
 11. rest of featuers im forgetting
 12. self host

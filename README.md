@@ -113,8 +113,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.3.1 = "Raw Unions"
-Next Version: x1.3.2 = "Direct C include"
+Current Version: x1.3.2 = "Raw Unions"
+Next Version: x1.3.3 = "FULL C Translation"
 
 # Current Version Highlights
 
@@ -129,7 +129,7 @@ Moderate
 └─ QOL
 
 Minor
-└─ Raw Unions
+└─ C Header Translation (no static inline)
 
 Patch
 └─ N/A

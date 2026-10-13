@@ -1,10 +1,10 @@
 #ifndef NODE_H
 #define NODE_H
-#include <variant>
-#include <string>
-#include <list>
-#include "token.h"
 #include "errors.h"
+#include "token.h"
+#include <list>
+#include <string>
+#include <variant>
 class NumberNode;
 class BinOpNode;
 class UnaryOpNode;
@@ -50,12 +50,14 @@ class TypeValueNode;
 class DeferNode;
 class ModifierNode;
 class TupleValueNode;
+class LabelNode;
+class GotoNode;
 using AnyNode = std::variant<std::monostate, NumberNode, StringNode, CharNode, BoolNode, QInNode, QBoolNode, RefVarDeclNode*, NullptrNode, BinOpNode*,
                              UnaryOpNode*, VarAccessNode*, VarAssignNode*, AssignExprNode*, IfNode*, QIfNode*, StatementsNode*, SwitchNode*,
                              QSwitchNode*, BreakNode*, UnreachableNode*, WhileNode*, ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*,
                              MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*,
                              PropertyAccessNode*, SpreadNode*, ForeachNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*,
-                             TryCatchNode*, TypeValueNode, DeferNode*, ModifierNode*, MatchNode*, TupleValueNode*>;
+                             TryCatchNode*, TypeValueNode, DeferNode*, ModifierNode*, MatchNode*, TupleValueNode*, LabelNode, GotoNode>;
 struct GenericType {
     std::string name;
     bool isVariadic = false;
@@ -125,6 +127,21 @@ class TypeValueNode {
     Position getPos() { return this->tok.pos; }
     std::string print() const;
 };
+class LabelNode {
+  public:
+    Token name;
+    LabelNode(Token tok) : name(tok) {};
+    Position getPos() { return this->name.pos; }
+    std::string print() const { return name.value + ":"; }
+};
+class GotoNode {
+  public:
+    Token togo;
+    GotoNode(Token tok) : togo(tok) {};
+    Position getPos() { return this->togo.pos; }
+    std::string print() const { return "goto " + togo.value; }
+};
+
 class TupleValueNode {
   public:
     std::vector<AnyNode> members;
@@ -573,7 +590,8 @@ class FuncDefNode {
     FuncDefNode(std::vector<Token> ret_types, std::optional<Token> name, std::list<Parameter> parameters, StatementsNode* func_body,
                 std::string ns = "", bool is_ex = false, bool is_f = false, std::vector<GenericType> generics = {}, bool is_volatile = false,
                 bool is_header = false, std::vector<Token> modifiers = {}, bool is_override = false)
-        : return_types(ret_types), name_tok(name), params(parameters), body(func_body), namespace_path(ns), modifiers(modifiers), is_override(is_override) {
+        : return_types(ret_types), name_tok(name), params(parameters), body(func_body), namespace_path(ns), modifiers(modifiers),
+          is_override(is_override) {
         this->is_extern = is_ex;
         this->is_foreign = is_f;
         this->generics = generics;
@@ -789,11 +807,11 @@ class NamespaceNode {
 };
 class ParseResult;
 using Prs = std::variant<std::monostate, ParseResult, NumberNode, StringNode, CharNode, BoolNode, BinOpNode*, Error*, UnaryOpNode*, VarAccessNode*,
-                         VarAssignNode*, AssignExprNode*, StatementsNode*, IfNode*, BreakNode*, UnreachableNode*, SwitchNode*, MatchNode*, WhileNode*, ForNode*,
-                         ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*,
-                         ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, SpreadNode*, ForeachNode*, QBoolNode, QInNode, QIfNode*,
-                         QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, TryCatchNode*, RefVarDeclNode*,
-                         NullptrNode, TypeValueNode, DeferNode*, ModifierNode*, TupleValueNode*>;
+                         VarAssignNode*, AssignExprNode*, StatementsNode*, IfNode*, BreakNode*, UnreachableNode*, SwitchNode*, MatchNode*, WhileNode*,
+                         ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*,
+                         ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, SpreadNode*, ForeachNode*, QBoolNode, QInNode,
+                         QIfNode*, QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, TryCatchNode*, RefVarDeclNode*,
+                         NullptrNode, TypeValueNode, DeferNode*, ModifierNode*, TupleValueNode*, LabelNode, GotoNode>;
 class ParseResult {
   public:
     AnyNode node;

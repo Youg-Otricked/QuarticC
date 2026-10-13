@@ -34,10 +34,10 @@ class Parser {
     Parser(std::vector<Token> tokens, std::unordered_map<std::string, UserTypeInfo> user_types = {});
     std::string qualify_name(const std::string& name);
     bool is_primint_type(const Token& name) {
-        return std::unordered_set<std::string>({"int", "byte", "nibble", "addr_t", "short int", "long int"}).contains(name.value);
+        return std::unordered_set<std::string>({"int", "byte", "nibble", "addr_t", "short int", "long int", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"}).contains(name.value);
     }
     bool is_primitive_type(std::string& name) {
-        return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool"})
+        return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
                    .contains(name) ||
                (name.starts_with("(") && name.ends_with(")"));
     }

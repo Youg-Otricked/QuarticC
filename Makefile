@@ -182,6 +182,19 @@ target_parser_gen/fast:
 .PHONY : target_parser_gen/fast
 
 #=============================================================================
+# Target rules for targets named clang-tablegen-targets
+
+# Build rule for target.
+clang-tablegen-targets: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 clang-tablegen-targets
+.PHONY : clang-tablegen-targets
+
+# fast build rule for target.
+clang-tablegen-targets/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/clang-tablegen-targets.dir/build.make CMakeFiles/clang-tablegen-targets.dir/build
+.PHONY : clang-tablegen-targets/fast
+
+#=============================================================================
 # Target rules for targets named qc
 
 # Build rule for target.
@@ -410,6 +423,30 @@ impl/token.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/qc.dir/build.make CMakeFiles/qc.dir/impl/token.cpp.s
 .PHONY : impl/token.cpp.s
 
+impl/translate.o: impl/translate.cpp.o
+.PHONY : impl/translate.o
+
+# target to build an object file
+impl/translate.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/qc.dir/build.make CMakeFiles/qc.dir/impl/translate.cpp.o
+.PHONY : impl/translate.cpp.o
+
+impl/translate.i: impl/translate.cpp.i
+.PHONY : impl/translate.i
+
+# target to preprocess a source file
+impl/translate.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/qc.dir/build.make CMakeFiles/qc.dir/impl/translate.cpp.i
+.PHONY : impl/translate.cpp.i
+
+impl/translate.s: impl/translate.cpp.s
+.PHONY : impl/translate.s
+
+# target to generate assembly for a file
+impl/translate.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/qc.dir/build.make CMakeFiles/qc.dir/impl/translate.cpp.s
+.PHONY : impl/translate.cpp.s
+
 runtime_embed.o: runtime_embed.cpp.o
 .PHONY : runtime_embed.o
 
@@ -443,6 +480,7 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... acc_gen"
+	@echo "... clang-tablegen-targets"
 	@echo "... intrinsics_gen"
 	@echo "... omp_gen"
 	@echo "... target_parser_gen"
@@ -475,6 +513,9 @@ help:
 	@echo "... impl/token.o"
 	@echo "... impl/token.i"
 	@echo "... impl/token.s"
+	@echo "... impl/translate.o"
+	@echo "... impl/translate.i"
+	@echo "... impl/translate.s"
 	@echo "... runtime_embed.o"
 	@echo "... runtime_embed.i"
 	@echo "... runtime_embed.s"

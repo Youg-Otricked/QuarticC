@@ -1,7 +1,7 @@
 #pragma once
 #include "token.h"
-#include <string>
 #include <optional>
+#include <string>
 class Error {
   public:
     Position pos;
@@ -11,7 +11,10 @@ class Error {
     virtual std::string as_string();
     virtual ~Error() = default;
 };
-
+class CTranslateError : public Error {
+  public:
+    CTranslateError(std::string details) : Error("c translation error:", details, Position(Position::INVALID_FILE_ID, 0, 0, 0)) {}
+};
 class IllegalCharError : public Error {
   public:
     IllegalCharError(std::string details, Position pos) : Error("illegal character", details, pos) {}
