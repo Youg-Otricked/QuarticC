@@ -143,6 +143,8 @@ Jagged Arrays
 
 # Upcoming Deprecations:
 
+Large amounts of intrinsic functions. Assume no intrinsics that are c-backed other than conversions printing files and heap will be available.
+
 ## Feature Roadmap
 
 | Category            | Feature                                                                | Status  |
