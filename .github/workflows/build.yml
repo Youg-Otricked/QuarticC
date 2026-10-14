@@ -52,7 +52,7 @@ jobs:
       - name: Install deps
         run: |
           apt update
-          apt install -y llvm-22 llvm-22-dev clang-22 libstdc++-16-dev pkg-config cmake git libzstd-dev
+          apt install -y llvm-22 llvm-22-dev clang-22 libstdc++-16-dev pkg-config cmake git libzstd-dev libclang-22-dev  libclang-common-22-dev  libclang-cpp22-dev 
       
       - name: Generate runtime.ll
         run: clang++-22 -S -emit-llvm -O0 -o runtime.ll runtime.cpp
@@ -78,11 +78,11 @@ jobs:
       
       - name: Install dependencies
         run: |
-          brew install llvm@22 libffi cmake
+          brew install llvm@22 cmake libclang
           echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> $GITHUB_ENV
           echo "$(brew --prefix llvm@22)/bin" >> $GITHUB_PATH
       - name: Generate runtime.ll
-        run: clang -S -emit-llvm -O0 -I$(brew --prefix libffi)/include -o runtime.ll runtime.cpp
+        run: clang -S -emit-llvm -O0 -o runtime.ll runtime.cpp
       - name: Build (macOS)
         run: |
           cmake -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR=$LLVM_DIR -DCXX_RUNTIME=ON .
@@ -128,7 +128,7 @@ jobs:
             sudo apt update
             sudo apt install -y \
               cmake ninja-build git \
-              zlib1g-dev libffi-dev libxml2-dev libedit-dev libzstd-dev
+              zlib1g-dev libclang-22-dev libxml2-dev libedit-dev libzstd-dev
       - name: Restore LLVM cache
         id: cache-llvm
         uses: actions/cache/restore@v4
