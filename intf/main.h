@@ -133,7 +133,9 @@ struct RunConfig {
     bool progress = false;
     std::unordered_map<std::string, WarningLevel> warnings;
     bool translate_c = false;
+    bool fci = false;
     std::vector<std::string> c_args;
+    std::vector<std::string> link_o_files;
 };
 Mer run(std::string file, std::string text, RunConfig config);
 } // namespace Run

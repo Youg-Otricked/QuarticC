@@ -1,10 +1,11 @@
 #include "preproccesser.h"
-#include <functional>
+#include "shared_globals.h"
+#include "translate.h"
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "shared_globals.h"
 std::string trim(const std::string& str) {
     size_t first = str.find_first_not_of(" \t\n\r");
     if (first == std::string::npos) return "";
@@ -18,7 +19,7 @@ std::string resolve_path(const std::string& current_file, const std::string& inc
     std::filesystem::path resolved = current.parent_path() / include;
     return std::filesystem::weakly_canonical(resolved).string();
 }
-PreprocessResult preprocess_includes(std::string& source, const std::string& current_file) {
+PreprocessResult preprocess_includes(std::string& source, const std::string& current_file, const std::vector<std::string>& c_args, bool fci) {
     PreprocessResult res;
     res.accessible_namespaces.clear();
     res.accessible_namespaces.insert("Exported");
@@ -26,6 +27,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     std::vector<std::string> dependencies;
     std::unordered_map<std::string, std::vector<std::string>> namespace_depends;
     std::unordered_map<std::string, std::vector<std::string>> from_where;
+    std::vector<std::string> to_c_include;
     size_t ep_pos = source.find("#entrypoint");
     size_t nomain_pos = source.find("#nomain");
     if (ep_pos != std::string::npos) {
@@ -33,6 +35,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < ep_pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
+        if (inside_comment(source, ep_pos)) { in_string = true; }
         if (!in_string) {
             size_t line_end = source.find('\n', ep_pos);
             if (line_end == std::string::npos) line_end = source.size();
@@ -45,6 +48,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < nomain_pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
+        if (inside_comment(source, nomain_pos)) { in_string = true; }
         if (!in_string) { no_main = true; }
     }
     std::function<std::string(const std::string&)> substituteDefined = [&](const std::string& expr) -> std::string {
@@ -211,6 +215,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < directive_pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
+        if (inside_comment(source, pos)) { in_string = true; }
         if (directive_pos == if_pos) {
             bool isIfndef = source.compare(directive_pos, 7, "#ifndef") == 0;
             bool isIfdef = !isIfndef && source.compare(directive_pos, 6, "#ifdef") == 0;
@@ -261,13 +266,15 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
                 std::string directive = source.substr(directive_pos + keyword_len, line_end - directive_pos - keyword_len);
                 size_t space_pos = directive.find(" ");
                 std::string name = directive.substr(0, space_pos);
-                std::string value = (space_pos == std::string::npos) ? "1" : directive.substr(space_pos + 1);
+                std::string value = (space_pos == std::string::npos || trim(directive.substr(space_pos + 1)) == "") ? "1"
+                                                                                                                    : directive.substr(space_pos + 1);
                 definitions[name] = value;
             } else {
                 std::string name = source.substr(directive_pos + keyword_len, line_end - directive_pos - keyword_len);
                 definitions.erase(name);
             }
-            pos = line_end + 1;
+            source.erase(directive_pos, line_end - directive_pos + (line_end < source.size() ? 1 : 0));
+            pos = directive_pos;
         } else {
             pos = directive_pos + keyword_len;
         }
@@ -285,6 +292,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             i++;
             continue;
         }
+        if (inside_comment(source, i)) { in_string = true; }
         if (!in_string && (std::isalpha((unsigned char)c) || c == '_')) {
             size_t start = i;
             while (i < source.size() && (std::isalnum((unsigned char)source[i]) || source[i] == '_')) { i++; }
@@ -308,6 +316,8 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
+
+        if (inside_comment(source, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -352,6 +362,8 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
+
+        if (inside_comment(source, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -393,6 +405,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
+        if (inside_comment(source, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -425,6 +438,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
+        if (inside_comment(source, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -436,7 +450,22 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         size_t last_comma = directive.find_last_of(',');
         std::string path;
         if (last_comma == std::string::npos) {
-            throw std::runtime_error("You cannot include just a path");
+            path = trim(directive);
+            if (!path.empty() && path.front() == '"') { path = path.substr(1); }
+            if (!path.empty() && path.back() == '"') { path = path.substr(0, path.size() - 1); }
+            std::string full_path;
+            auto slash = path.find('/');
+            std::string alias = path.substr(0, slash);
+            if (aliases.count(path)) {
+                full_path = resolve_path(current_file, aliases[path]);
+            } else if (dir_aliases.count(alias)) {
+                std::string rest = slash == std::string::npos ? "" : path.substr(slash);
+                full_path = resolve_path(current_file, (std::filesystem::path(dir_aliases[alias]) / rest.substr(1)).string());
+            } else {
+                full_path = resolve_path(current_file, path);
+            }
+            to_c_include.push_back(full_path);
+            pos = end + 1;
         } else {
             path = trim(directive.substr(last_comma + 1));
             std::string namespaces_part = directive.substr(0, last_comma);
@@ -448,27 +477,27 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
                 comma = namespaces_part.find(',', segment_start);
             }
             ns_names.push_back(trim(namespaces_part.substr(segment_start)));
+            if (!path.empty() && path.front() == '"') { path = path.substr(1); }
+            if (!path.empty() && path.back() == '"') { path = path.substr(0, path.size() - 1); }
+            std::string full_path;
+            auto slash = path.find('/');
+            std::string alias = path.substr(0, slash);
+            if (path == "std") {
+                const char* home = std::getenv("QC_STDLIB");
+                if (!home) { throw std::runtime_error("QC_STDLIB environment variable not set"); }
+                full_path = std::string(home);
+            } else if (aliases.count(path)) {
+                full_path = resolve_path(current_file, aliases[path]);
+            } else if (dir_aliases.count(alias)) {
+                std::string rest = slash == std::string::npos ? "" : path.substr(slash);
+                full_path = resolve_path(current_file, (std::filesystem::path(dir_aliases[alias]) / rest.substr(1)).string());
+            } else {
+                full_path = resolve_path(current_file, path);
+            }
+            if (!from_where.contains(full_path)) { from_where[full_path] = std::vector<std::string>(); }
+            for (std::string ns_name : ns_names) { from_where[full_path].push_back(ns_name); }
+            dependencies.push_back(full_path);
         }
-        if (!path.empty() && path.front() == '"') { path = path.substr(1); }
-        if (!path.empty() && path.back() == '"') { path = path.substr(0, path.size() - 1); }
-        std::string full_path;
-        auto slash = path.find('/');
-        std::string alias = path.substr(0, slash);
-        if (path == "std") {
-            const char* home = std::getenv("QC_STDLIB");
-            if (!home) { throw std::runtime_error("QC_STDLIB environment variable not set"); }
-            full_path = std::string(home);
-        } else if (aliases.count(path)) {
-            full_path = resolve_path(current_file, aliases[path]);
-        } else if (dir_aliases.count(alias)) {
-            std::string rest = slash == std::string::npos ? "" : path.substr(slash);
-            full_path = resolve_path(current_file, (std::filesystem::path(dir_aliases[alias]) / rest.substr(1)).string());
-        } else {
-            full_path = resolve_path(current_file, path);
-        }
-        if (!from_where.contains(full_path)) { from_where[full_path] = std::vector<std::string>(); }
-        for (std::string ns_name : ns_names) { from_where[full_path].push_back(ns_name); }
-        dependencies.push_back(full_path);
         pos = end + 1;
     }
     std::string result2 = "";
@@ -479,6 +508,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
+        if (inside_comment(source, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -496,6 +526,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
+        if (inside_comment(source, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
@@ -510,6 +541,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
+        if (inside_comment(source, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
@@ -524,6 +556,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
+        if (inside_comment(source, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
@@ -538,6 +571,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
+        if (inside_comment(source, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
@@ -552,6 +586,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
+        if (inside_comment(source, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
@@ -560,10 +595,32 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             pos++;
         }
     }
-    res.clean_source = result2;
+    std::vector<std::string> translated;
+    translated.reserve(to_c_include.size());
+    for (std::string& c_header : to_c_include) {
+        TranslateCtx context{.header = c_header, .args = c_args};
+        Translator translator(&context);
+        translator.fci = fci;
+        int result = translator.translate_header();
+        if (result) {
+            for (auto& err : context.errors) { res.errors.push_back({new CTError(err->details, err->pos), "Error"}); }
+            continue;
+        }
+        translated.push_back(std::move(translator.result_file));
+    }
+    size_t total_size = result2.size();
+    for (const auto& s : translated) total_size += s.size();
+    std::string output;
+    output.reserve(total_size);
+    for (auto it = translated.rbegin(); it != translated.rend(); ++it) output += *it;
+    output += result2;
+    if (!to_c_include.empty()) {
+        auto res2 = preprocess_includes(output, current_file, c_args, fci);
+        res.errors.insert(res.errors.end(), res2.errors.begin(), res2.errors.end());
+        res.clean_source = std::move(res2.clean_source);
+    } else res.clean_source = std::move(output);
     res.dependency_paths = dependencies;
     res.included_namespaces = from_where;
     res.namespace_depends = namespace_depends;
     return res;
 }
-

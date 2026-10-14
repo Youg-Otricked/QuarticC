@@ -1,9 +1,10 @@
+- fixed point
+- imaginary numbers
 - default type generics (e.g. = void in generic types)
 - returning keyword for loops, e.g.
 int x = returning for (int i = 0; i < 10; i++) {
     ...
 } int (x); // fallback expression for missing break
-- Including C Headers
 - const methods fore const obhects
 - const references
 - static & inline functions
@@ -20,7 +21,6 @@ int x = returning for (int i = 0; i < 10; i++) {
 - const params/returns and const correct methods
 - Copy VS Move assignment (no move only, im not rust), to make things faster.
 - more error stuff if i feel like it
-- user defined literals (macros baby!)
 - user defined macro functions
 - user defined metadata tags
 - Compile-time assertions (assert, static_assert)
@@ -41,18 +41,15 @@ int x = returning for (int i = 0; i < 10; i++) {
 - operator imp_cast<T>
     implicit cast operator overload
 - alloca builtin
-- real u64 (ai64u_t (always i64 unsigned type)), i32u_t, i16u_t types
-- true i64 (ai64_t (always i64 type))
 - panic, assume
 - reflection, ^^ changes purposes
 - _ unsued variable
 - comptime-trycatch (catches compiel verrors)
 TOP PRIORITY:
-1. Labels & goto/br
-2. Full C handling translatino (so full c includes!)
-3. CQB
-4. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
-5. Metadata
+1. CQB
+2. Formatter
+2. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
+3. Metadata
 ?likely? - likely marked
 ?unlikely? - marked unlikely
 ?inline? - pls inline >-<
@@ -74,12 +71,12 @@ TOP PRIORITY:
 ?experimental? - states that this tool is janky, subject to change, or flaky/expremintal
 ?unstable? - states this tool is janky, flaky, or unstable, but api won't change
 ?sentinel(value, msg, value, msg....)? - states this tool returns sentinel values with special meaning
-6. Preproccessers
+4. Preproccessers
 #line - somthing idk
-7. User-Defined metadata
-8. User-Defined macro _functions_ (the only good thing in rust)
-9. User defined literals
-10. co_await
-11. rest of featuers im forgetting
-12. self host
-13. Direct _C++_ header includes (and thus, the rest of const stuff), but not all features (obviously, i don't hate myself).
+5. User-Defined metadata
+6. User-Defined macro _functions_ (the only good thing in rust)
+7. User defined literals
+8. co_await
+9. rest of featuers im forgetting
+10. self host
+11. Direct _C++_ header includes (and thus, the rest of const stuff), but not all features (obviously, i don't hate myself).

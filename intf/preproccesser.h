@@ -1,10 +1,11 @@
 #ifndef PREPROCCESSER_H
 #define PREPROCCESSER_H
+#include "nodes.h"
+#include <algorithm>
 #include <string>
-#include <vector>
 #include <unordered_map>
 #include <unordered_set>
-#include <algorithm>
+#include <vector>
 std::string resolve_path(const std::string& current_file, const std::string& include_path);
 struct PreprocessResult {
     std::string clean_source;
@@ -12,9 +13,10 @@ struct PreprocessResult {
     std::unordered_map<std::string, std::vector<std::string>> namespace_depends;
     std::unordered_map<std::string, std::vector<std::string>> included_namespaces;
     std::unordered_set<std::string> accessible_namespaces;
+    std::vector<Diagnostic> errors;
 };
 
-PreprocessResult preprocess_includes(std::string& source, const std::string& current_file);
+PreprocessResult preprocess_includes(std::string& source, const std::string& current_file, const std::vector<std::string>& c_args, bool fci);
 struct MatchResult {
     size_t else_pos;
     size_t endif_pos;
@@ -42,5 +44,44 @@ static MatchResult findMatch(const std::string& src, size_t searchStart) {
         }
     }
     return {std::string::npos, std::string::npos};
+}
+enum class ParserState { Code, String, SingleLineComment, MultiLineComment };
+static bool inside_comment(const std::string& source, size_t pos) {
+    if (pos >= source.length()) return false;
+    ParserState state = ParserState::Code;
+    for (size_t i = 0; i < pos; i++) {
+        char current = source[i];
+        char next = (i + 1 < source.length()) ? source[i + 1] : '\0';
+        switch (state) {
+        case ParserState::Code:
+            if (current == '/' && next == '/') {
+                state = ParserState::SingleLineComment;
+                i++;
+            } else if (current == '/' && next == '*') {
+                state = ParserState::MultiLineComment;
+                i++;
+            } else if (current == '"') {
+                state = ParserState::String;
+            }
+            break;
+        case ParserState::String:
+            if (current == '\\') {
+                i++;
+            } else if (current == '"') {
+                state = ParserState::Code;
+            }
+            break;
+        case ParserState::SingleLineComment:
+            if (current == '\n') { state = ParserState::Code; }
+            break;
+        case ParserState::MultiLineComment:
+            if (current == '*' && next == '/') {
+                state = ParserState::Code;
+                i++;
+            }
+            break;
+        }
+    }
+    return (state == ParserState::SingleLineComment || state == ParserState::MultiLineComment);
 }
 #endif

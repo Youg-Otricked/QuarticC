@@ -344,6 +344,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
     if (config.translate_c) {
         TranslateCtx context{.header = file, .args = config.c_args};
         Translator translator(&context);
+        translator.fci = config.fci;
         int result = translator.translate_header();
         if (result) {
             std::vector<Diagnostic> diag;
@@ -355,8 +356,12 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
         }
         if (config.output_file == "a.out") {
             std::cout << translator.result_file << '\n';
+        } else {
+            std::ofstream outfile(config.output_file);
+            outfile << translator.result_file;
+            outfile.close();
         }
-        return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, ""};
+        return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, "Translated " + file + " to " + config.output_file + "."};
     }
     // Check for inline directives
     definitions = config.definitions;
@@ -417,10 +422,17 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::cout << "[PREPROCESSING] " << current_file << '\n';
                 std::cout.flush();
             }
-            auto outputofdeps = preprocess_includes(current_text, current_file);
+            auto outputofdeps = preprocess_includes(current_text, current_file, config.c_args, config.fci);
             if (config.progress) {
                 std::cout << "[DONE PREPROCESSING] " << current_file << '\n';
                 std::cout.flush();
+            }
+            if (config.debug) {
+                std::cout << "[PREPROCESSING RESULT]: \n" << outputofdeps.clean_source;
+            }
+            if (!outputofdeps.errors.empty()) {
+                return Mer{Aer{nullptr, nullptr},
+                   Ler{std::vector<Token>{}, nullptr}, "Failed to preprocess.", outputofdeps.errors};
             }
             if (!(current_file == file)) { no_main = saved_no_main; }
             cleaned_files[current_file] = outputofdeps.clean_source;
@@ -830,7 +842,11 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::cout.flush();
             }
             std::string final_exe = config.output_file.empty() ? "a.out" : config.output_file;
-            std::string link_cmd = "gcc " + obj_file + " -o " + final_exe;
+            std::string link_cmd = "clang " + obj_file;
+            for (const auto& path : config.link_o_files) {
+                link_cmd += " " + path + " ";
+            }
+            link_cmd += " -o " + final_exe;
             for (const auto& path : to_link_dir) { link_cmd += " -L\"" + path + "\""; }
             for (const auto& lib : to_link) {
                 if (lib.ends_with(".a") || lib.ends_with(".so") || lib.ends_with(".dylib")) {
@@ -841,7 +857,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             }
             for (const auto& path : config.library_search_paths) { link_cmd += " -L\"" + path + "\""; }
             for (const auto& lib : config.libraries) {
-                if (lib.ends_with(".a") || lib.ends_with(".so") || lib.ends_with(".dylib")) {
+                if (lib.ends_with(".a") || lib.ends_with(".so") || lib.ends_with(".dylib") || lib.ends_with(".o")) {
                     link_cmd += " \"" + lib + "\"";
                 } else {
                     link_cmd += " -l" + lib;

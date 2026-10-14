@@ -1,6 +1,7 @@
-if(RUNTIMENEEDS_LL)
+if(RUNTIMENEEDS_LL AND NOT "${RUNTIMENEEDS_LL}" STREQUAL "")
     find_program(LLVM_LINK llvm-link REQUIRED)
-    set(MERGED_LL "${CMAKE_CURRENT_BINARY_DIR}/merged_runtime.ll")
+    get_filename_component(OUTPUT_DIR "${OUTPUT}" DIRECTORY)
+    set(MERGED_LL "${OUTPUT_DIR}/merged_runtime.ll")
     execute_process(
         COMMAND ${LLVM_LINK}
             "${RUNTIME_LL}"
@@ -23,8 +24,17 @@ string(REGEX REPLACE
     RUNTIME_LL_HEX
     "${RUNTIME_LL_CONTENT}"
 )
-configure_file(
-    "${TEMPLATE}"
-    "${OUTPUT}"
-    @ONLY
-)
+file(READ "${TEMPLATE}" TEMPLATE_CONTENT)
+string(CONFIGURE "${TEMPLATE_CONTENT}" GENERATED_OUTPUT @ONLY)
+set(SHOULD_WRITE TRUE)
+if(EXISTS "${OUTPUT}")
+    file(READ "${OUTPUT}" CURRENT_OUTPUT)
+    if("${CURRENT_OUTPUT}" STREQUAL "${GENERATED_OUTPUT}")
+        set(SHOULD_WRITE FALSE)
+        file(TOUCH "${OUTPUT}")
+    endif()
+endif()
+
+if(SHOULD_WRITE)
+    file(WRITE "${OUTPUT}" "${GENERATED_OUTPUT}")
+endif()

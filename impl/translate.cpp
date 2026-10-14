@@ -6,8 +6,17 @@ std::string str(CXString s) {
     clang_disposeString(s);
     return out;
 }
+void getChildren(CXCursor c, std::vector<CXCursor>* components) {
+    clang_visitChildren(
+        c,
+        [](CXCursor child, CXCursor parent, CXClientData client_data) {
+            auto* list = static_cast<std::vector<CXCursor>*>(client_data);
+            list->push_back(child);
+            return CXChildVisit_Continue;
+        },
+        components);
+}
 } // namespace
-
 void Translator::error(const std::string& msg) {
     ctx->errors.push_back(new CTranslateError(msg));
 }
@@ -45,8 +54,263 @@ int Translator::translate_header() {
 CXChildVisitResult Translator::visit_trampoline(CXCursor c, CXCursor, CXClientData data) {
     return static_cast<Translator*>(data)->visit(c);
 }
-CXChildVisitResult Translator::visit(CXCursor c) {
-    if (!clang_Location_isFromMainFile(clang_getCursorLocation(c))) return CXChildVisit_Continue;
+
+CXChildVisitResult Translator::visit_expr(CXCursor c) {
+    switch (clang_getCursorKind(c)) {
+    case CXCursor_UnexposedExpr: {
+        bool child_visited = false;
+        clang_visitChildren(
+            c,
+            [](CXCursor child, CXCursor parent, CXClientData client_data) {
+                auto* visited_flag = static_cast<bool*>(client_data);
+                *visited_flag = true;
+                return CXChildVisit_Break;
+            },
+            &child_visited);
+        struct UnexposedTracker {
+            Translator* self;
+            bool visited;
+        } tracker = {this, false};
+        clang_visitChildren(
+            c,
+            [](CXCursor child, CXCursor parent, CXClientData client_data) {
+                auto* data = static_cast<UnexposedTracker*>(client_data);
+                data->self->visit_expr(child);
+                data->visited = true;
+                return CXChildVisit_Break;
+            },
+            &tracker);
+        if (!tracker.visited) {
+            CXString spellingStr = clang_getCursorSpelling(c);
+            std::string spelling = clang_getCString(spellingStr);
+            if (!spelling.empty()) { result_file += spelling; }
+            clang_disposeString(spellingStr);
+        }
+        break;
+    }
+    case CXCursor_IntegerLiteral:
+    case CXCursor_FloatingLiteral:
+    case CXCursor_StringLiteral:
+    case CXCursor_CharacterLiteral: onLiteral(c); break;
+    case CXCursor_DeclRefExpr: onDeclRef(c); break;
+    case CXCursor_MemberRefExpr: onMemberRef(c); break;
+    case CXCursor_ArraySubscriptExpr: onSubscript(c); break;
+    case CXCursor_UnaryExpr:
+    case CXCursor_UnaryOperator: onUnop(c); break;
+    case CXCursor_CompoundAssignOperator:
+    case CXCursor_BinaryOperator: onBinop(c); break;
+    case CXCursor_ConditionalOperator: onTernary(c); break;
+    case CXCursor_ParenExpr: {
+        std::vector<CXCursor> children;
+        getChildren(c, &children);
+        if (children.empty()) break;
+
+        result_file += "(";
+        visit_expr(children[0]);
+        result_file += ")";
+        break;
+    }
+    case CXCursor_CallExpr: onCall(c); break;
+    case CXCursor_CStyleCastExpr: onCast(c); break;
+    case CXCursor_InitListExpr: onInitList(c); break;
+    case CXCursor_CompoundLiteralExpr: onCompoundLiteral(c); break;
+    default: break;
+    }
+    return CXChildVisit_Continue;
+}
+void Translator::onCompoundLiteral(CXCursor c) {
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    if (children.empty()) return;
+    CXType type = clang_getCursorType(c);
+    if (type.kind == CXType_Record) { result_file += translateType(type); }
+    for (CXCursor child : children) {
+        if (clang_getCursorKind(child) == CXCursor_InitListExpr) {
+            onInitList(child);
+            return;
+        }
+    }
+    visit_expr(children[0]);
+}
+void Translator::onInitList(CXCursor c) {
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    CXType raw_type = clang_getCursorType(c);
+    CXType type = clang_getCanonicalType(raw_type);
+    bool isArray = (type.kind == CXType_ConstantArray || type.kind == CXType_IncompleteArray);
+    bool isRecord = (type.kind == CXType_Record);
+    if (isRecord) { result_file += translateType(raw_type); }
+    result_file += isArray ? "[" : "{";
+    for (size_t i = 0; i < children.size(); ++i) {
+        CXCursor child = children[i];
+        CXCursorKind childKind = clang_getCursorKind(child);
+        std::vector<CXCursor> sub_children;
+        getChildren(child, &sub_children);
+        if (childKind == CXCursor_UnexposedExpr && sub_children.size() >= 2) {
+            CXString fieldNameStr = clang_getCursorSpelling(sub_children[0]);
+            std::string fieldName = clang_getCString(fieldNameStr);
+            clang_disposeString(fieldNameStr);
+            if (!fieldName.empty() && fieldName[0] == '.') { fieldName = fieldName.substr(1); }
+            result_file += fieldName + ": ";
+            visit_expr(sub_children[1]);
+        } else {
+            if (childKind == CXCursor_UnexposedExpr && !sub_children.empty()) {
+                visit_expr(sub_children[0]);
+            } else {
+                visit_expr(child);
+            }
+        }
+        if (i + 1 < children.size()) { result_file += ", "; }
+    }
+    result_file += isArray ? "]" : "}";
+}
+void Translator::onCast(CXCursor c) {
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    if (children.empty()) return;
+    visit_expr(children[1]);
+    result_file += " as ";
+    translateType(clang_getCursorType(children[0]));
+}
+void Translator::onCall(CXCursor c) {
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    if (children.empty()) return;
+    visit_expr(children[0]);
+    result_file += "(";
+    for (int i = 1; i < children.size(); i++) {
+        if (result_file.back() != '(') result_file += ", ";
+        visit_expr(children[i]);
+    }
+    result_file += ")";
+}
+void Translator::onTernary(CXCursor c) {
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    if (children.empty()) return;
+    visit_expr(children[0]);
+    result_file += " ? ";
+    visit_expr(children[1]);
+    result_file += " : ";
+    visit_expr(children[2]);
+}
+void Translator::onUnop(CXCursor c) {
+    if (clang_getCursorKind(c) == CXCursor_UnaryExpr) {
+        CXString keywordStr = clang_getCursorSpelling(c);
+        result_file += "(";
+        result_file += clang_getCString(keywordStr);
+        result_file += " ";
+        clang_disposeString(keywordStr);
+        std::vector<CXCursor> children;
+        getChildren(c, &children);
+        if (!children.empty()) {
+            visit_expr(children[0]);
+        } else {
+            CXTranslationUnit tu = clang_Cursor_getTranslationUnit(c);
+            CXSourceRange range = clang_getCursorExtent(c);
+            CXToken* tokens = nullptr;
+            unsigned numTokens = 0;
+            clang_tokenize(tu, range, &tokens, &numTokens);
+            bool insideParens = false;
+            std::string cleanedType = "";
+            for (unsigned i = 0; i < numTokens; ++i) {
+                CXString tokenStr = clang_getTokenSpelling(tu, tokens[i]);
+                std::string tokenText = clang_getCString(tokenStr);
+                if (tokenText == ")") { insideParens = false; }
+                if (insideParens) {
+                    if (tokenText != "struct" && tokenText != "union" && tokenText != "enum") {
+                        if (tokenText == "*") {
+                            if (!cleanedType.empty() && cleanedType.back() == ' ') cleanedType.pop_back();
+                            cleanedType += "*";
+                        } else {
+                            cleanedType += tokenText + " ";
+                        }
+                    }
+                }
+                if (tokenText == "(") { insideParens = true; }
+                clang_disposeString(tokenStr);
+            }
+            while (!cleanedType.empty() && cleanedType.back() == ' ') cleanedType.pop_back();
+            result_file += cleanedType;
+            clang_disposeTokens(tu, tokens, numTokens);
+        }
+        result_file += ")";
+        return;
+    }
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    if (children.empty()) return;
+    enum CXUnaryOperatorKind opKind = clang_getCursorUnaryOperatorKind(c);
+    CXString opStr = clang_getUnaryOperatorKindSpelling(opKind);
+    std::string op = clang_getCString(opStr);
+    clang_disposeString(opStr);
+    bool isPostfix = (opKind == CXUnaryOperator_PostInc || opKind == CXUnaryOperator_PostDec);
+    if (isPostfix) {
+        visit_expr(children[0]);
+        result_file += op;
+    } else {
+        result_file += op;
+        visit_expr(children[0]);
+    }
+}
+void Translator::onBinop(CXCursor c) {
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    if (children.size() < 2) return;
+    visit_expr(children[0]);
+    enum CXBinaryOperatorKind opKind = clang_getCursorBinaryOperatorKind(c);
+    CXString opStr = clang_getBinaryOperatorKindSpelling(opKind);
+    result_file += " " + std::string(clang_getCString(opStr)) + " ";
+    clang_disposeString(opStr);
+    visit_expr(children[1]);
+}
+void Translator::onSubscript(CXCursor c) {
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    if (children.size() < 2) return;
+    visit_expr(children[0]);
+    result_file += "[";
+    visit_expr(children[1]);
+    result_file += "]";
+}
+void Translator::onMemberRef(CXCursor c) {
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    if (children.empty()) return;
+    visit_expr(children[0]);
+    result_file += clang_getCursorType(children[0]).kind == CXType_Pointer ? "->" : ".";
+    CXString fieldStr = clang_getCursorSpelling(c);
+    result_file += clang_getCString(fieldStr);
+    clang_disposeString(fieldStr);
+}
+void Translator::onDeclRef(CXCursor c) {
+    CXCursor decl = clang_getCursorReferenced(c);
+    if (clang_getCursorKind(decl) == CXCursor_EnumConstantDecl) {
+        CXCursor enumParent = clang_getCursorSemanticParent(decl);
+        CXString enumNameStr = clang_getCursorSpelling(enumParent);
+        result_file += clang_getCString(enumNameStr);
+        result_file += ".";
+        clang_disposeString(enumNameStr);
+    }
+    CXString nameStr = clang_getCursorSpelling(c);
+    result_file += clang_getCString(nameStr);
+    clang_disposeString(nameStr);
+}
+void Translator::onLiteral(CXCursor c) {
+    CXTranslationUnit tu = clang_Cursor_getTranslationUnit(c);
+    CXSourceRange range = clang_getCursorExtent(c);
+    CXToken* tokens = nullptr;
+    unsigned numTokens = 0;
+    clang_tokenize(tu, range, &tokens, &numTokens);
+    if (numTokens > 0) {
+        CXString tokenSpelling = clang_getTokenSpelling(tu, tokens[0]);
+        result_file += clang_getCString(tokenSpelling);
+        clang_disposeString(tokenSpelling);
+    }
+    clang_disposeTokens(tu, tokens, numTokens);
+}
+CXChildVisitResult Translator::visit(CXCursor c, bool indent_braces) {
+    if (!fci) if (!clang_Location_isFromMainFile(clang_getCursorLocation(c))) return CXChildVisit_Continue;
     switch (clang_getCursorKind(c)) {
     case CXCursor_FunctionDecl: onFunction(c); break;
     case CXCursor_StructDecl:
@@ -55,49 +319,237 @@ CXChildVisitResult Translator::visit(CXCursor c) {
     case CXCursor_TypedefDecl: onTypedef(c); break;
     case CXCursor_VarDecl: onVar(c); break;
     case CXCursor_MacroDefinition: onMacro(c); break;
+    case CXCursor_CompoundStmt: onCompound(c, indent_braces); break;
+    case CXCursor_DeclStmt: onDecl(c); break;
+    case CXCursor_NullStmt: {
+        break;
+    }
+    case CXCursor_IfStmt: onIf(c); break;
+    case CXCursor_SwitchStmt: onSwitch(c); break;
+    case CXCursor_DefaultStmt:
+    case CXCursor_CaseStmt:
+    case CXCursor_LabelStmt: onLabel(c); break;
+    case CXCursor_ContinueStmt:
+    case CXCursor_BreakStmt:
+    case CXCursor_ReturnStmt:
+    case CXCursor_GotoStmt: onTerminator(c); break;
+    case CXCursor_WhileStmt: onWhile(c); break;
+    case CXCursor_DoStmt: onDo(c); break;
+    case CXCursor_ForStmt: onFor(c); break;
+    case CXCursor_UnexposedExpr:
+    case CXCursor_IntegerLiteral:
+    case CXCursor_FloatingLiteral:
+    case CXCursor_StringLiteral:
+    case CXCursor_CharacterLiteral:
+    case CXCursor_DeclRefExpr:
+    case CXCursor_MemberRefExpr:
+    case CXCursor_ArraySubscriptExpr:
+    case CXCursor_UnaryOperator:
+    case CXCursor_BinaryOperator:
+    case CXCursor_CompoundAssignOperator:
+    case CXCursor_ConditionalOperator:
+    case CXCursor_ParenExpr:
+    case CXCursor_CallExpr:
+    case CXCursor_CStyleCastExpr:
+    case CXCursor_UnaryExpr:
+    case CXCursor_InitListExpr:
+    case CXCursor_CompoundLiteralExpr: {
+        append_indentation();
+        visit_expr(c);
+        result_file += ";\n";
+        break;
+    }
     default: break;
     }
-    /*
-CXCursor_CompoundStmt
-CXCursor_DeclStmt
-CXCursor_NullStmt
-CXCursor_IfStmt
-CXCursor_SwitchStmt
-CXCursor_CaseStmt
-CXCursor_DefaultStmt
-CXCursor_WhileStmt
-CXCursor_DoStmt
-CXCursor_ForStmt
-CXCursor_BreakStmt
-CXCursor_ContinueStmt
-CXCursor_ReturnStmt
-CXCursor_GotoStmt
-CXCursor_LabelStmt
-CXCursor_UnexposedStmt
-CXCursor_IntegerLiteral
-CXCursor_FloatingLiteral
-CXCursor_StringLiteral
-CXCursor_CharacterLiteral
-CXCursor_ImaginaryLiteral
-CXCursor_FixedPointLiteral
-CXCursor_DeclRefExpr
-CXCursor_MemberRefExpr
-CXCursor_ArraySubscriptExpr
-CXCursor_UnaryOperator
-CXCursor_BinaryOperator
-CXCursor_CompoundAssignOperator
-CXCursor_ConditionalOperator
-CXCursor_ParenExpr
-CXCursor_CallExpr
-CXCursor_CStyleCastExpr
-CXCursor_UnaryExpr
-CXCursor_InitListExpr
-CXCursor_CompoundLiteralExpr
-*/
     return CXChildVisit_Continue;
 }
+void Translator::onFor(CXCursor c) {
+    append_indentation();
+    std::vector<CXCursor> components;
+    getChildren(c, &components);
+    if (components.empty()) return;
+    CXCursor body = components.back();
+    components.pop_back();
+    result_file += "for (";
+    inside_loop_header = true;
+    if (!components.empty() && (clang_getCursorKind(components[0]) == CXCursor_DeclStmt || clang_getCursorKind(components[0]) == CXCursor_VarDecl)) {
+        visit(components[0]);
+        while (!result_file.empty() && result_file.back() == '\n') result_file.pop_back();
+        if (result_file.back() != ';') result_file += ";";
+    } else if (!components.empty()) {
+        visit(components[0]);
+        while (!result_file.empty() && result_file.back() == '\n') result_file.pop_back();
+        result_file += ";";
+    } else {
+        result_file += ";";
+    }
+    result_file += " ";
+    inside_loop_header = false;
+    if (components.size() >= 2) {
+        visit_expr(components[1]);
+        while (!result_file.empty() && result_file.back() == '\n') result_file.pop_back();
+        if (result_file.back() != ';') result_file += ";";
+    } else {
+        result_file += ";";
+    }
+    result_file += " ";
+    if (components.size() == 3 || (components.size() == 2 && clang_getCursorKind(components[0]) != CXCursor_DeclStmt)) {
+        visit_expr(components.back());
+        while (!result_file.empty() && result_file.back() == '\n') result_file.pop_back();
+        if (result_file.back() == ';') { result_file.pop_back(); }
+    }
+    result_file += ") ";
+    visit(body, false);
+}
 
+void Translator::onDo(CXCursor c) {
+    append_indentation();
+    std::vector<CXCursor> components;
+    getChildren(c, &components);
+    if (components.size() < 2) return;
+    result_file += "do {\n";
+    indent_level++;
+    clang_visitChildren(components[0], visit_trampoline, this);
+    indent_level--;
+    if (result_file.back() != '\n') result_file += '\n';
+    append_indentation();
+    result_file += "} while (";
+    visit_expr(components[1]);
+    result_file += ");\n";
+}
+void Translator::onWhile(CXCursor c) {
+    std::vector<CXCursor> components;
+    getChildren(c, &components);
+    if (components.size() < 2) return;
+    append_indentation();
+    result_file += "while (";
+    visit_expr(components[0]);
+    result_file += ") ";
+    visit(components[1], false);
+}
+void Translator::onTerminator(CXCursor c) {
+    append_indentation();
+    CXCursorKind kind = clang_getCursorKind(c);
+    if (kind == CXCursor_BreakStmt) {
+        result_file += "break;\n";
+    } else if (kind == CXCursor_ContinueStmt) {
+        result_file += "continue;\n";
+    } else if (kind == CXCursor_ReturnStmt) {
+        result_file += "return";
+        std::vector<CXCursor> components;
+        getChildren(c, &components);
+        if (!components.empty()) {
+            result_file += " ";
+            visit_expr(components[0]);
+        }
+        result_file += ";\n";
+        return;
+    } else if (kind == CXCursor_GotoStmt) {
+        result_file += "jmp ";
+        CXCursor label = clang_getCursorReferenced(c);
+        CXString nameStr = clang_getCursorSpelling(label);
+        result_file += clang_getCString(nameStr);
+        result_file += ";\n";
+        clang_disposeString(nameStr);
+    }
+}
+void Translator::onLabel(CXCursor c) {
+    CXCursorKind kind = clang_getCursorKind(c);
+    if (kind == CXCursor_CaseStmt) {
+        append_indentation();
+        std::vector<CXCursor> components = {};
+        getChildren(c, &components);
+        if (components.size() < 2) return;
+        result_file += "case ";
+        visit_expr(components[0]);
+        result_file += ":\n";
+        CXCursorKind bodyKind = clang_getCursorKind(components[1]);
+        if (bodyKind == CXCursor_CaseStmt || bodyKind == CXCursor_DefaultStmt || bodyKind == CXCursor_CompoundStmt) {
+            visit(components[1]);
+        } else {
+            indent_level++;
+            struct Data {
+                Translator* self;
+                int num;
+            };
+            Data data = {this, 0};
+            clang_visitChildren(
+                c,
+                [](CXCursor child, CXCursor parent, CXClientData client_data) {
+                    auto* data = static_cast<Data*>(client_data);
+                    data->num++;
+                    if (data->num == 1) return CXChildVisit_Continue;
+                    data->self->visit(child);
+                    return CXChildVisit_Continue;
+                },
+                &data);
+            indent_level--;
+        }
+    } else if (kind == CXCursor_DefaultStmt) {
+        append_indentation();
+        result_file += "default:\n";
+        indent_level++;
+        clang_visitChildren(c, visit_trampoline, this);
+        indent_level--;
+    } else if (kind == CXCursor_LabelStmt) {
+        CXString nameStr = clang_getCursorSpelling(c);
+        result_file += "\n";
+        result_file += clang_getCString(nameStr);
+        result_file += ":\n";
+        clang_disposeString(nameStr);
+        clang_visitChildren(c, visit_trampoline, this);
+    }
+}
+void Translator::onSwitch(CXCursor c) {
+    std::vector<CXCursor> components;
+    getChildren(c, &components);
+    if (components.size() < 2) return;
+    append_indentation();
+    result_file += "switch (";
+    visit_expr(components[0]);
+    result_file += ") {\n";
+    indent_level++;
+    clang_visitChildren(components[1], visit_trampoline, this);
+    indent_level--;
+    append_indentation();
+    result_file += "}\n";
+}
+void Translator::onIf(CXCursor c) {
+    std::vector<CXCursor> components;
+    getChildren(c, &components);
+    if (components.empty()) return;
+    CXCursor condition = components[0];
+    append_indentation();
+    result_file += "if (";
+    visit_expr(condition);
+    result_file += ") ";
+    if (components.size() > 1) { visit(components[1], false); }
+    if (components.size() > 2) {
+        if (result_file.ends_with("\n")) result_file.pop_back();
+        result_file += " else ";
+        if (clang_getCursorKind(components[2]) == CXCursor_IfStmt) {
+            size_t marker = result_file.length();
+            visit(components[2]);
+            while (result_file.substr(marker, 4) == "    ") { result_file.erase(marker, 4); }
+        } else {
+            visit(components[2], false);
+        }
+    }
+}
+void Translator::onDecl(CXCursor c) {
+    clang_visitChildren(c, visit_trampoline, this);
+}
+void Translator::onCompound(CXCursor c, bool indent = true) {
+    if (indent) append_indentation();
+    result_file += "{\n";
+    indent_level++;
+    clang_visitChildren(c, visit_trampoline, this);
+    indent_level--;
+    append_indentation();
+    result_file += "}\n";
+}
 void Translator::onFunction(CXCursor c) {
+    append_indentation();
     CXString nameStr = clang_getCursorSpelling(c);
     const char* name = clang_getCString(nameStr);
     CXType fn_type = clang_getCursorType(c);
@@ -117,11 +569,18 @@ void Translator::onFunction(CXCursor c) {
         if (i + 1 < n) result_file += ", ";
         clang_disposeString(argNameStr);
     }
-    if (clang_isFunctionTypeVariadic(fn_type)) {
+    if (clang_isFunctionTypeVariadic(fn_type) && std::string(name ? name : "") != "main") {
         if (n > 0) result_file += ", ";
         result_file += "...";
     }
-    result_file += ");\n";
+    result_file += ")";
+    if (clang_isCursorDefinition(c)) {
+        result_file += " ";
+        clang_visitChildren(c, visit_trampoline, this);
+    } else {
+        result_file += ";\n";
+        append_indentation();
+    }
     clang_disposeString(nameStr);
 }
 
@@ -143,10 +602,12 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
     long long size = clang_Type_getSizeOf(type);
     if (clang_Cursor_isNull(def) && !clang_isCursorDefinition(c)) {
         result_file += "opaque " + name + ";\n";
+        append_indentation();
         return;
     }
     result_file += is_union ? "union " : "struct ";
     result_file += name + " {\n";
+    indent_level++;
     struct Context {
         Translator* self;
         std::string* output;
@@ -160,7 +621,7 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
             CXString field_spelling = clang_getCursorSpelling(child);
             const char* field_name = clang_getCString(field_spelling);
             CXType field_type = clang_getCursorType(child);
-            *ctx->output += "    ";
+            ctx->self->append_indentation();
             *ctx->output += ctx->self->translateType(field_type);
             *ctx->output += " ";
             *ctx->output += field_name ? field_name : "__anonymous_field";
@@ -173,6 +634,8 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
             return CXChildVisit_Continue;
         },
         &ctx);
+    indent_level--;
+    append_indentation();
     result_file += "};\n";
 }
 
@@ -200,40 +663,48 @@ void Translator::onEnum(CXCursor c, const std::string& name_override) {
         &result_file);
     result_file += "}\n";
 }
-
 void Translator::onTypedef(CXCursor c) {
     CXString name_str = clang_getCursorSpelling(c);
     std::string name = clang_getCString(name_str);
     clang_disposeString(name_str);
     CXType underlying = clang_getTypedefDeclUnderlyingType(c);
+    CXCursor underlyingDecl = clang_getTypeDeclaration(underlying);
+    CXString underlyingNameStr = clang_getCursorSpelling(underlyingDecl);
+    std::string underlyingName = clang_getCString(underlyingNameStr);
+    clang_disposeString(underlyingNameStr);
+    if (name == underlyingName) { return; }
     switch (underlying.kind) {
-    case CXType_Enum: onEnum(c, name); return;
-    case CXType_Record: onRecord(c, name); return;
+    case CXType_Enum: {
+        onEnum(underlyingDecl, name);
+        return;
+    }
+    case CXType_Record: {
+        if (!underlyingName.empty()) {
+            result_file += "type " + name + " = " + underlyingName + ";\n";
+        } else {
+            onRecord(underlyingDecl, name);
+        }
+        return;
+    }
     default: result_file += "type " + name + " = " + translateType(underlying) + ";\n"; return;
     }
 }
-
 void Translator::onVar(CXCursor c) {
+    append_indentation();
     CXType type = clang_getCursorType(c);
     CXString name = clang_getCursorSpelling(c);
     result_file += translateType(type) + " " + clang_getCString(name);
-    CXCursor init = clang_Cursor_getVarDeclInitializer(c);
-    if (!clang_Cursor_isNull(init)) {
-        CXEvalResult result = clang_Cursor_Evaluate(c);
-        if (result) {
-            result_file += " = ";
-            switch (clang_EvalResult_getKind(result)) {
-            case CXEval_Int: result_file += std::to_string(clang_EvalResult_getAsLongLong(result)); break;
-            case CXEval_Float: result_file += std::to_string(clang_EvalResult_getAsDouble(result)); break;
-            case CXEval_StrLiteral: {
-                const char* s = clang_EvalResult_getAsStr(result);
-                if (s) result_file += "\"" + std::string(s) + "\"";
-                break;
-            }
-            default: break;
-            }
-            clang_EvalResult_dispose(result);
+    std::vector<CXCursor> children;
+    getChildren(c, &children);
+    std::vector<CXCursor> initValues;
+    for (CXCursor child : children) {
+        if (clang_getCursorKind(child) != CXCursor_TypeRef) {
+            initValues.push_back(child);
         }
+    }
+    if (!initValues.empty()) {
+        result_file += " = ";
+        visit_expr(initValues.back());
     }
     result_file += ";\n";
     clang_disposeString(name);

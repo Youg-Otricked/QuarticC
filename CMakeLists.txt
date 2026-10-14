@@ -36,13 +36,13 @@ endif()
 set(RUNTIMENEEDS_LL_PATH "")
 if(CXX_RUNTIME)
     add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/runtime.ll
-        COMMAND ${COMPILER_FOR_RUNTIME} ${RUNTIME_TARGET_FLAGS} -S -emit-llvm -O3 ${CMAKE_CURRENT_SOURCE_DIR}/runtime.cpp -o ${CMAKE_CURRENT_SOURCE_DIR}/runtime.ll
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/runtime.ll
+        COMMAND ${COMPILER_FOR_RUNTIME} ${RUNTIME_TARGET_FLAGS} -S -emit-llvm -O3 ${CMAKE_CURRENT_SOURCE_DIR}/runtime.cpp -o ${CMAKE_CURRENT_BINARY_DIR}/runtime.ll
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/runtime.cpp
         VERBATIM
     )
 else()
-    set(RUNTIMENEEDS_LL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/runtimeneeds.ll")
+    set(RUNTIMENEEDS_LL_PATH "${CMAKE_CURRENT_BINARY_DIR}/runtimeneeds.ll")
     add_custom_command(
         OUTPUT "${RUNTIMENEEDS_LL_PATH}"
         COMMAND ${COMPILER_FOR_RUNTIME} ${RUNTIME_TARGET_FLAGS} -S -emit-llvm -O3
@@ -52,23 +52,27 @@ else()
         VERBATIM
     )
     add_custom_command(
-        OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/runtime.ll"
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtime.ll"
         COMMAND "${QC_EXECUTABLE}" -co -nrt ${RUNTIME_TARGET_FLAGS} -O3
             "${CMAKE_CURRENT_SOURCE_DIR}/runtime.qc"
-            -o "${CMAKE_CURRENT_SOURCE_DIR}/runtime.ll"
+            -o "${CMAKE_CURRENT_BINARY_DIR}/runtime.ll"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/runtime.qc"
         VERBATIM
     )
 endif()
+set(EMBED_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/runtime.ll")
+if(RUNTIMENEEDS_LL_PATH)
+    list(APPEND EMBED_DEPENDS "${RUNTIMENEEDS_LL_PATH}")
+endif()
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/runtime_embed.cpp
     COMMAND ${CMAKE_COMMAND}
-        -DRUNTIME_LL=${CMAKE_CURRENT_SOURCE_DIR}/runtime.ll
+        -DRUNTIME_LL=${CMAKE_CURRENT_BINARY_DIR}/runtime.ll
         -DRUNTIMENEEDS_LL=${RUNTIMENEEDS_LL_PATH}
         -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/runtime_embed.cpp
         -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/runtime_embed.cpp.in
         -P ${CMAKE_CURRENT_SOURCE_DIR}/embed_runtime.cmake
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/runtime.ll ${RUNTIMENEEDS_LL_PATH}
+    DEPENDS ${EMBED_DEPENDS}
     VERBATIM
 )
 set(SOURCES
