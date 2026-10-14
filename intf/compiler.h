@@ -248,13 +248,15 @@ class LLVMCompiler {
     void generateClass(const std::string& mapKey, const UserTypeInfo& info);
     llvm::Value* convertToString(llvm::Value* val, AnyNode& expr, Position pos);
     LLVMCompiler(std::unordered_map<std::string, UserTypeInfo>& userTys, llvm::Module* mod, llvm::LLVMContext& ctx, bool is_main = false);
-    std::vector<CTError> compile(
-        StatementsNode* root, std::unordered_map<std::string, FunctionSignature> visibleFunctionSignatures,
-        std::unordered_map<std::string, FuncDefNode*> visibleFunctionDefs,
-        std::unordered_map<std::string, std::string> visibleArrayTypeStrings, std::unordered_map<std::string, int> visibleArrayLengths,
-        std::unordered_map<std::string, std::string> visibleVarTypes, std::unordered_map<std::string, llvm::AllocaInst*> visibleRuntimeArraySizes,
-        std::unordered_map<std::string, llvm::FunctionType*> visibleLambdaTypes, std::map<std::string, llvm::Function*> visibleSpecializedFunctions,
-        std::unordered_map<std::string, llvm::GlobalVariable*> visibleGlobals);
+    std::vector<CTError> compile(StatementsNode* root, std::unordered_map<std::string, FunctionSignature> visibleFunctionSignatures,
+                                 std::unordered_map<std::string, FuncDefNode*> visibleFunctionDefs,
+                                 std::unordered_map<std::string, std::string> visibleArrayTypeStrings,
+                                 std::unordered_map<std::string, int> visibleArrayLengths,
+                                 std::unordered_map<std::string, std::string> visibleVarTypes,
+                                 std::unordered_map<std::string, llvm::AllocaInst*> visibleRuntimeArraySizes,
+                                 std::unordered_map<std::string, llvm::FunctionType*> visibleLambdaTypes,
+                                 std::map<std::string, llvm::Function*> visibleSpecializedFunctions,
+                                 std::unordered_map<std::string, llvm::GlobalVariable*> visibleGlobals);
     bool is_main;
     void cg_warn(const Position& pos, const std::string& msg, std::string code = "");
     void cg_error(const Position& pos, const std::string& msg, std::string code = "");
@@ -527,7 +529,7 @@ class LLVMCompiler {
     std::vector<std::unordered_map<std::string, std::string>> arrayTypeStringsStack;
     std::vector<std::unordered_map<std::string, int>> arrayLengthsStack;
     std::vector<std::unordered_map<std::string, std::string>> varTypesStack;
-    std::vector<std::unordered_map<std::string, std::vector<bool>>> constsStack;
+    std::vector<std::unordered_map<std::string, std::vector<uint8_t>>> constsStack;
     std::vector<std::unordered_map<std::string, llvm::AllocaInst*>> localsStack;
     std::vector<std::unordered_map<std::string, bool>> volatileVarsStack;
     std::unordered_map<std::string, llvm::AllocaInst*> runtimeArraySizes;
@@ -562,12 +564,8 @@ class LLVMCompiler {
 #define findArrayType(name) findInStack(arrayTypeStringsStack, name)
 #define findConst(name) findInStack(constsStack, name)
     void enterScope() {
-        if (defersStack.size() == 0) {
-            all_labels = {};
-        }
-        if (defersStack.size() <= 1) {
-            scope_labels = {};
-        }
+        if (defersStack.size() == 0) { all_labels = {}; }
+        if (defersStack.size() <= 1) { scope_labels = {}; }
         defersStack.push_back({});
         localsStack.push_back({});
         arrayTypeStringsStack.push_back({});
@@ -638,7 +636,7 @@ class LLVMCompiler {
         return n;
     }
     std::string make_consts(std::string fullName, std::string type) {
-        std::vector<bool> values;
+        std::vector<uint8_t> values;
         std::string n;
         bool baseConst = false;
         bool afterPointer = false;
@@ -1435,14 +1433,14 @@ class LLVMCompiler {
         }
     }
 #endif
-    std::vector<bool> getConsts(const AnyNode& node) {
+    std::vector<uint8_t> getConsts(const AnyNode& node) {
         if (auto var = std::get_if<VarAccessNode*>(&node)) {
             std::string name = (*var)->var_name_tok.value;
             if (name == "this") { return {false, false}; }
             return resolveVarConsts(name);
         } else if (auto unary = std::get_if<UnaryOpNode*>(&node)) {
             auto copy = getConsts((*unary)->node);
-            copy.pop_back();
+            if (!copy.empty()) copy.pop_back();
             return copy;
         }
         return {};
@@ -3878,7 +3876,7 @@ class LLVMCompiler {
         }
         return vars;
     }
-    std::vector<bool> resolveVarConsts(const std::string& name) {
+    std::vector<uint8_t> resolveVarConsts(const std::string& name) {
         if (name.find("::") != std::string::npos) {
             if (hasConst(name)) return findConst(name)->second;
         }
@@ -3891,7 +3889,7 @@ class LLVMCompiler {
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
         }
         if (hasConst(name)) return findConst(name)->second;
-        return std::vector<bool>();
+        return std::vector<uint8_t>();
     }
     std::string resolveVarType(const std::string& name) {
         if (name.find("::") != std::string::npos) {

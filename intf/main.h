@@ -136,7 +136,9 @@ struct RunConfig {
     bool fci = true;
     std::vector<std::string> c_args;
     std::vector<std::string> link_o_files;
+    bool prepro_only = false;
 };
 Mer run(std::string file, std::string text, RunConfig config);
 } // namespace Run
 #endif
+

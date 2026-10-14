@@ -113,7 +113,7 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.3.31 = "FULL C Translation"
+Current Version: x1.3.32 = "FULL C Translation"
 Next Version: x1.3.4 = "Include system upgrade, Formatter, More STL, Other QOL"
 
 # Current Version Highlights

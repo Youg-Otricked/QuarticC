@@ -361,7 +361,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             outfile << translator.result_file;
             outfile.close();
         }
-        return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, "Translated " + file + " to " + config.output_file + "."};
+        return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, "Translated " + file + " to " + (config.output_file == "a.out" ? "stdout" : config.output_file) + "."};
     }
     // Check for inline directives
     definitions = config.definitions;
@@ -446,6 +446,16 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
     } catch (std::runtime_error& e) {
         return Mer{Aer{nullptr, nullptr},
                    Ler{std::vector<Token>{}, new InvalidSyntaxError(std::string("QC-IX01: Include Error: ") + e.what(), Position())}, ""};
+    }
+    if (config.prepro_only) {
+        if (config.output_file == "a.out") {
+            std::cout << cleaned_files[file] << '\n';
+        } else {
+            std::ofstream outfile(config.output_file);
+            outfile << cleaned_files[file];
+            outfile.close();
+        }
+        return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, "Preprocessed " + file + " sucessfully."};
     }
     std::unordered_map<std::string, Aer> file_asts;
     std::unordered_map<std::string, std::unordered_map<std::string, UserTypeInfo>> type_registry;

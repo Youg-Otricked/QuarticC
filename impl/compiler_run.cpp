@@ -20,7 +20,7 @@
 #if defined(_WIN32) || defined(_WIN64)
 #include <print>
 #endif
-const std::string ver = "x1.3.31";
+const std::string ver = "x1.3.32";
 #include <random>
 bool slow = false;
 void slow_print(const std::string& text, const std::string& color = "\033[0m", int min_delay_ms = 100, int max_delay_ms = 450) {
@@ -323,6 +323,8 @@ Examples:
             config.translate_c = true;
         } else if (arg == "--no-follow-c-includes" || arg == "-nfci") {
             config.fci = false;
+        } else if (arg == "-po" || arg == "--preprocess-only") {
+            config.prepro_only = true;
         } else {
             if (arg.ends_with(".o")) {
                 config.link_o_files.push_back(arg);
