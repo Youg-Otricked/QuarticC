@@ -78,7 +78,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          brew install llvm@22 cmake libclang
+          brew install llvm@22 cmake        
           echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> $GITHUB_ENV
           echo "$(brew --prefix llvm@22)/bin" >> $GITHUB_PATH
       - name: Generate runtime.ll
