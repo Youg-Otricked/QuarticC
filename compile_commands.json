@@ -1,67 +1,67 @@
 [
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/translate.cpp.o -c \"/home/luca/C^4/impl/translate.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/translate.cpp.o -c \"/home/luca/C^4/impl/translate.cpp\"",
   "file": "/home/luca/C^4/impl/translate.cpp",
   "output": "CMakeFiles/qc.dir/impl/translate.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/parser.cpp.o -c \"/home/luca/C^4/impl/parser.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/parser.cpp.o -c \"/home/luca/C^4/impl/parser.cpp\"",
   "file": "/home/luca/C^4/impl/parser.cpp",
   "output": "CMakeFiles/qc.dir/impl/parser.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/main.cpp.o -c \"/home/luca/C^4/impl/main.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/main.cpp.o -c \"/home/luca/C^4/impl/main.cpp\"",
   "file": "/home/luca/C^4/impl/main.cpp",
   "output": "CMakeFiles/qc.dir/impl/main.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/lexer.cpp.o -c \"/home/luca/C^4/impl/lexer.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/lexer.cpp.o -c \"/home/luca/C^4/impl/lexer.cpp\"",
   "file": "/home/luca/C^4/impl/lexer.cpp",
   "output": "CMakeFiles/qc.dir/impl/lexer.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/nodes.cpp.o -c \"/home/luca/C^4/impl/nodes.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/nodes.cpp.o -c \"/home/luca/C^4/impl/nodes.cpp\"",
   "file": "/home/luca/C^4/impl/nodes.cpp",
   "output": "CMakeFiles/qc.dir/impl/nodes.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/token.cpp.o -c \"/home/luca/C^4/impl/token.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/token.cpp.o -c \"/home/luca/C^4/impl/token.cpp\"",
   "file": "/home/luca/C^4/impl/token.cpp",
   "output": "CMakeFiles/qc.dir/impl/token.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/errors.cpp.o -c \"/home/luca/C^4/impl/errors.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/errors.cpp.o -c \"/home/luca/C^4/impl/errors.cpp\"",
   "file": "/home/luca/C^4/impl/errors.cpp",
   "output": "CMakeFiles/qc.dir/impl/errors.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/preproccesser.cpp.o -c \"/home/luca/C^4/impl/preproccesser.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/preproccesser.cpp.o -c \"/home/luca/C^4/impl/preproccesser.cpp\"",
   "file": "/home/luca/C^4/impl/preproccesser.cpp",
   "output": "CMakeFiles/qc.dir/impl/preproccesser.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/compiler.cpp.o -c \"/home/luca/C^4/impl/compiler.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/compiler.cpp.o -c \"/home/luca/C^4/impl/compiler.cpp\"",
   "file": "/home/luca/C^4/impl/compiler.cpp",
   "output": "CMakeFiles/qc.dir/impl/compiler.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/compiler_run.cpp.o -c \"/home/luca/C^4/impl/compiler_run.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/compiler_run.cpp.o -c \"/home/luca/C^4/impl/compiler_run.cpp\"",
   "file": "/home/luca/C^4/impl/compiler_run.cpp",
   "output": "CMakeFiles/qc.dir/impl/compiler_run.cpp.o"
 },
 {
   "directory": "/home/luca/C^4",
-  "command": "clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/runtime_embed.cpp.o -c \"/home/luca/C^4/runtime_embed.cpp\"",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/runtime_embed.cpp.o -c \"/home/luca/C^4/runtime_embed.cpp\"",
   "file": "/home/luca/C^4/runtime_embed.cpp",
   "output": "CMakeFiles/qc.dir/runtime_embed.cpp.o"
 }
