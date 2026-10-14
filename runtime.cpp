@@ -362,23 +362,6 @@ void qc_print_string(const char* s) {
     if (!s) s = "";
     fputs(s, stdout);
 } // self hosted
-int qc_time() {
-    return (int)time(NULL);
-} // self hosted
-void qc_seed(int seed) {
-    srand(seed);
-} // self hosted
-int qc_random_int(int max) {
-    if (max <= 0) return 0;
-    return rand() % max;
-} // self hosted
-float qc_random_float() {
-    return (float)rand() / (float)RAND_MAX;
-} // self hosted
-int qc_random_range(int min, int max) {
-    if (max <= min) return min;
-    return min + (rand() % (max - min));
-} // self hosted
 int qc_len(const char* str) { // self hosted
     return strlen(str);
 }
@@ -562,7 +545,9 @@ ssize_t qc_write_sized(int fd, const char* data, ssize_t bc) {
     if (!data) return -1;
     return write(fd, data, bc);
 } // self hosted
-
+//////////////////
+/// VARIADICS ///
+////////////////
 typedef struct {
     void** items;
     int count;

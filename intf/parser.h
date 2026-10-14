@@ -34,10 +34,12 @@ class Parser {
     Parser(std::vector<Token> tokens, std::unordered_map<std::string, UserTypeInfo> user_types = {});
     std::string qualify_name(const std::string& name);
     bool is_primint_type(const Token& name) {
-        return std::unordered_set<std::string>({"int", "byte", "nibble", "addr_t", "short int", "long int", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"}).contains(name.value);
+        return std::unordered_set<std::string>({"int", "byte", "nibble", "addr_t", "short int", "long int", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+            .contains(name.value);
     }
     bool is_primitive_type(std::string& name) {
-        return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+        return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool",
+                                                "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
                    .contains(name) ||
                (name.starts_with("(") && name.ends_with(")"));
     }
@@ -200,12 +202,8 @@ class Parser {
             this->advance();
             return type + ")";
         }
-        if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "volatile") {
-            type += "volatile ";
-            this->advance();
-        }
-        if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "atomic") {
-            type += "atomic ";
+        if (this->current_tok.value == "const" || this->current_tok.value == "volatile" || this->current_tok.value == "atomic") {
+            type += this->current_tok.value + " ";
             this->advance();
         }
         if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "fn") {
@@ -262,20 +260,36 @@ class Parser {
         while (this->current_tok.type == TokenType::MUL) {
             type += "*";
             this->advance();
-            while (this->current_tok.type == TokenType::MUL) {
-                type += "*";
+            if (this->current_tok.value == "const") {
+                type += "const";
                 this->advance();
-                if (this->current_tok.value == "const") {
-                    type += "const";
-                    this->advance();
-                }
             }
         }
+        while (this->current_tok.type == TokenType::LBRACKET) {
+            this->advance();
+            if (this->current_tok.type == TokenType::INT) {
+                type += "[" + this->current_tok.value + "]";
+                this->advance();
+            } else {
+                type += "[]";
+            }
+            this->advance();
+        }
+
         if (this->current_tok.type == TokenType::AMPERSAND) {
             type += "&";
             this->advance();
         }
-
+        while (this->current_tok.type == TokenType::LBRACKET) {
+            this->advance();
+            if (this->current_tok.type == TokenType::INT) {
+                type += "[" + this->current_tok.value + "]";
+                this->advance();
+            } else {
+                type += "[]";
+            }
+            this->advance();
+        }
         return type;
     }
     std::string parseTypeString() {
@@ -361,12 +375,8 @@ class Parser {
             this->advance();
             return type + ")";
         }
-        if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "volatile") {
-            type += "volatile ";
-            this->advance();
-        }
-        if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "atomic") {
-            type += "atomic ";
+        if (this->current_tok.value == "const" || this->current_tok.value == "volatile" || this->current_tok.value == "atomic") {
+            type += this->current_tok.value + " ";
             this->advance();
         }
         if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "fn") {
@@ -448,8 +458,29 @@ class Parser {
                 this->advance();
             }
         }
+        while (this->current_tok.type == TokenType::LBRACKET) {
+            this->advance();
+            if (this->current_tok.type == TokenType::INT) {
+                type += "[" + this->current_tok.value + "]";
+                this->advance();
+            } else {
+                type += "[]";
+            }
+            this->advance();
+        }
+
         if (this->current_tok.type == TokenType::AMPERSAND) {
             type += "&";
+            this->advance();
+        }
+        while (this->current_tok.type == TokenType::LBRACKET) {
+            this->advance();
+            if (this->current_tok.type == TokenType::INT) {
+                type += "[" + this->current_tok.value + "]";
+                this->advance();
+            } else {
+                type += "[]";
+            }
             this->advance();
         }
         return type;

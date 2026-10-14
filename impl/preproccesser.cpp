@@ -19,6 +19,44 @@ std::string resolve_path(const std::string& current_file, const std::string& inc
     std::filesystem::path resolved = current.parent_path() / include;
     return std::filesystem::weakly_canonical(resolved).string();
 }
+static const std::vector<std::string>& system_include_dirs() {
+    static std::vector<std::string> dirs;
+    static bool loaded = false;
+    if (loaded) return dirs;
+    loaded = true;
+    if (FILE* p = popen("cc -E -Wp,-v -xc /dev/null 2>&1", "r")) {
+        std::string out;
+        char buf[512];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, p)) > 0) out.append(buf, n);
+        pclose(p);
+        std::istringstream in(out);
+        std::string line;
+        bool inList = false;
+        while (std::getline(in, line)) {
+            if (line.find("#include <...> search starts here:") != std::string::npos) {
+                inList = true;
+                continue;
+            }
+            if (line.find("End of search list.") != std::string::npos) break;
+            if (!inList || line.empty() || line[0] != ' ') continue;
+            std::string d = trim(line);
+            auto fw = d.find(" (framework directory)");
+            if (fw != std::string::npos) continue;
+            dirs.push_back(d);
+        }
+    }
+    if (dirs.empty()) { dirs = {"/usr/local/include", "/usr/include"}; }
+    return dirs;
+}
+static std::string find_c_header(const std::string& relative_guess, const std::string& name) {
+    if (std::filesystem::exists(relative_guess)) return relative_guess;
+    for (const auto& d : system_include_dirs()) {
+        std::filesystem::path cand = std::filesystem::path(d) / name;
+        if (std::filesystem::exists(cand)) return cand.string();
+    }
+    return relative_guess;
+}
 PreprocessResult preprocess_includes(std::string& source, const std::string& current_file, const std::vector<std::string>& c_args, bool fci) {
     PreprocessResult res;
     res.accessible_namespaces.clear();
@@ -463,6 +501,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
                 full_path = resolve_path(current_file, (std::filesystem::path(dir_aliases[alias]) / rest.substr(1)).string());
             } else {
                 full_path = resolve_path(current_file, path);
+                if (full_path == path) full_path = find_c_header(resolve_path(current_file, path), path);
             }
             to_c_include.push_back(full_path);
             pos = end + 1;
@@ -618,7 +657,8 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         auto res2 = preprocess_includes(output, current_file, c_args, fci);
         res.errors.insert(res.errors.end(), res2.errors.begin(), res2.errors.end());
         res.clean_source = std::move(res2.clean_source);
-    } else res.clean_source = std::move(output);
+    } else
+        res.clean_source = std::move(output);
     res.dependency_paths = dependencies;
     res.included_namespaces = from_where;
     res.namespace_depends = namespace_depends;

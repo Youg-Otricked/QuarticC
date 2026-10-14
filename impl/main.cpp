@@ -650,7 +650,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             for (auto& filepath : sorted_files) {
                 std::unordered_map<std::string, FunctionSignature> visSigs;
                 std::unordered_map<std::string, FuncDefNode*> visFDefs;
-                std::unordered_map<std::string, std::pair<int, int>> visJagged;
                 std::unordered_map<std::string, std::string> visTypeStr;
                 std::unordered_map<std::string, int> visLen;
                 std::unordered_map<std::string, std::string> visVars;
@@ -698,7 +697,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 }
                 LLVMCompiler comp(file_asts[filepath].user_types, master_module, context, filepath == file);
                 comp.config = config;
-                std::vector<CTError> errs = comp.compile(file_asts[filepath].statements, visSigs, visFDefs, visJagged, visTypeStr, visLen, visVars,
+                std::vector<CTError> errs = comp.compile(file_asts[filepath].statements, visSigs, visFDefs, visTypeStr, visLen, visVars,
                                                          visAlloc, visLamb, visSpec, visGlobals);
                 if (config.progress) {
                     std::cout << "[DONE COMPILING] " << filepath << '\n';

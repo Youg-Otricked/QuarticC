@@ -6,7 +6,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <functional>
-#include <iostream>
 #include <list>
 #include <map>
 #include <memory>
@@ -1329,6 +1328,16 @@ void LLVMCompiler::createUserTypes() {
         }
     }
     for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::Alias) {
+            if (!info.generics.empty()) {
+                genericAliases[mapKey] = true;
+                continue;
+            }
+            genericAliases[mapKey] = false;
+            typeAliases[mapKey] = info.aliasTarget;
+        }
+    }
+    for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Struct) {
             if (!info.generics.empty()) {
                 genericStructs[mapKey] = true;
@@ -1337,6 +1346,18 @@ void LLVMCompiler::createUserTypes() {
             genericStructs[mapKey] = false;
             llvm::StructType* structTy = getOrCreateStructType(mapKey);
             structTypes[mapKey] = structTy;
+        }
+    }
+    for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::Union) {
+            if (!info.generics.empty()) {
+                genericUnions[mapKey] = true;
+                continue;
+            }
+            genericUnions[mapKey] = false;
+            std::vector<llvm::Type*> fields = {builder->getInt32Ty(), llvm::PointerType::get(context, 0)};
+            llvm::StructType* unionTy = getOrCreateStructType(fields, mapKey);
+            unionTypes[mapKey] = unionTy;
         }
     }
     for (auto& [mapKey, info] : userTypes) {
@@ -1371,28 +1392,6 @@ void LLVMCompiler::createUserTypes() {
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Enum) { generateEnum(mapKey, info); }
-    }
-    for (auto& [mapKey, info] : userTypes) {
-        if (info.kind == UserTypeKind::Union) {
-            if (!info.generics.empty()) {
-                genericUnions[mapKey] = true;
-                continue;
-            }
-            genericUnions[mapKey] = false;
-            std::vector<llvm::Type*> fields = {builder->getInt32Ty(), llvm::PointerType::get(context, 0)};
-            llvm::StructType* unionTy = getOrCreateStructType(fields, mapKey);
-            unionTypes[mapKey] = unionTy;
-        }
-    }
-    for (auto& [mapKey, info] : userTypes) {
-        if (info.kind == UserTypeKind::Alias) {
-            if (!info.generics.empty()) {
-                genericAliases[mapKey] = true;
-                continue;
-            }
-            genericAliases[mapKey] = false;
-            typeAliases[mapKey] = info.aliasTarget;
-        }
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind != UserTypeKind::Class) continue;
@@ -1676,6 +1675,7 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
         if (srcTy->isPointerTy() && dstTy->isPointerTy()) return builder->CreateBitCast(value, dstTy);
         if (srcTy->isPointerTy() && dstTy->isIntegerTy()) return builder->CreatePtrToInt(value, dstTy);
         if (srcTy->isIntegerTy() && dstTy->isPointerTy()) return builder->CreateIntToPtr(value, dstTy);
+        cg_error(get_pos(*bin), "cannot cast type " + getExpressionType((*bin)->left_node, false) + " to " + typeNode->tok.value, "QC-AS01");
         return nullptr;
     }
     if (op == TokenType::RSHIFT) {
@@ -5745,10 +5745,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
             }
             return builder->CreateLoad(classTy, temp, resolvedName + "_inst");
         }
-        static const std::unordered_map<std::string, std::string> builtins = {{"`time", "qc_time"},
-                                                                              {"`seed", "qc_seed"},
-                                                                              {"`random", "qc_random_int"},
-                                                                              {"`len", "qc_len"},
+        static const std::unordered_map<std::string, std::string> builtins = {{"`len", "qc_len"},
                                                                               {"`to_lower", "qc_to_lower"},
                                                                               {"`to_upper", "qc_to_upper"},
                                                                               {"`substring", "qc_substring"},
@@ -5769,7 +5766,6 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                                                                               {"`to_qbool", "qc_to_qbool_from_string"},
                                                                               {"`to_long_int", "qc_to_long_int_from_string"},
                                                                               {"`to_short_int", "qc_to_short_int_from_string"},
-                                                                              // todo: to (type) primitive.
                                                                               {"`qout", ""},
                                                                               {"`open", "qc_open"},
                                                                               {"`close", "qc_close"},
@@ -9555,6 +9551,41 @@ void LLVMCompiler::emitRet(ReturnNode* ret) {
             return;
         }
     }
+    if (isEnumType(srcTy) && destTy->isIntegerTy()) {
+        v = builder->CreateExtractValue(v, {0});
+        srcTy = v->getType();
+    }
+    if (srcTy->isIntegerTy() && isEnumType(destTy)) {
+        llvm::Value* structVal = llvm::ConstantAggregateZero::get(llvm::cast<llvm::StructType>(destTy));
+        v = builder->CreateInsertValue(structVal, v, {0});
+    }
+    if (srcTy->isIntegerTy() && destTy->isIntegerTy()) {
+        unsigned srcBits = srcTy->getIntegerBitWidth();
+        unsigned dstBits = destTy->getIntegerBitWidth();
+        if (srcBits < dstBits) {
+            warn("implicit-extend", get_pos(ret), "implicit extension in return", "QC-W012");
+            v = builder->CreateSExt(v, destTy, "arg_sext");
+        } else if (srcBits > dstBits) {
+            v = builder->CreateTrunc(v, destTy, "arg_trunc");
+            warn("truncation", get_pos(ret), "implicit truncation in return", "QC-W011");
+        }
+    }
+    if (srcTy->isFloatTy() && destTy->isDoubleTy()) {
+        warn("implicit-extend", get_pos(ret), "implicit extension in return", "QC-W012");
+        v = builder->CreateFPExt(v, destTy, "arg_fpext");
+    }
+    if (srcTy->isDoubleTy() && destTy->isFloatTy()) {
+        warn("truncation", get_pos(ret), "implicit truncation in return", "QC-W011");
+        v = builder->CreateFPTrunc(v, destTy, "arg_fptrunc");
+    }
+    if (srcTy->isIntegerTy() && destTy->isFloatingPointTy()) {
+        warn("implicit-int-float", get_pos(ret), "implicit cast between integer and decimal type in return", "QC-W013");
+        v = builder->CreateSIToFP(v, destTy, "arg_sitofp");
+    }
+    if (srcTy->isFloatingPointTy() && destTy->isIntegerTy()) {
+        warn("implicit-int-float", get_pos(ret), "implicit cast between integer and decimal type in return", "QC-W013");
+        v = builder->CreateFPToSI(v, destTy, "arg_fptosi");
+    }
     builder->CreateRet(v);
     return;
 }
@@ -10749,11 +10780,9 @@ void LLVMCompiler::emitStmt(AnyNode node) {
                 if (scope_labels.count(label->name.value) || all_labels.count(label->name.value)) {
                     warn("shadow", get_pos(*label), "attempted to shadow label " + label->name.value, "QC-W022");
                 }
-                llvm::BasicBlock *bb = llvm::BasicBlock::Create(context, label->name.value, currentFunction); 
-                scope_labels[label->name.value] = std::make_pair(bb,
-                                                                 defersStack.size());
-                all_labels[label->name.value] = std::make_pair(bb,
-                                                               defersStack.size());
+                llvm::BasicBlock* bb = llvm::BasicBlock::Create(context, label->name.value, currentFunction);
+                scope_labels[label->name.value] = std::make_pair(bb, defersStack.size());
+                all_labels[label->name.value] = std::make_pair(bb, defersStack.size());
             }
         }
         for (auto& stmt : stmts->statements) { emitStmt(stmt); }
@@ -10820,13 +10849,15 @@ std::pair<bool, int> LLVMCompiler::checkJagged(AnyNode& node) {
     }
     return {false, 0};
 }
-std::vector<CTError> LLVMCompiler::compile(
-    StatementsNode* root, std::unordered_map<std::string, FunctionSignature> visibleFunctionSignatures,
-    std::unordered_map<std::string, FuncDefNode*> visibleFunctionDefs, std::unordered_map<std::string, std::pair<int, int>> visibleJaggedArrays,
-    std::unordered_map<std::string, std::string> visibleArrayTypeStrings, std::unordered_map<std::string, int> visibleArrayLengths,
-    std::unordered_map<std::string, std::string> visibleVarTypes, std::unordered_map<std::string, llvm::AllocaInst*> visibleRuntimeArraySizes,
-    std::unordered_map<std::string, llvm::FunctionType*> visibleLambdaTypes, std::map<std::string, llvm::Function*> visibleSpecializedFunctions,
-    std::unordered_map<std::string, llvm::GlobalVariable*> visibleGlobals) {
+std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_map<std::string, FunctionSignature> visibleFunctionSignatures,
+                                           std::unordered_map<std::string, FuncDefNode*> visibleFunctionDefs,
+                                           std::unordered_map<std::string, std::string> visibleArrayTypeStrings,
+                                           std::unordered_map<std::string, int> visibleArrayLengths,
+                                           std::unordered_map<std::string, std::string> visibleVarTypes,
+                                           std::unordered_map<std::string, llvm::AllocaInst*> visibleRuntimeArraySizes,
+                                           std::unordered_map<std::string, llvm::FunctionType*> visibleLambdaTypes,
+                                           std::map<std::string, llvm::Function*> visibleSpecializedFunctions,
+                                           std::unordered_map<std::string, llvm::GlobalVariable*> visibleGlobals) {
     this->volatileVarsStack = {{}};
     this->functionSignatures = visibleFunctionSignatures;
     this->functionDefs = visibleFunctionDefs;

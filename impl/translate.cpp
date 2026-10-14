@@ -1,4 +1,17 @@
 #include "translate.h"
+#include "compiler.h"
+static std::string clang_resource_dir() {
+    static std::string dir;
+    static bool loaded = false;
+    if (loaded) return dir;
+    loaded = true;
+    if (FILE* p = popen("clang -print-resource-dir 2>/dev/null", "r")) {
+        char buf[512];
+        if (fgets(buf, sizeof buf, p)) dir = trim(buf);
+        pclose(p);
+    }
+    return dir;
+}
 namespace {
 std::string str(CXString s) {
     const char* p = clang_getCString(s);
@@ -16,7 +29,53 @@ void getChildren(CXCursor c, std::vector<CXCursor>* components) {
         },
         components);
 }
+bool isUnsignedInteger(CXType t) {
+    t = clang_getCanonicalType(t);
+    switch (t.kind) {
+    case CXType_Char_U:
+    case CXType_UChar:
+    case CXType_UShort:
+    case CXType_UInt:
+    case CXType_ULong:
+    case CXType_ULongLong:
+    case CXType_UInt128: return true;
+    default: return false;
+    }
+}
+
 } // namespace
+bool isAnon(CXCursor decl) {
+    if (clang_Cursor_isNull(decl)) return false;
+    if (clang_Cursor_isAnonymous(decl)) return true;
+    std::string s = str(clang_getCursorSpelling(decl));
+    return s.empty() || s.find("(unnamed") != std::string::npos || s.find("(anonymous") != std::string::npos;
+}
+std::string anonName(CXCursor decl) {
+    static std::map<std::string, std::string> names;
+    static int counter = 0;
+    std::string key = str(clang_getCursorUSR(decl));
+    if (key.empty()) {
+        CXFile f;
+        unsigned line, col, off;
+        clang_getSpellingLocation(clang_getCursorLocation(decl), &f, &line, &col, &off);
+        key = str(clang_getFileName(f)) + ":" + std::to_string(line) + ":" + std::to_string(col);
+    }
+    auto it = names.find(key);
+    if (it != names.end()) return it->second;
+    return names[key] = "__anonymous_" + std::to_string(counter++);
+}
+CXType baseType(CXType t) {
+    for (;;) {
+        if (t.kind == CXType_Elaborated)
+            t = clang_Type_getNamedType(t);
+        else if (t.kind == CXType_Pointer)
+            t = clang_getPointeeType(t);
+        else if (t.kind == CXType_ConstantArray || t.kind == CXType_IncompleteArray)
+            t = clang_getArrayElementType(t);
+        else
+            return t;
+    }
+}
 void Translator::error(const std::string& msg) {
     ctx->errors.push_back(new CTranslateError(msg));
 }
@@ -24,6 +83,9 @@ void Translator::error(const std::string& msg) {
 int Translator::translate_header() {
     CXIndex idx = clang_createIndex(0, 0);
     std::vector<const char*> argv = {"-x", "c"};
+    std::string rd = clang_resource_dir();
+    if (!rd.empty()) { ctx->args.push_back("-resource-dir=" + rd); }
+    for (const std::string& a : ctx->args) argv.push_back(a.c_str());
     for (const std::string& a : ctx->args) argv.push_back(a.c_str());
     CXTranslationUnit tu = nullptr;
     CXErrorCode err = clang_parseTranslationUnit2(idx, ctx->header.c_str(), argv.data(), (int)argv.size(), nullptr, 0,
@@ -169,8 +231,7 @@ void Translator::onCast(CXCursor c) {
     getChildren(c, &children);
     if (children.empty()) return;
     visit_expr(children[1]);
-    result_file += " as ";
-    translateType(clang_getCursorType(children[0]));
+    result_file += " as " + translateType(clang_getCursorType(children[0]));
 }
 void Translator::onCall(CXCursor c) {
     std::vector<CXCursor> children;
@@ -260,7 +321,17 @@ void Translator::onBinop(CXCursor c) {
     visit_expr(children[0]);
     enum CXBinaryOperatorKind opKind = clang_getCursorBinaryOperatorKind(c);
     CXString opStr = clang_getBinaryOperatorKindSpelling(opKind);
-    result_file += " " + std::string(clang_getCString(opStr)) + " ";
+    std::string txt(clang_getCString(opStr));
+    if (txt == "^") txt = "$";
+    if (txt == ">>") {
+        if (isUnsignedInteger(clang_getCanonicalType(clang_getCursorType(children[0])))) {
+            txt = ":>";
+        } else {
+            txt = "|>";
+        }
+    }
+
+    result_file += " " + txt + " ";
     clang_disposeString(opStr);
     visit_expr(children[1]);
 }
@@ -310,11 +381,15 @@ void Translator::onLiteral(CXCursor c) {
     clang_disposeTokens(tu, tokens, numTokens);
 }
 CXChildVisitResult Translator::visit(CXCursor c, bool indent_braces) {
-    if (!fci) if (!clang_Location_isFromMainFile(clang_getCursorLocation(c))) return CXChildVisit_Continue;
+    if (!fci)
+        if (!clang_Location_isFromMainFile(clang_getCursorLocation(c))) return CXChildVisit_Continue;
     switch (clang_getCursorKind(c)) {
     case CXCursor_FunctionDecl: onFunction(c); break;
     case CXCursor_StructDecl:
-    case CXCursor_UnionDecl: onRecord(c); break;
+    case CXCursor_UnionDecl:
+        if (isAnon(c)) break;
+        onRecord(c);
+        break;
     case CXCursor_EnumDecl: onEnum(c); break;
     case CXCursor_TypedefDecl: onTypedef(c); break;
     case CXCursor_VarDecl: onVar(c); break;
@@ -589,14 +664,8 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
     if (!clang_Cursor_isNull(def)) c = def;
     CXCursorKind kind = clang_getCursorKind(c);
     bool is_union = kind == CXCursor_UnionDecl;
-    CXString spelling = clang_getCursorSpelling(c);
     std::string name = name_override;
-    if (name.empty()) {
-        const char* s = clang_getCString(spelling);
-        if (s) name = s;
-    }
-    clang_disposeString(spelling);
-    if (name.empty()) name = "__anonymous_record";
+    if (name.empty()) name = isAnon(c) ? anonName(c) : str(clang_getCursorSpelling(c));
     if (!mark_type_emitted(name)) return;
     CXType type = clang_getCursorType(c);
     long long size = clang_Type_getSizeOf(type);
@@ -605,12 +674,25 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
         append_indentation();
         return;
     }
+    std::vector<CXCursor> kids;
+    getChildren(c, &kids);
+    for (CXCursor k : kids) {
+        if (clang_getCursorKind(k) != CXCursor_FieldDecl) continue;
+        CXType bt = baseType(clang_getCursorType(k));
+        CXCursor d = clang_getTypeDeclaration(bt);
+        if (!isAnon(d)) continue;
+        if (bt.kind == CXType_Record)
+            onRecord(d, anonName(d));
+        else if (bt.kind == CXType_Enum)
+            onEnum(d, anonName(d));
+    }
     result_file += is_union ? "union " : "struct ";
     result_file += name + " {\n";
     indent_level++;
     struct Context {
         Translator* self;
         std::string* output;
+        int anon_fields = 0;
     };
     Context ctx{this, &result_file};
     clang_visitChildren(
@@ -624,7 +706,9 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
             ctx->self->append_indentation();
             *ctx->output += ctx->self->translateType(field_type);
             *ctx->output += " ";
-            *ctx->output += field_name ? field_name : "__anonymous_field";
+            std::string fname = field_name ? field_name : "";
+            if (fname.empty()) fname = "__anonymous_field_" + std::to_string(ctx->anon_fields++);
+            *ctx->output += fname;
             if (clang_Cursor_isBitField(child)) {
                 int width = clang_getFieldDeclBitWidth(child);
                 *ctx->output += " : " + std::to_string(width);
@@ -698,9 +782,7 @@ void Translator::onVar(CXCursor c) {
     getChildren(c, &children);
     std::vector<CXCursor> initValues;
     for (CXCursor child : children) {
-        if (clang_getCursorKind(child) != CXCursor_TypeRef) {
-            initValues.push_back(child);
-        }
+        if (clang_getCursorKind(child) != CXCursor_TypeRef) { initValues.push_back(child); }
     }
     if (!initValues.empty()) {
         result_file += " = ";
@@ -803,17 +885,13 @@ std::string Translator::translateType(CXType t) {
     }
     case CXType_Record: {
         CXCursor decl = clang_getTypeDeclaration(t);
-        CXString name = clang_getCursorSpelling(decl);
-        std::string result = clang_getCString(name) ? clang_getCString(name) : "";
-        clang_disposeString(name);
-        return result.empty() ? "anonymous_record" : result;
+        if (isAnon(decl)) return anonName(decl);
+        return str(clang_getCursorSpelling(decl));
     }
     case CXType_Enum: {
         CXCursor decl = clang_getTypeDeclaration(t);
-        CXString name = clang_getCursorSpelling(decl);
-        std::string result = clang_getCString(name) ? clang_getCString(name) : "";
-        clang_disposeString(name);
-        return result.empty() ? "anonymous_enum" : result;
+        if (isAnon(decl)) return anonName(decl);
+        return str(clang_getCursorSpelling(decl));
     }
     case CXType_Typedef: {
         CXCursor decl = clang_getTypeDeclaration(t);

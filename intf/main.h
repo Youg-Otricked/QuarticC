@@ -133,7 +133,7 @@ struct RunConfig {
     bool progress = false;
     std::unordered_map<std::string, WarningLevel> warnings;
     bool translate_c = false;
-    bool fci = false;
+    bool fci = true;
     std::vector<std::string> c_args;
     std::vector<std::string> link_o_files;
 };

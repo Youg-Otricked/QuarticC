@@ -20,61 +20,6 @@ namespace CoreConcepts {
         }
     }
 }
-namespace AdvQBool {
-    type AlTypes = qbool | bool | AQB;
-    class AQB {
-        int TruthLevel;
-        int FalseLevel;
-        AQB(int truth) {
-            if (truth > 100 || truth < 0) {
-                throw "Cannot make a advanced qbool more than 100 percent true or more than 100% false.";
-            }
-            this->TruthLevel = truth;
-            this->FalseLevel = 100 - truth;
-        }
-        void operator=(int other) {
-            if (other > 100 || other < 0) {
-                throw "Cannot make a advanced qbool more than 100 percent true.";
-            }
-            this->TruthLevel = other;
-            this->FalseLevel = 100 - other;
-        }
-        bool operator&&(AlTypes other) {
-            if (`typeof(other) == "AdvQBool::AQB") {
-                return this->_eval() && other._eval();
-            } else {
-                return this->_eval() && other;
-            }
-        }
-        bool operator||(AlTypes other) {
-            if (`typeof(other) == "AdvQBool::AQB") {
-                return this->_eval() || other._eval();
-            } else {
-                return this->_eval() || other;
-            }
-        }
-        bool operator^(AlTypes other) {
-            if (`typeof(other) == "AdvQBool::AQB") {
-                return this->_eval() ^ other._eval();
-            } else {
-                return this->_eval() ^ other;
-            }
-        }
-        bool operator!() {
-            return !this->_eval();
-        }
-        bool _eval() {
-            if (`random(0, 100) < this->FalseLevel) {
-                return false;
-            } else {
-                return true;
-            }
-        }
-        string _repr() {
-            return f"Advanced QBool is {this->TruthLevel} true and {this->FalseLevel} false.";
-        }
-    }
-}
 #depends(Array: CoreConcepts)
 namespace Array {
     namespace Iterator {

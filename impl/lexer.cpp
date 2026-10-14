@@ -77,6 +77,11 @@ Token Lexer::make_number() {
             this->advance();
             return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
         }
+        if (this->current_char == 'u') {
+            this->advance();
+            if (this->current_char == 'l') this->advance();
+            if (this->current_char == 'l') this->advance();
+        }
         return Token(TokenType::ADDR_T, std::to_string(val), start_pos);
     } else if (is_octal) {
         while (this->current_char != '\0' && ((std::isdigit(this->current_char) && this->current_char - '0' < 8) || this->current_char == '\'')) {
@@ -100,6 +105,11 @@ Token Lexer::make_number() {
         } else if (this->current_char == 'n') {
             this->advance();
             return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
+        }
+        if (this->current_char == 'u') {
+            this->advance();
+            if (this->current_char == 'l') this->advance();
+            if (this->current_char == 'l') this->advance();
         }
         return Token(TokenType::ADDR_T, std::to_string(val), start_pos);
     } else if (is_binary) {
@@ -125,9 +135,14 @@ Token Lexer::make_number() {
             this->advance();
             return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
         }
+        if (this->current_char == 'u') {
+            this->advance();
+            if (this->current_char == 'l') this->advance();
+            if (this->current_char == 'l') this->advance();
+        }
         return Token(TokenType::ADDR_T, std::to_string(val), start_pos);
     } else {
-        while (this->current_char != '\0' && isCharInSet(this->current_char, DIGITS + ".flsayn'")) {
+        while (this->current_char != '\0' && isCharInSet(this->current_char, DIGITS + ".flsaynu'")) {
             if (this->current_char == '.') {
                 if (dot_count == 1 || is_hex || is_binary || is_octal) {
                     this->advance();
@@ -148,9 +163,11 @@ Token Lexer::make_number() {
                 is_short = true;
                 this->advance();
                 break;
-            } else if (this->current_char == 'a') {
+            } else if (this->current_char == 'a' || this->current_char == 'u') {
                 is_addrt = true;
                 this->advance();
+                if (this->current_char == 'l') this->advance();
+                if (this->current_char == 'l') this->advance();
                 break;
             } else if (this->current_char == 'y') {
                 this->advance();
@@ -191,7 +208,8 @@ Token Lexer::make_identifier() {
         this->advance();
     }
     if (
-        /* primitives */ id == "int" || id == "float" || id == "double" || id == "bool" || id == "string" || id == "qbool" || id == "char" || id == "ai64u_t" || id == "ai64_t" || id == "i32u_t" || id == "i16u_t" ||
+        /* primitives */ id == "int" || id == "float" || id == "double" || id == "bool" || id == "string" || id == "qbool" || id == "char" ||
+        id == "ai64u_t" || id == "ai64_t" || id == "i32u_t" || id == "i16u_t" ||
         /* storage modifiers */ id == "long" || id == "short" || id == "const" || id == "atomic" ||
         /* switch */ id == "case" || id == "switch" || id == "default" || id == "match" ||
         /* if else */ id == "if" || id == "else" ||
@@ -202,10 +220,10 @@ Token Lexer::make_identifier() {
         /* q stuff */ id == "qif" || id == "qelse" || id == "qelif" || id == "qswitch" ||
         /* usertypes */ id == "class" || id == "struct" || id == "enum" || id == "type" ||
         /* extern */ id == "foreign" || id == "extern" ||
-        /* namespace */ id == "namespace" || // i̶m̶ ̶t̶o̶o̶ ̶l̶a̶z̶y̶ ̶t̶o̶ ̶d̶o̶ ̶t̶h̶e̶ ̶r̶e̶s̶t̶ ̶o̶f̶ ̶t̶h̶i̶s̶ ̶r̶e̶o̶r̶g̶i̶n̶i̶z̶a̶t̶i̶o̶n̶ nevermind i did it. why did i do this. Also yes i am
-                                             // using neovim and did just manually type
-        // <C-v>u0336 1... 2... 51 times. And yes you did just count them. And yes, there are probably 50 or 52. It should be a unordered set. Im not
-        // making it a unordered_set. 64 or's are faster. Yes i did count them. yes i am probably off.
+        /* namespace */ id == "namespace" || // i̶m̶ ̶t̶o̶o̶ ̶l̶a̶z̶y̶ ̶t̶o̶ ̶d̶o̶ ̶t̶h̶e̶ ̶r̶e̶s̶t̶ ̶o̶f̶ ̶t̶h̶i̶s̶ ̶r̶e̶o̶r̶g̶i̶n̶i̶z̶a̶t̶i̶o̶n̶ nevermind i did it. why did i do this. Also yes
+                                             // i am using neovim and did just manually type
+        // <C-v>u0336 1... 2... 51 times. And yes you did just count them. And yes, there are probably 50 or 52. It should be a unordered set. Im
+        // not making it a unordered_set. 64 or's are faster. Yes i did count them. yes i am probably off.
         /* operator */ id == "roperator" || id == "operator" ||
         /* try/catch */ id == "try" || id == "catch" ||
         /* nullptr */ id == "nullptr" ||

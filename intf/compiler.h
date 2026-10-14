@@ -250,7 +250,7 @@ class LLVMCompiler {
     LLVMCompiler(std::unordered_map<std::string, UserTypeInfo>& userTys, llvm::Module* mod, llvm::LLVMContext& ctx, bool is_main = false);
     std::vector<CTError> compile(
         StatementsNode* root, std::unordered_map<std::string, FunctionSignature> visibleFunctionSignatures,
-        std::unordered_map<std::string, FuncDefNode*> visibleFunctionDefs, std::unordered_map<std::string, std::pair<int, int>> visibleJaggedArrays,
+        std::unordered_map<std::string, FuncDefNode*> visibleFunctionDefs,
         std::unordered_map<std::string, std::string> visibleArrayTypeStrings, std::unordered_map<std::string, int> visibleArrayLengths,
         std::unordered_map<std::string, std::string> visibleVarTypes, std::unordered_map<std::string, llvm::AllocaInst*> visibleRuntimeArraySizes,
         std::unordered_map<std::string, llvm::FunctionType*> visibleLambdaTypes, std::map<std::string, llvm::Function*> visibleSpecializedFunctions,
@@ -918,12 +918,6 @@ class LLVMCompiler {
                 std::string funcName = (*varAcc)->var_name_tok.value;
                 if (funcName == "`is_empty" || funcName == "`to_bool") return "bool";
                 if (funcName == "`inline" || funcName == "`qout") return "void";
-                if (funcName == "`time") return "addr_t";
-                if (funcName == "`seed") return "void";
-                if (funcName == "`random") {
-                    if ((*callNode)->arg_nodes.size() > 1) { return "double"; }
-                    return "int";
-                }
                 if (funcName == "`len") return "addr_t";
                 if (funcName == "`to_lower" || funcName == "`to_upper" || funcName == "`substring" || funcName == "`trim" || funcName == "`replace" ||
                     funcName == "`read" || funcName == "`to_string")
