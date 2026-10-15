@@ -115,106 +115,106 @@ jobs:
         with:
           name: test.qc
           path: test.qc
-  build-wasm:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Emscripten
-        uses: mymindstorm/setup-emsdk@v13
-        with:
-          version: 'latest'
-      - name: Install dependencies
-        run: |
-            sudo apt update
-            sudo apt install -y \
-              cmake ninja-build git \
-              zlib1g-dev libclang-22-dev libxml2-dev libedit-dev libzstd-dev
-      - name: Restore LLVM cache
-        id: cache-llvm
-        uses: actions/cache/restore@v4
-        with:
-          path: llvm-install
-          key: llvm-wasm-${{ runner.os }}-21
-      - name: Build LLVM To WASM
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 https://github.com/llvm/llvm-project.git
-          cd llvm-project
-          emcmake cmake -S llvm -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/llvm-install \
-            -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
-            -DLLVM_ENABLE_PROJECTS="" \
-            -DLLVM_INCLUDE_TESTS=OFF \
-          -DLLVM_INCLUDE_EXAMPLES=OFF \
-          -DLLVM_INCLUDE_BENCHMARKS=OFF \
-          -DLLVM_ENABLE_ZLIB=OFF \
-          -DLLVM_ENABLE_TERMINFO=OFF \
-          -DLLVM_ENABLE_LIBXML2=OFF \
-          -DLLVM_ENABLE_LIBEDIT=OFF \
-          -DLLVM_ENABLE_FFI=OFF \
-          -DLLVM_ENABLE_ZSTD=OFF
-          ninja -C build -j$(nproc)
-          ninja -C build install
-      - name: Save LLVM cache
-        if: steps.cache-llvm.outputs.cache-hit != 'true' && success()
-        uses: actions/cache/save@v4
-        with:
-          path: llvm-install
-          key: llvm-wasm-${{ runner.os }}-21
-      - name: Build QuarticC
-        run: |
-          mkdir -p build
-          cd build
-          em++ -c ../runtime.cpp -o ./runtime.o
-          emcmake cmake .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DLLVM_DIR=$GITHUB_WORKSPACE/llvm-install/lib/cmake/llvm \
-            -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/llvm-install \
-            -DCXX_RUNTIME=ON
-
-          emmake make -j$(nproc) VERBOSE=1
-      - name: Upload WASM build
-        uses: actions/upload-artifact@v4
-        with:
-          name: qc-wasm
-          path: |
-            build/qc.js
-            build/qc.wasm
-            build/qc.data
-            build/runtime.o
-  deploy-to-website:  
-    needs: [build-wasm]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
-    steps:
-      - name: Checkout website repo
-        uses: actions/checkout@v4
-        with:
-          repository: Youg-Otricked/learnhardcode
-          token: ${{ secrets.PAT_TOKEN }}
-          path: website
-      
-      - name: Download WASM artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: qc-wasm
-          path: ./wasm-files
-      
-      - name: Copy WASM files to website repo
-        run: |
-          cp wasm-files/qc.js website/QuarticC/
-          cp wasm-files/qc.wasm website/QuarticC/
-          cp wasm-files/qc.data website/QuarticC/
-          cp wasm-files/runtime.o website/QuarticC/       
-      - name: Commit and push to website repo
-        run: |
-          cd website
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add QuarticC/qc.js QuarticC/qc.wasm QuarticC/qc.data QuarticC/runtime.o
-          git commit -m "Update Quartic C compiler [automated]" || echo "No changes to commit"
-          git push
+#  build-wasm:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v4
+#      - name: Setup Emscripten
+#        uses: mymindstorm/setup-emsdk@v13
+#        with:
+#          version: 'latest'
+#      - name: Install dependencies
+#        run: |
+#            sudo apt update
+#            sudo apt install -y \
+#              cmake ninja-build git \
+#              zlib1g-dev libclang-22-dev libxml2-dev libedit-dev libzstd-dev
+#      - name: Restore LLVM cache
+#        id: cache-llvm
+#        uses: actions/cache/restore@v4
+#        with:
+#          path: llvm-install
+#          key: llvm-wasm-${{ runner.os }}-21
+#      - name: Build LLVM To WASM
+#        if: steps.cache-llvm.outputs.cache-hit != 'true'
+#        run: |
+#          git clone --depth 1 https://github.com/llvm/llvm-project.git
+#          cd llvm-project
+#          emcmake cmake -S llvm -B build -G Ninja \
+#            -DCMAKE_BUILD_TYPE=Release \
+#           -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/llvm-install \
+#            -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
+#            -DLLVM_ENABLE_PROJECTS="" \
+#            -DLLVM_INCLUDE_TESTS=OFF \
+#          -DLLVM_INCLUDE_EXAMPLES=OFF \
+#          -DLLVM_INCLUDE_BENCHMARKS=OFF \
+#          -DLLVM_ENABLE_ZLIB=OFF \
+#          -DLLVM_ENABLE_TERMINFO=OFF \
+#          -DLLVM_ENABLE_LIBXML2=OFF \
+#          -DLLVM_ENABLE_LIBEDIT=OFF \
+#          -DLLVM_ENABLE_FFI=OFF \
+#          -DLLVM_ENABLE_ZSTD=OFF
+#          ninja -C build -j$(nproc)
+#          ninja -C build install
+#      - name: Save LLVM cache
+##       if: steps.cache-llvm.outputs.cache-hit != 'true' && success()
+#       uses: actions/cache/save@v4
+#       with:
+#         path: llvm-install
+#         key: llvm-wasm-${{ runner.os }}-21
+#     - name: Build QuarticC
+#       run: |
+#         mkdir -p build
+#         cd build
+#         em++ -c ../runtime.cpp -o ./runtime.o
+#         emcmake cmake .. \
+#           -DCMAKE_BUILD_TYPE=Release \
+#           -DLLVM_DIR=$GITHUB_WORKSPACE/llvm-install/lib/cmake/llvm \
+#           -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/llvm-install \
+#           -DCXX_RUNTIME=ON
+#         emmake make -j$(nproc) VERBOSE=1
+#     - name: Upload WASM build
+#       uses: actions/upload-artifact@v4
+#       with:
+#         name: qc-wasm
+#         path: |
+#           build/qc.js
+#           build/qc.wasm
+#           build/qc.data
+#           build/runtime.o
+# deploy-to-website:  
+#   needs: [build-wasm]
+#   runs-on: ubuntu-latest
+#   if: github.ref == 'refs/heads/master'
+#   steps:
+#     - name: Checkout website repo
+#       uses: actions/checkout@v4
+#       with:
+#         repository: Youg-Otricked/learnhardcode
+#         token: ${{ secrets.PAT_TOKEN }}
+#         path: website
+#     
+#     - name: Download WASM artifacts
+#       uses: actions/download-artifact@v4
+#       with:
+#         name: qc-wasm
+#         path: ./wasm-files
+#     
+#     - name: Copy WASM files to website repo
+#       run: |
+#         cp wasm-files/qc.js website/QuarticC/
+#         cp wasm-files/qc.wasm website/QuarticC/
+#         cp wasm-files/qc.data website/QuarticC/
+#         cp wasm-files/runtime.o website/QuarticC/       
+#     - name: Commit and push to website repo
+#       run: |
+#         cd website
+#         git config user.name "GitHub Actions"
+#         git config user.email "actions@github.com"
+#         git add QuarticC/qc.js QuarticC/qc.wasm QuarticC/qc.data QuarticC/runtime.o
+#         git commit -m "Update Quartic C compiler [automated]" || echo "No changes to commit"
+#         git push
+#
   release:
     needs: [tag, build-linux, build-macos, upload-extras]
     if: always() && needs.tag.outputs.exists != 'true' && needs.tag.result == 'success'
