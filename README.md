@@ -113,8 +113,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.3.35 = "FULL C Translation"
-Next Version: x1.3.4 = "Include system upgrade, Formatter, More STL, Other QOL"
+Current Version: x1.3.4 = "Include system upgrade "
+Next Version: x1.3.5 = "Formatter, More STL, Other QOL"
 
 # Current Version Highlights
 
@@ -129,7 +129,7 @@ Moderate
 └─ QOL
 
 Minor
-└─ C Translation
+└─ Include upgrade
 
 Patch
 └─ N/A
@@ -269,16 +269,6 @@ See the include-system docs for full details.
 int main() {
     return Math::Max(1234, 432); // Using the math namespace.
 }
-```
-
-Namespaces can also declare dependencies on other namespaces in the same file
-using `#depends`, ensuring includers automatically see required types even if
-they only explicitly included one namespace from that file:
-
-```cpp
-#depends(x: y)
-namespace x { /* uses y::Something internally */ }
-namespace y { /* ... */ }
 ```
 
 Want to learn more? Check out the [docs for it](https://youg-otricked.github.io/QuarticC/include.html).

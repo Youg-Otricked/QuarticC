@@ -20,7 +20,6 @@ namespace CoreConcepts {
         }
     }
 }
-#depends(Array: CoreConcepts)
 namespace Array {
     namespace Iterator {
         class It<T> {
@@ -105,7 +104,6 @@ namespace Array {
     }
     Arr proves CoreConcepts::Allocated;
 }
-#depends(Vector: CoreConcepts)
 namespace Vector {
     namespace Iterator {
         class It<T> {
@@ -232,7 +230,6 @@ namespace Vector {
     }
     Vec proves CoreConcepts::Allocated;
 }
-#depends(List: CoreConcepts)
 namespace List {
     class Node<T> {
         T data;
@@ -428,7 +425,6 @@ namespace List {
     }
     List proves CoreConcepts::Allocated;
 }
-#depends(Utils: Vector)
 namespace Utils {
     Vector::Vec<int> range(int start, int stop, int step = 1) {
         Vector::Vec<int> fin = Vector::Vec<int>();
@@ -832,7 +828,6 @@ namespace Encodings {
         }
     }
 }
-#depends(Unordered: CoreConcepts)
 namespace Unordered {
     concept Hash {
         1_of {
@@ -844,7 +839,6 @@ namespace Unordered {
         T value;
         SetNode<T>* next;
     }
-    #depends(Unordered: Pair)
     class MapNode<K, V> {
         Pair::Pair<K, V> data;
         MapNode<K, V>* next;
@@ -1133,7 +1127,6 @@ namespace Unordered {
     Map proves CoreConcepts::Allocated;
 }
 /*
-#depends(Ordered: CoreConcepts)
 namespace Ordered {
     concept Ord {
         at_least 1_of {
@@ -2153,7 +2146,6 @@ namespace Filesystem {
         output.close();
     }
 }
-#depends(Owned: CoreConcepts)
 namespace Owned {
     class Owned<T> {
         private T *data;

@@ -5036,7 +5036,32 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
     return newVal;
 }
 llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
+    bool isPostfix = (*unary)->is_postfix;
     TokenType op = (*unary)->op_tok.type;
+    if ((*unary)->op_tok.type == TokenType::INCREMENT || (*unary)->op_tok.type == TokenType::DECREMENT) {
+        llvm::Value* lhs = emitLValue((*unary)->node);
+        if (!lhs) return nullptr;
+        std::string ty = getExpressionType((*unary)->node, false);
+        if (ty.ends_with("&")) ty.pop_back();
+        llvm::Type* valTy = llvmTypeFor(ty);
+        std::string name = std::get_if<VarAccessNode*>(&(*unary)->node) ? (*(std::get_if<VarAccessNode*>(&(*unary)->node)))->var_name_tok.value : "";
+        llvm::Value* oldVal = builder->CreateLoad(valTy, lhs, resolveVolatileVar(name), "inc_deref");
+        bool inc = (*unary)->op_tok.type == TokenType::INCREMENT;
+        llvm::Value* newVal;
+        if (valTy->isPointerTy()) {
+            std::string elem = ty == "string" ? "char" : ty.substr(0, ty.size() - 1);
+            llvm::Value* step = llvm::ConstantInt::get(builder->getIntNTy(getPtrSize()), inc ? 1 : -1, true);
+            newVal = builder->CreateGEP(llvmTypeFor(elem), oldVal, step, inc ? "ptr_inc" : "ptr_dec");
+        } else if (valTy->isIntegerTy()) {
+            llvm::Value* one = llvm::ConstantInt::get(valTy, 1);
+            newVal = inc ? builder->CreateAdd(oldVal, one, "inc") : builder->CreateSub(oldVal, one, "dec");
+        } else {
+            cg_error((*unary)->op_tok.pos, "++/-- only valid on int-like", "QC-S163");
+            return nullptr;
+        }
+        builder->CreateStore(newVal, lhs, resolveVolatileVar(name));
+        return isPostfix ? oldVal : newVal;
+    }
     llvm::Value* operand = emitExpr((*unary)->node);
     if (!operand) return nullptr;
     llvm::Type* operandTy = operand->getType();
@@ -5062,7 +5087,6 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
             break;
         }
     }
-    bool isPostfix = (*unary)->is_postfix;
     if (auto structTy = llvm::dyn_cast<llvm::StructType>(operandTy)) {
         if (structTy->hasName()) {
             std::string className = structTy->getName().str();
@@ -5148,30 +5172,6 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
             cg_error((*unary)->op_tok.pos, "- requires numeric operand", "QC-S162");
             return nullptr;
         }
-    }
-    if ((*unary)->op_tok.type == TokenType::INCREMENT || (*unary)->op_tok.type == TokenType::DECREMENT) {
-        llvm::Value* lhs = emitLValue((*unary)->node);
-        if (!lhs) return nullptr;
-        std::string ty = getExpressionType((*unary)->node, false);
-        if (ty.ends_with("&")) ty.pop_back();
-        llvm::Type* valTy = llvmTypeFor(ty);
-        std::string name = std::get_if<VarAccessNode*>(&(*unary)->node) ? (*(std::get_if<VarAccessNode*>(&(*unary)->node)))->var_name_tok.value : "";
-        llvm::Value* oldVal = builder->CreateLoad(valTy, lhs, resolveVolatileVar(name), "inc_deref");
-        bool inc = (*unary)->op_tok.type == TokenType::INCREMENT;
-        llvm::Value* newVal;
-        if (valTy->isPointerTy()) {
-            std::string elem = ty == "string" ? "char" : ty.substr(0, ty.size() - 1);
-            llvm::Value* step = llvm::ConstantInt::get(builder->getIntNTy(getPtrSize()), inc ? 1 : -1, true);
-            newVal = builder->CreateGEP(llvmTypeFor(elem), oldVal, step, inc ? "ptr_inc" : "ptr_dec");
-        } else if (valTy->isIntegerTy()) {
-            llvm::Value* one = llvm::ConstantInt::get(valTy, 1);
-            newVal = inc ? builder->CreateAdd(oldVal, one, "inc") : builder->CreateSub(oldVal, one, "dec");
-        } else {
-            cg_error((*unary)->op_tok.pos, "++/-- only valid on int-like", "QC-S163");
-            return nullptr;
-        }
-        builder->CreateStore(newVal, lhs, resolveVolatileVar(name));
-        return isPostfix ? oldVal : newVal;
     }
     if ((*unary)->op_tok.type == TokenType::AMPERSAND) { return emitLValue((*unary)->node); }
     if ((*unary)->op_tok.type == TokenType::MUL) {

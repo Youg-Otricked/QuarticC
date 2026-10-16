@@ -89,15 +89,3 @@ namespace Thingy
 namespace OtherThingy
 file-c code
 ```
-
-Namespaces can also declare dependencies on other namespaces in the same file
-using `#depends`, ensuring includers automatically see required types even if
-they only explicitly included one namespace from that file:
-
-```cpp
-#depends(x: y)
-namespace x { /* uses y::Something internally */ }
-namespace y { /* ... */ }
-```
-
-

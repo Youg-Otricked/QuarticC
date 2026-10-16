@@ -26,6 +26,7 @@ const SourceFile& SourceManager::get(uint32_t id) const {
     return files.at(id);
 }
 Position::Position() {
+    this->file_id = INVALID_FILE_ID;
 }
 std::string Position::string(size_t context) const {
     const auto& file = SourceManager::instance().get(this->file_id);

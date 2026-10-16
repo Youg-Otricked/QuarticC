@@ -12,10 +12,22 @@ std::string trim(const std::string& str) {
     size_t last = str.find_last_not_of(" \t\n\r");
     return str.substr(first, last - first + 1);
 }
+#include <cstdlib>
 std::string resolve_path(const std::string& current_file, const std::string& include_path) {
-    std::filesystem::path current(current_file);
     std::filesystem::path include(include_path);
-    if (include.is_absolute()) { return include.string(); }
+    std::string raw = include.string();
+    if (raw == "~" || raw.starts_with("~/")) {
+        const char* home = std::getenv("HOME");
+        if (home) {
+            if (raw == "~") {
+                include = std::filesystem::path(home);
+            } else {
+                include = std::filesystem::path(home) / raw.substr(2);
+            }
+        }
+    }
+    if (include.is_absolute()) { return std::filesystem::weakly_canonical(include).string(); }
+    std::filesystem::path current(current_file);
     std::filesystem::path resolved = current.parent_path() / include;
     return std::filesystem::weakly_canonical(resolved).string();
 }
@@ -439,38 +451,6 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         }
     }
     pos = 0;
-    while ((pos = source.find("#depends", pos)) != std::string::npos) {
-        bool in_string = false;
-        for (size_t check = 0; check < pos; check++) {
-            if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
-        }
-        if (inside_comment(cm, pos)) { in_string = true; }
-        if (in_string) {
-            pos++;
-            continue;
-        }
-        size_t start = source.find('(', pos);
-        size_t end = source.find(')', start);
-        if (start == std::string::npos || end == std::string::npos) {
-            throw std::runtime_error("malformed #depends directive: expected #depends(<namespace>: <deps...>)");
-        }
-        std::string directive = source.substr(start + 1, end - start - 1);
-
-        size_t colon = directive.find(':');
-        if (colon == std::string::npos) { throw std::runtime_error("malformed #depends directive: missing ':' separator"); }
-        std::string owner_ns = trim(directive.substr(0, colon));
-        std::string rest = directive.substr(colon + 1);
-        size_t segment_start = 0;
-        size_t comma = rest.find(',', segment_start);
-        while (comma != std::string::npos) {
-            namespace_depends[owner_ns].push_back(trim(rest.substr(segment_start, comma - segment_start)));
-            segment_start = comma + 1;
-            comma = rest.find(',', segment_start);
-        }
-        namespace_depends[owner_ns].push_back(trim(rest.substr(segment_start)));
-
-        pos = end + 1;
-    }
     pos = 0;
     while ((pos = source.find("#include", pos)) != std::string::npos) {
         bool in_string = false;

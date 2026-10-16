@@ -349,8 +349,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
         if (result) {
             std::vector<Diagnostic> diag;
             if (!context.errors.empty()) {
-                for (auto& err : context.errors)
-                    diag.push_back({new CTError(err->details, err->pos), "Error"});
+                for (auto& err : context.errors) diag.push_back({new CTError(err->details, err->pos), "Error"});
             }
             return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, "", diag};
         }
@@ -361,11 +360,11 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             outfile << translator.result_file;
             outfile.close();
         }
-        return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, "Translated " + file + " to " + (config.output_file == "a.out" ? "stdout" : config.output_file) + "."};
+        return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr},
+                   "Translated " + file + " to " + (config.output_file == "a.out" ? "stdout" : config.output_file) + "."};
     }
     // Check for inline directives
-    definitions = config.definitions;
-    definitions["__FILE__"] = "\"" + file + "\"";
+    auto base_defs = config.definitions;
     aliases = config.aliases;
     dir_aliases = config.dir_aliases;
     if (text.find("// @no-context") != std::string::npos) { config.use_context = false; }
@@ -422,17 +421,16 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::cout << "[PREPROCESSING] " << current_file << '\n';
                 std::cout.flush();
             }
+            definitions = base_defs;
+            definitions["__FILE__"] = "\"" + current_file + "\"";
             auto outputofdeps = preprocess_includes(current_text, current_file, config.c_args, config.fci);
             if (config.progress) {
                 std::cout << "[DONE PREPROCESSING] " << current_file << '\n';
                 std::cout.flush();
             }
-            if (config.debug) {
-                std::cout << "[PREPROCESSING RESULT]: \n" << outputofdeps.clean_source;
-            }
+            if (config.debug) { std::cout << "[PREPROCESSING RESULT]: \n" << outputofdeps.clean_source; }
             if (!outputofdeps.errors.empty()) {
-                return Mer{Aer{nullptr, nullptr},
-                   Ler{std::vector<Token>{}, nullptr}, "Failed to preprocess.", outputofdeps.errors};
+                return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>{}, nullptr}, "Failed to preprocess.", outputofdeps.errors};
             }
             if (!(current_file == file)) { no_main = saved_no_main; }
             cleaned_files[current_file] = outputofdeps.clean_source;
@@ -460,7 +458,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
     std::unordered_map<std::string, Aer> file_asts;
     std::unordered_map<std::string, std::unordered_map<std::string, UserTypeInfo>> type_registry;
     Ler resp;
-    Error *error = nullptr;
+    Error* error = nullptr;
     std::function<void(const std::string&)> process_file = [&](const std::string& path) {
         if (file_asts.count(path)) return;
         if (error) return;
@@ -468,24 +466,23 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
         for (auto const& [dep_path, ns_list] : deps) { process_file(dep_path); }
         std::unordered_map<std::string, UserTypeInfo> visible_types;
         for (auto const& [dep_path, ns_list] : deps) {
-            auto& dep_types = type_registry[dep_path];
-            std::unordered_set<std::string> widened_ns(ns_list.begin(), ns_list.end());
-            std::vector<std::string> worklist(ns_list.begin(), ns_list.end());
-            while (!worklist.empty()) {
-                std::string ns = worklist.back();
-                worklist.pop_back();
-                if (file_namespace_deps.count(dep_path) && file_namespace_deps[dep_path].count(ns)) {
-                    for (const std::string& needed_ns : file_namespace_deps[dep_path][ns]) {
-                        if (widened_ns.insert(needed_ns).second) { worklist.push_back(needed_ns); }
+            for (auto const& [type_name, info] : type_registry[dep_path])
+                for (const std::string& ns : ns_list)
+                    if (!ns.empty() && type_name.rfind(ns + "::", 0) == 0) {
+                        visible_types[type_name] = info;
+                        break;
                     }
-                }
-            }
-            for (const std::string& ns : widened_ns) {
-                for (auto& [type_name, info] : dep_types) {
-                    if (type_name.rfind(ns + "::", 0) == 0) { visible_types[type_name] = info; }
-                }
-            }
         }
+        std::unordered_set<std::string> seen;
+        for (auto const& [d, _] : deps) seen.insert(d);
+        std::function<void(const std::string&)> addTransitive = [&](const std::string& p) {
+            for (auto const& [d2, _] : file_included_namespaces[p]) {
+                if (!seen.insert(d2).second) continue;
+                for (auto const& [type_name, info] : type_registry[d2]) visible_types.emplace(type_name, info);
+                addTransitive(d2);
+            }
+        };
+        for (auto const& [d, _] : deps) addTransitive(d);
         Ler file_resp;
         try {
             if (config.progress) {
@@ -664,6 +661,12 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 sorted_files.push_back(p);
             };
             sort_visit(file);
+            std::unordered_map<std::string, std::unordered_set<std::string>> reach;
+            for (auto& p : sorted_files)
+                for (auto const& [dep, ns] : file_included_namespaces[p]) {
+                    reach[p].insert(dep);
+                    reach[p].insert(reach[dep].begin(), reach[dep].end());
+                }
             std::vector<Diagnostic> diagnostics;
             for (auto& filepath : sorted_files) {
                 std::unordered_map<std::string, FunctionSignature> visSigs;
@@ -675,37 +678,42 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::unordered_map<std::string, llvm::GlobalVariable*> visGlobals;
                 std::unordered_map<std::string, llvm::FunctionType*> visLamb;
                 std::map<std::string, llvm::Function*> visSpec;
-                for (auto const& [dep_p, ns_list] : file_included_namespaces[filepath]) {
-                    if (db_sigs.find(dep_p) == db_sigs.end()) continue;
-                    for (const std::string& ns : ns_list) {
-                        if (ns.empty()) continue;
-                        auto pre = ns + "::";
-                        auto& d_sigs = db_sigs.at(dep_p);
-                        auto& d_fDefs = db_fDefs.at(dep_p);
-                        auto& d_typeStr = db_typeStrings.at(dep_p);
-                        auto& d_len = db_lengths.at(dep_p);
-                        auto& d_vars = db_vars.at(dep_p);
-                        auto& d_allocs = db_allocas.at(dep_p);
-                        auto& d_lambs = db_lambdas.at(dep_p);
-                        auto& d_spec = db_specialized.at(dep_p);
-                        auto& d_globals = db_globals.at(dep_p);
-                        for (auto const& [k, v] : d_sigs)
-                            if (k.rfind(pre, 0) == 0) visSigs[k] = v;
-                        for (auto const& [k, v] : d_fDefs)
-                            if (k.rfind(pre, 0) == 0) visFDefs[k] = v;
-                        for (auto const& [k, v] : d_typeStr)
-                            if (k.rfind(pre, 0) == 0) visTypeStr[k] = v;
-                        for (auto const& [k, v] : d_len)
-                            if (k.rfind(pre, 0) == 0) visLen[k] = v;
-                        for (auto const& [k, v] : d_vars)
-                            if (k.rfind(pre, 0) == 0) visVars[k] = v;
-                        for (auto const& [k, v] : d_allocs)
-                            if (k.rfind(pre, 0) == 0) visAlloc[k] = v;
-                        for (auto const& [k, v] : d_lambs)
-                            if (k.rfind(pre, 0) == 0) visLamb[k] = v;
-                        for (auto const& [k, v] : d_globals)
-                            if (k.rfind(pre, 0) == 0) visGlobals[k] = v;
-                        if (d_spec.count(ns)) { visSpec[ns] = d_spec.at(ns); }
+                auto& directMap = file_included_namespaces[filepath];
+                for (auto const& dep_p : reach[filepath]) {
+                    if (!db_sigs.count(dep_p)) continue;
+                    auto direct = directMap.find(dep_p);
+                    bool isDirect = direct != directMap.end();
+                    auto want = [&](const std::string& k) {
+                        if (!isDirect) return true;
+                        for (auto& ns : direct->second)
+                            if (!ns.empty() && k.rfind(ns + "::", 0) == 0) return true;
+                        return false;
+                    };
+                    for (auto const& [k, v] : db_sigs.at(dep_p))
+                        if (want(k)) visSigs[k] = v;
+                    for (auto const& [k, v] : db_fDefs.at(dep_p))
+                        if (want(k)) visFDefs[k] = v;
+                    for (auto const& [k, v] : db_typeStrings.at(dep_p))
+                        if (want(k)) visTypeStr[k] = v;
+                    for (auto const& [k, v] : db_lengths.at(dep_p))
+                        if (want(k)) visLen[k] = v;
+                    for (auto const& [k, v] : db_vars.at(dep_p))
+                        if (want(k)) visVars[k] = v;
+                    for (auto const& [k, v] : db_allocas.at(dep_p))
+                        if (want(k)) visAlloc[k] = v;
+                    for (auto const& [k, v] : db_lambdas.at(dep_p))
+                        if (want(k)) visLamb[k] = v;
+                    for (auto const& [k, v] : db_globals.at(dep_p))
+                        if (want(k)) visGlobals[k] = v;
+                    for (auto const& [k, v] : db_specialized.at(dep_p)) {
+                        bool ok = !isDirect;
+                        if (isDirect)
+                            for (auto& ns : direct->second)
+                                if (k == ns) {
+                                    ok = true;
+                                    break;
+                                }
+                        if (ok) visSpec[k] = v;
                     }
                 }
                 isHeader = std::filesystem::path(filepath).extension() == ".hqc";
@@ -713,10 +721,12 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                     std::cout << "[COMPILING] " << filepath << '\n';
                     std::cout.flush();
                 }
-                LLVMCompiler comp(file_asts[filepath].user_types, master_module, context, filepath == file);
+                auto types = file_asts[filepath].user_types;
+                for (const auto& dep : reach[filepath]) types.insert(type_registry[dep].begin(), type_registry[dep].end());
+                LLVMCompiler comp(types, master_module, context, filepath == file);
                 comp.config = config;
-                std::vector<CTError> errs = comp.compile(file_asts[filepath].statements, visSigs, visFDefs, visTypeStr, visLen, visVars,
-                                                         visAlloc, visLamb, visSpec, visGlobals);
+                std::vector<CTError> errs = comp.compile(file_asts[filepath].statements, visSigs, visFDefs, visTypeStr, visLen, visVars, visAlloc,
+                                                         visLamb, visSpec, visGlobals);
                 if (config.progress) {
                     std::cout << "[DONE COMPILING] " << filepath << '\n';
                     std::cout.flush();
@@ -861,9 +871,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             }
             std::string final_exe = config.output_file.empty() ? config.dynamic ? "a.so" : "a.out" : config.output_file;
             std::string link_cmd = "clang " + obj_file;
-            for (const auto& path : config.link_o_files) {
-                link_cmd += " " + path + " ";
-            }
+            for (const auto& path : config.link_o_files) { link_cmd += " " + path + " "; }
             link_cmd += " -o " + final_exe;
             for (const auto& path : to_link_dir) { link_cmd += " -L\"" + path + "\""; }
             for (const auto& lib : to_link) {
