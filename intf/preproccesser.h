@@ -2,8 +2,8 @@
 #define PREPROCCESSER_H
 #include "nodes.h"
 #include <algorithm>
-#include <string>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -46,20 +46,30 @@ static MatchResult findMatch(const std::string& src, size_t searchStart) {
     }
     return {std::string::npos, std::string::npos};
 }
+struct CommentMask {
+    std::vector<unsigned char> bits;
+    size_t size = 0;
+};
 enum class ParserState { Code, String, SingleLineComment, MultiLineComment };
-static bool inside_comment(const std::string& source, size_t pos) {
-    if (pos >= source.length()) return false;
+static CommentMask build_comment_mask(const std::string& source) {
+    CommentMask m;
+    m.size = source.size();
+    m.bits.assign(source.size() + 1, 0);
     ParserState state = ParserState::Code;
-    for (size_t i = 0; i < pos; i++) {
+    size_t n = source.size();
+    for (size_t i = 0; i < n; i++) {
+        m.bits[i] = (state == ParserState::SingleLineComment || state == ParserState::MultiLineComment);
         char current = source[i];
-        char next = (i + 1 < source.length()) ? source[i + 1] : '\0';
+        char next = (i + 1 < n) ? source[i + 1] : '\0';
         switch (state) {
         case ParserState::Code:
             if (current == '/' && next == '/') {
                 state = ParserState::SingleLineComment;
+                m.bits[i + 1] = 1;
                 i++;
             } else if (current == '/' && next == '*') {
                 state = ParserState::MultiLineComment;
+                m.bits[i + 1] = 1;
                 i++;
             } else if (current == '"') {
                 state = ParserState::String;
@@ -73,16 +83,20 @@ static bool inside_comment(const std::string& source, size_t pos) {
             }
             break;
         case ParserState::SingleLineComment:
-            if (current == '\n') { state = ParserState::Code; }
+            if (current == '\n') state = ParserState::Code;
             break;
         case ParserState::MultiLineComment:
             if (current == '*' && next == '/') {
                 state = ParserState::Code;
+                m.bits[i + 1] = 1;
                 i++;
             }
             break;
         }
     }
-    return (state == ParserState::SingleLineComment || state == ParserState::MultiLineComment);
+    return m;
+}
+static bool inside_comment(const CommentMask& mask, size_t pos) {
+    return pos < mask.size && mask.bits[pos];
 }
 #endif

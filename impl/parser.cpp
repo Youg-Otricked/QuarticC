@@ -56,7 +56,8 @@ void Parser::parseGenerics(std::vector<GenericType>& genericsM, ParseResult& res
             GenericType curr;
             if (this->current_tok.type != TokenType::IDENTIFIER) {
                 if (this->current_tok.type == TokenType::KEYWORD &&
-                    std::unordered_set<std::string>({"int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+                    std::unordered_set<std::string>({"int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool",
+                                                     "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
                         .contains(this->current_tok.value)) {
                     curr.isNonType = true;
                     curr.nonTypeKind = this->current_tok.value;
@@ -1378,7 +1379,8 @@ Prs Parser::for_stmt() {
              this->current_tok.value == "double" || this->current_tok.value == "bool" || this->current_tok.value == "qbool" ||
              this->current_tok.value == "string" || this->current_tok.value == "char" || this->current_tok.value == "addr_t" ||
              this->current_tok.value == "byte" || this->current_tok.value == "nibble" || this->current_tok.value == "atomic" ||
-             this->current_tok.value == "ai64u_t"|| this->current_tok.value == "ai64_t"|| this->current_tok.value == "i32u_t"|| this->current_tok.value == "i16u_t")) {
+             this->current_tok.value == "ai64u_t" || this->current_tok.value == "ai64_t" || this->current_tok.value == "i32u_t" ||
+             this->current_tok.value == "i16u_t")) {
 
             bool is_const = false;
             Token tok = current_tok;
@@ -3604,29 +3606,8 @@ Prs Parser::statement() {
             return res.to_prs();
         }
         this->advance();
-        if (this->current_tok.type != TokenType::LBRACE) {
-            res.failure(new InvalidSyntaxError("QC-S003: Expected '{' to start foreach body", this->current_tok.pos));
-            return res.to_prs();
-        }
-        this->advance();
-        std::vector<AnyNode> stmts;
-        while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
-            Prs st = this->statement();
-            if (std::holds_alternative<Error*>(st)) {
-                res.failure(std::get<Error*>(st));
-                return res.to_prs();
-            }
-            AnyNode any_stmt = this->prs_to_anynode(st);
-            stmts.push_back(any_stmt);
-        }
-
-        if (this->current_tok.type != TokenType::RBRACE) {
-            res.failure(new InvalidSyntaxError("QC-S070: Expected '}' to end foreach body", this->current_tok.pos));
-            return res.to_prs();
-        }
-        this->advance();
-        auto body_block = new StatementsNode(stmts, true);
-
+        StatementsNode* body_block = nullptr;
+        if (!parse_block_into(body_block, res)) return res.to_prs();
         return res.success(new ForeachNode(elem_type, elem_name, collection, body_block));
     }
     if (tok.type == TokenType::KEYWORD && tok.value == "continue") {

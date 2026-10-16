@@ -58,6 +58,7 @@ static std::string find_c_header(const std::string& relative_guess, const std::s
     return relative_guess;
 }
 PreprocessResult preprocess_includes(std::string& source, const std::string& current_file, const std::vector<std::string>& c_args, bool fci) {
+    CommentMask cm = build_comment_mask(source);
     PreprocessResult res;
     res.accessible_namespaces.clear();
     res.accessible_namespaces.insert("Exported");
@@ -73,7 +74,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < ep_pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
-        if (inside_comment(source, ep_pos)) { in_string = true; }
+        if (inside_comment(cm, ep_pos)) { in_string = true; }
         if (!in_string) {
             size_t line_end = source.find('\n', ep_pos);
             if (line_end == std::string::npos) line_end = source.size();
@@ -86,7 +87,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < nomain_pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
-        if (inside_comment(source, nomain_pos)) { in_string = true; }
+        if (inside_comment(cm, nomain_pos)) { in_string = true; }
         if (!in_string) { no_main = true; }
     }
     std::function<std::string(const std::string&)> substituteDefined = [&](const std::string& expr) -> std::string {
@@ -253,7 +254,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < directive_pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (directive_pos == if_pos) {
             bool isIfndef = source.compare(directive_pos, 7, "#ifndef") == 0;
             bool isIfdef = !isIfndef && source.compare(directive_pos, 6, "#ifdef") == 0;
@@ -330,7 +331,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             i++;
             continue;
         }
-        if (inside_comment(source, i)) { in_string = true; }
+        if (inside_comment(cm, i)) { in_string = true; }
         if (!in_string && (std::isalpha((unsigned char)c) || c == '_')) {
             size_t start = i;
             while (i < source.size() && (std::isalnum((unsigned char)source[i]) || source[i] == '_')) { i++; }
@@ -355,7 +356,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
 
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -401,7 +402,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
 
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -443,7 +444,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -476,7 +477,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -501,7 +502,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
                 full_path = resolve_path(current_file, (std::filesystem::path(dir_aliases[alias]) / rest.substr(1)).string());
             } else {
                 full_path = resolve_path(current_file, path);
-                if (full_path == path) full_path = find_c_header(resolve_path(current_file, path), path);
+                if (!std::filesystem::exists(full_path)) full_path = find_c_header(resolve_path(current_file, path), path);
             }
             to_c_include.push_back(full_path);
             pos = end + 1;
@@ -532,6 +533,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
                 full_path = resolve_path(current_file, (std::filesystem::path(dir_aliases[alias]) / rest.substr(1)).string());
             } else {
                 full_path = resolve_path(current_file, path);
+                if (!std::filesystem::exists(full_path)) full_path = find_c_header(resolve_path(current_file, path), path);
             }
             if (!from_where.contains(full_path)) { from_where[full_path] = std::vector<std::string>(); }
             for (std::string ns_name : ns_names) { from_where[full_path].push_back(ns_name); }
@@ -547,7 +549,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
         }
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (in_string) {
             pos++;
             continue;
@@ -565,7 +567,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
@@ -580,7 +582,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
@@ -595,7 +597,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
@@ -610,7 +612,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
@@ -625,7 +627,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(source, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_string = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();

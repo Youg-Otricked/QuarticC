@@ -460,8 +460,10 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
     std::unordered_map<std::string, Aer> file_asts;
     std::unordered_map<std::string, std::unordered_map<std::string, UserTypeInfo>> type_registry;
     Ler resp;
+    Error *error = nullptr;
     std::function<void(const std::string&)> process_file = [&](const std::string& path) {
         if (file_asts.count(path)) return;
+        if (error) return;
         auto& deps = file_included_namespaces[path];
         for (auto const& [dep_path, ns_list] : deps) { process_file(dep_path); }
         std::unordered_map<std::string, UserTypeInfo> visible_types;
@@ -536,6 +538,11 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
         no_main = saved_no_main;
         type_registry[path] = ast.user_types;
         file_asts[path] = ast;
+        if (ast.error) {
+            error = ast.error;
+            resp = file_resp;
+            return;
+        }
         if (path == file) { resp = file_resp; }
     };
     try {
@@ -549,6 +556,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
         return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, ""};
     }
     Aer ast = file_asts[file];
+    if (error) return Mer{ast, resp, ""};
     if (config.print_tokens) {
         std::cout << "=== TOKENS ===" << '\n';
         for (const auto& tok : resp.Tkns) { std::cout << "Type: " << get_token_name(tok.type) << " | Value: '" << tok.value << "'" << '\n'; }
@@ -832,6 +840,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::cout << "[EMITTING OBJECT] " << file << '\n';
                 std::cout.flush();
             }
+            if (config.dynamic) master_module->addModuleFlag(llvm::Module::Error, "PIC Level", 2);
             int llc_result = emitObjectFile(*master_module, obj_file, config.debug, config.target);
             if (llc_result != 0) {
                 diagnostics.push_back({new CTError("Failed to compile IR to object file", Position(Position::INVALID_FILE_ID, 0, 0, 0))});
@@ -850,7 +859,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::cout << "[LINKING] " << file << '\n';
                 std::cout.flush();
             }
-            std::string final_exe = config.output_file.empty() ? "a.out" : config.output_file;
+            std::string final_exe = config.output_file.empty() ? config.dynamic ? "a.so" : "a.out" : config.output_file;
             std::string link_cmd = "clang " + obj_file;
             for (const auto& path : config.link_o_files) {
                 link_cmd += " " + path + " ";

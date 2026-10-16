@@ -859,11 +859,11 @@ class LLVMCompiler {
         } else if (auto propAcc = std::get_if<PropertyAccessNode*>(&node)) {
             if (auto varAccess = std::get_if<VarAccessNode*>(&*(*propAcc)->base)) {
                 auto baseName = (*varAccess)->var_name_tok.value;
-                std::string resolved = resolveTypeName(baseName);
+                std::string resolved = resolveTypeName(baseName, false);
                 auto enumIt = enumTypes.find(resolved);
                 if (enumIt != enumTypes.end()) return resolved;
             }
-            std::string currentType = getExpressionType(*((*propAcc)->base));
+            std::string currentType = resolveTypeName(getExpressionType(*((*propAcc)->base), false));
             if (currentType.ends_with("*") || currentType.ends_with("&")) { currentType.pop_back(); }
             std::string fieldName = (*propAcc)->property_name.value;
             if (std::all_of(fieldName.begin(), fieldName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
@@ -1117,7 +1117,7 @@ class LLVMCompiler {
                 if (functionDefs.contains(funcName)) {
                     auto* def = functionDefs[funcName];
                     if (!def->return_types.empty()) {
-                        std::string ret = def->return_types[0].value;
+                        std::string ret = resolveTypeName(def->return_types[0].value, false);
                         if (ret.ends_with("&") && strip) ret.pop_back();
                         return substituteGenerics(ret);
                     }
@@ -1127,11 +1127,11 @@ class LLVMCompiler {
         } else if (auto methCall = std::get_if<MethodCallNode*>(&node)) {
             if (auto varAccess = std::get_if<VarAccessNode*>(&(*methCall)->base)) {
                 auto baseName = (*varAccess)->var_name_tok.value;
-                std::string resolved = resolveTypeName(baseName);
+                std::string resolved = resolveTypeName(baseName, false);
                 auto intTy = userTypes.find(baseTypeName(resolved));
                 if (intTy != userTypes.end()) { return resolved; }
             }
-            std::string baseType = getExpressionType((*methCall)->base);
+            std::string baseType = resolveTypeName(getExpressionType((*methCall)->base, false));
             if (baseType.ends_with("*") || baseType.ends_with("&")) baseType.pop_back();
             auto originalGenericMap = currentGenericTypeStrings;
             std::vector<std::string> actualArgs = genericParamsFromName(baseType);
@@ -1143,13 +1143,21 @@ class LLVMCompiler {
                     currentGenericTypeStrings[formalParams[i].name] = actualArgs[i];
                 }
             }
+            std::vector<std::string> savedNamespaceStack = namespaceStack;
             std::string foundReturnType = "unknown";
             while (!className.empty() && userTypes.contains(className)) {
+                namespaceStack.clear();
+                size_t pos = 0;
+                size_t last_pos = 0;
+                while ((pos = className.find("::", last_pos)) != std::string::npos) {
+                    namespaceStack.push_back(className.substr(last_pos, pos - last_pos));
+                    last_pos = pos + 2;
+                }
                 auto& info = userTypes[className];
                 bool methodFound = false;
                 for (auto& m : info.classMethods) {
-                    if (m.name_tok.value == methodName && !m.return_types.empty()) {
-                        std::string ret = m.return_types[0].value;
+                    if (m.name_tok.value == methodName && !m.return_types.empty() && m.params.size() == (*methCall)->args.size()) {
+                        std::string ret = resolveTypeName(m.return_types[0].value);
                         if (ret.ends_with("&") && strip) ret.pop_back();
                         foundReturnType = substituteGenerics(ret);
                         methodFound = true;
@@ -1171,6 +1179,7 @@ class LLVMCompiler {
                 className = nextClassName;
                 currentGenericTypeStrings = std::move(nextGenericMap);
             }
+            namespaceStack = savedNamespaceStack;
             currentGenericTypeStrings = std::move(originalGenericMap);
 
             return foundReturnType;
@@ -1303,7 +1312,7 @@ class LLVMCompiler {
             baseAddr = createEntryAlloca("temp_lval_base", rval->getType());
             builder->CreateStore(rval, baseAddr);
         }
-        std::string typeName = getExpressionType(*prop.base);
+        std::string typeName = resolveTypeName(getExpressionType(*prop.base), false);
         llvm::Type* sType = llvmTypeFor(typeName);
         if (llvm::StructType* structType = llvm::dyn_cast<llvm::StructType>(sType); structType && structType->isLiteral()) {
             if (!std::all_of(propName.begin(), propName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
@@ -1425,14 +1434,6 @@ class LLVMCompiler {
         auto* newTy = llvm::StructType::create(context, name);
         return newTy;
     }
-#if !defined(__OPTIMIZE__)
-    template <typename T> void dump_val(T* v) {
-        if (v) {
-            v->dump();
-            llvm::errs() << "\n";
-        }
-    }
-#endif
     std::vector<uint8_t> getConsts(const AnyNode& node) {
         if (auto var = std::get_if<VarAccessNode*>(&node)) {
             std::string name = (*var)->var_name_tok.value;
@@ -1480,7 +1481,7 @@ class LLVMCompiler {
             if (retType.ends_with("&") || retType.ends_with("*")) { return emitExpr(node); }
             if (fallback) return emitExpr(node);
         } else if (auto arrAcc = std::get_if<ArrayAccessNode*>(&node)) {
-            std::string ptrTy = getExpressionType((*arrAcc)->base);
+            std::string ptrTy = resolveTypeName(getExpressionType((*arrAcc)->base), false);
             if (ptrTy.ends_with("*")) {
                 ptrTy.pop_back();
                 llvm::Value* base = emitExpr((*arrAcc)->base);
@@ -1809,6 +1810,26 @@ class LLVMCompiler {
         if (srcTy->isDoubleTy() && paramTy->isFloatTy()) { return builder->CreateFPTrunc(v, paramTy, "arg_fptrunc"); }
         if (srcTy->isIntegerTy() && paramTy->isFloatingPointTy()) { return builder->CreateSIToFP(v, paramTy, "arg_sitofp"); }
         if (srcTy->isFloatingPointTy() && paramTy->isIntegerTy()) { return builder->CreateFPToSI(v, paramTy, "arg_fptosi"); }
+        if (llvm::StructType* st = llvm::dyn_cast<llvm::StructType>(paramTy); ArrayLiteralNode* arrayLit = safe_get<ArrayLiteralNode>(argNode)) {
+            if (st && arrayLit) {
+                if (!st->isOpaque()) {
+                    std::string mangledClassName = st->getName().str();
+                    llvm::Function* opMethod = findMethodOverloadFromTypes(mangledClassName,
+                                                                           "operator[]=", {srcTy->getArrayElementType(), builder->getInt32Ty()});
+                    if (opMethod) {
+                        llvm::Value* hiddenInstance = builder->CreateAlloca(paramTy, nullptr, "arr_lit_tmp");
+                        builder->CreateMemSet(hiddenInstance, builder->getInt8(0), module->getDataLayout().getTypeAllocSize(paramTy),
+                                              llvm::MaybeAlign());
+                        emitVirtualOrDirectCall(mangledClassName, "operator[]=", hiddenInstance, {v, builder->getInt32(arrayLit->elements.size())});
+                        if (paramTy->isPointerTy()) {
+                            return hiddenInstance;
+                        } else {
+                            return builder->CreateLoad(paramTy, hiddenInstance, "arr_lit_val");
+                        }
+                    }
+                }
+            }
+        }
         return v;
     }
     std::vector<llvm::Value*> emitAdaptedArgs(const std::list<AnyNode>& argNodes, llvm::FunctionType* fnTy,
@@ -2264,6 +2285,25 @@ class LLVMCompiler {
                 } else {
                     reconciled.push_back(actual);
                 }
+            } else if (llvm::StructType* st = llvm::dyn_cast<llvm::StructType>(expected); st && actual->getType()->isArrayTy()) {
+                if (!st->isOpaque()) {
+                    std::string mangledClassName = st->getName().str();
+                    llvm::Function* opMethod = findMethodOverloadFromTypes(mangledClassName,
+                                                                           "operator[]=", {actual->getType()->getArrayElementType(), builder->getInt32Ty()});
+                    if (opMethod) {
+                        llvm::Value* hiddenInstance = builder->CreateAlloca(expected, nullptr, "arr_lit_tmp");
+                        builder->CreateMemSet(hiddenInstance, builder->getInt8(0), module->getDataLayout().getTypeAllocSize(expected),
+                                              llvm::MaybeAlign());
+                        emitVirtualOrDirectCall(mangledClassName, "operator[]=", hiddenInstance, {actual, builder->getInt32(actual->getType()->getArrayNumElements())});
+                        if (expected->isPointerTy()) {
+                            reconciled.push_back(hiddenInstance);
+                        } else {
+                            reconciled.push_back(builder->CreateLoad(expected, hiddenInstance, "arr_lit_val"));
+                        }
+                    }
+                }
+            } else if (expected->isPointerTy() && actual->getType()->isArrayTy()) {
+                reconciled.push_back(decayArrayToPointer(actual));
             } else {
                 reconciled.push_back(builder->CreateBitCast(actual, expected));
             }
@@ -2349,6 +2389,14 @@ class LLVMCompiler {
             unsigned expBits = expected->getIntegerBitWidth();
             unsigned actBits = actual->getIntegerBitWidth();
             return expBits >= actBits ? 2 : 1;
+        }
+        if (llvm::StructType* st = llvm::dyn_cast<llvm::StructType>(expected); actual->isArrayTy() && st) {
+            if (!st->isOpaque()) {
+                std::string mangledClassName = st->getName().str();
+                llvm::Function* opMethod = findMethodOverloadFromTypes(mangledClassName,
+                                                                       "operator[]=", {actual->getArrayElementType(), builder->getInt32Ty()});
+                if (opMethod) { return 1; }
+            }
         }
         return -1;
     }
@@ -2436,7 +2484,7 @@ class LLVMCompiler {
         }
         return nullptr;
     }
-    llvm::Function* findMethodOverload(const std::string& className, const std::string& methodName, const std::vector<llvm::Value*>& args) {
+    llvm::Function* findMethodOverloadFromTypes(const std::string& className, const std::string& methodName, const std::vector<llvm::Type*>& args) {
         std::string resolvedClassName = className;
         if (className.find("::") == std::string::npos && !getCurrentNamespace().empty()) {
             std::string qualifiedName = getCurrentNamespace() + "::" + className;
@@ -2471,7 +2519,7 @@ class LLVMCompiler {
                             currentScore++;
                             for (size_t i = 0; i < fn->arg_size() - 2; i++) {
                                 llvm::Type* expected = fn->getFunctionType()->getParamType(i + 1);
-                                llvm::Type* actual = args[i]->getType();
+                                llvm::Type* actual = args[i];
                                 if (expected != actual) {
                                     if (expected->isPointerTy() || actual->isPointerTy()) {
                                         currentScore += 1;
@@ -2501,7 +2549,7 @@ class LLVMCompiler {
                                     cg_error(Position(Position::INVALID_FILE_ID, 0, 0, 0), "Failed to emit method arg", "QC-M001");
                                     return nullptr;
                                 }
-                                llvm::Type* actual = args[i]->getType();
+                                llvm::Type* actual = args[i];
 
                                 if (expected != actual) {
                                     if (expected->isPointerTy() || actual->isPointerTy() || expected->isArrayTy() && actual->isPointerTy() ||
@@ -2548,6 +2596,11 @@ class LLVMCompiler {
         }
 
         return nullptr;
+    }
+    llvm::Function* findMethodOverload(const std::string& className, const std::string& methodName, const std::vector<llvm::Value*>& args) {
+        std::vector<llvm::Type*> argTypes;
+        for (llvm::Value* arg : args) { argTypes.push_back(arg == nullptr ? nullptr : arg->getType()); }
+        return findMethodOverloadFromTypes(className, methodName, argTypes);
     }
     llvm::Value* decayArrayToPointer(llvm::Value* v) {
         if (!v) return nullptr;
@@ -3742,25 +3795,7 @@ class LLVMCompiler {
         for (std::string param : genericParamsFromName(savedName)) { params.push_back(resolveTypeName(param, false)); }
         if (!params.empty()) savedName = buildMangledName(baseTypeName(name), params);
         name = baseTypeName(name);
-
-        if (name.find("::") != std::string::npos) {
-            if (classTypes.find(savedName) != classTypes.end()) return finish(strip ? name : savedName);
-            if (genericClasses.find(name) != genericClasses.end()) return finish(strip ? name : savedName);
-            if (genericStructs.find(name) != genericStructs.end()) return finish(strip ? name : savedName);
-            if (genericUnions.find(name) != genericUnions.end()) return finish(strip ? name : savedName);
-            if (genericEnums.find(name) != genericEnums.end()) return finish(strip ? name : savedName);
-            if (genericRawUnions.find(name) != genericRawUnions.end()) return finish(strip ? name : savedName);
-            if (structTypes.find(savedName) != structTypes.end()) return finish(strip ? name : savedName);
-            if (enumTypes.find(savedName) != enumTypes.end()) return finish(strip ? name : savedName);
-            if (rawUnionTypes.find(savedName) != rawUnionTypes.end()) return finish(strip ? name : savedName);
-            if (unionTypes.find(savedName) != unionTypes.end()) return finish(strip ? name : savedName);
-            if (typeAliases.find(savedName) != typeAliases.end()) return finish(strip ? name : savedName);
-            if (concepts.find(savedName) != concepts.end()) return finish(strip ? name : savedName);
-            if (genericConcepts.find(savedName) != genericConcepts.end()) return finish(strip ? name : savedName);
-        }
-
         std::string current = getCurrentNamespace();
-
         while (true) {
             std::string fullName = current.empty() ? name : current + "::" + name;
             std::string fullSavedName = current.empty() ? savedName : current + "::" + savedName;
@@ -3782,6 +3817,21 @@ class LLVMCompiler {
             if (current.empty()) break;
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
+        }
+        if (name.find("::") != std::string::npos) {
+            if (classTypes.find(savedName) != classTypes.end()) return finish(strip ? name : savedName);
+            if (genericClasses.find(name) != genericClasses.end()) return finish(strip ? name : savedName);
+            if (genericStructs.find(name) != genericStructs.end()) return finish(strip ? name : savedName);
+            if (genericUnions.find(name) != genericUnions.end()) return finish(strip ? name : savedName);
+            if (genericEnums.find(name) != genericEnums.end()) return finish(strip ? name : savedName);
+            if (genericRawUnions.find(name) != genericRawUnions.end()) return finish(strip ? name : savedName);
+            if (structTypes.find(savedName) != structTypes.end()) return finish(strip ? name : savedName);
+            if (enumTypes.find(savedName) != enumTypes.end()) return finish(strip ? name : savedName);
+            if (rawUnionTypes.find(savedName) != rawUnionTypes.end()) return finish(strip ? name : savedName);
+            if (unionTypes.find(savedName) != unionTypes.end()) return finish(strip ? name : savedName);
+            if (typeAliases.find(savedName) != typeAliases.end()) return finish(strip ? name : savedName);
+            if (concepts.find(savedName) != concepts.end()) return finish(strip ? name : savedName);
+            if (genericConcepts.find(savedName) != genericConcepts.end()) return finish(strip ? name : savedName);
         }
         return finish(name);
     }

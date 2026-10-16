@@ -1,3 +1,4 @@
+- bitfields
 - fixed point
 - imaginary numbers
 - default type generics (e.g. = void in generic types)

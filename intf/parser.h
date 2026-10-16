@@ -44,23 +44,32 @@ class Parser {
                (name.starts_with("(") && name.ends_with(")"));
     }
     bool is_known_type(std::string name) {
-        std::string base = base_type_name(name);
-        if (base.ends_with("&")) { base.pop_back(); }
-        while (base.ends_with("*")) base.pop_back();
-        while (base.ends_with("[]")) {
-            base.pop_back();
-            base.pop_back();
+        std::string base = name;
+        for (;;) {
+            while (!base.empty() && base.back() == ' ') base.pop_back();
+            if (base.ends_with("&") || base.ends_with("*")) {
+                base.pop_back();
+                continue;
+            }
+            if (base.ends_with("]")) {
+                size_t open = base.rfind('[');
+                if (open == std::string::npos) break;
+                base.erase(open);
+                continue;
+            }
+            break;
         }
         for (GenericType ty : current_generics) {
-            if (ty.name == base && !ty.isNonType) { return true; }
+            if (ty.name == base && !ty.isNonType) return true;
         }
-        if (user_types.count(base_type_name(base))) return true;
-        std::string ns;
-        for (int i = (int)namespaceStack.size() - 1; i >= 0; --i) {
-            ns = ns.empty() ? namespaceStack[i] : namespaceStack[i] + "::" + ns;
-            std::string candidate = ns + "::" + base;
-            if (user_types.count(base_type_name(candidate))) return true;
+        base = base_type_name(base);
+        for (size_t len = namespaceStack.size() + 1; len-- > 0;) {
+            std::string candidate;
+            for (size_t i = 0; i < len; ++i) candidate += namespaceStack[i] + "::";
+            candidate += base;
+            if (user_types.count(candidate)) return true;
         }
+        if (user_types.count("Exported::" + base)) return true;
         return false;
     }
     std::string get_known_type(std::string name) {

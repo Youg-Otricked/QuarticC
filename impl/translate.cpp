@@ -390,7 +390,10 @@ CXChildVisitResult Translator::visit(CXCursor c, bool indent_braces) {
         if (isAnon(c)) break;
         onRecord(c);
         break;
-    case CXCursor_EnumDecl: onEnum(c); break;
+    case CXCursor_EnumDecl:
+        if (isAnon(c)) break;
+        onEnum(c);
+        break;
     case CXCursor_TypedefDecl: onTypedef(c); break;
     case CXCursor_VarDecl: onVar(c); break;
     case CXCursor_MacroDefinition: onMacro(c); break;
@@ -635,7 +638,9 @@ void Translator::onFunction(CXCursor c) {
         CXCursor arg = clang_Cursor_getArgument(c, i);
         CXString argNameStr = clang_getCursorSpelling(arg);
         const char* argName = clang_getCString(argNameStr);
-        result_file += translateType(clang_getCursorType(arg));
+        CXType argTy = clang_getArgType(fn_type, i);
+        if (argTy.kind == CXType_Invalid) argTy = clang_getCursorType(arg);
+        result_file += translateType(argTy);
         result_file += " ";
         if (argName && *argName)
             result_file += argName;
@@ -670,7 +675,7 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
     CXType type = clang_getCursorType(c);
     long long size = clang_Type_getSizeOf(type);
     if (clang_Cursor_isNull(def) && !clang_isCursorDefinition(c)) {
-        result_file += "opaque " + name + ";\n";
+        result_file += "struct " + name + ";\n";
         append_indentation();
         return;
     }
@@ -725,7 +730,8 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
 
 void Translator::onEnum(CXCursor c, const std::string& name_override) {
     CXString spelling = clang_getCursorSpelling(c);
-    std::string name = name_override.empty() ? (clang_getCString(spelling) ? clang_getCString(spelling) : "") : name_override;
+    std::string name = name_override;
+    if (name.empty()) name = isAnon(c) ? anonName(c) : str(clang_getCursorSpelling(c));
     clang_disposeString(spelling);
     CXType underlying = clang_getEnumDeclIntegerType(c);
     if (!mark_type_emitted(name)) return;
@@ -794,26 +800,33 @@ void Translator::onVar(CXCursor c) {
 
 void Translator::onMacro(CXCursor c) {
     if (clang_Cursor_isMacroFunctionLike(c)) return;
-    CXString nameStr = clang_getCursorSpelling(c);
-    const char* name = clang_getCString(nameStr);
-    result_file += std::string("#define ") + (name ? name : "");
-    clang_disposeString(nameStr);
-    CXSourceRange range = clang_getCursorExtent(c);
     CXTranslationUnit tu = clang_Cursor_getTranslationUnit(c);
+    CXSourceRange range = clang_getCursorExtent(c);
     CXToken* tokens = nullptr;
     unsigned numTokens = 0;
     clang_tokenize(tu, range, &tokens, &numTokens);
-    if (numTokens > 0) {
-        result_file += " ";
-        for (unsigned i = 1; i < numTokens; ++i) {
-            CXString s = clang_getTokenSpelling(tu, tokens[i]);
-            const char* text = clang_getCString(s);
-            if (text) result_file += text;
-            clang_disposeString(s);
-            if (i + 1 < numTokens) result_file += " ";
+    if (numTokens != 2) {
+        clang_disposeTokens(tu, tokens, numTokens);
+        return;
+    }
+    CXTokenKind valueKind = clang_getTokenKind(tokens[1]);
+    CXString valueStr = clang_getTokenSpelling(tu, tokens[1]);
+    const char* valueText = clang_getCString(valueStr);
+    bool isSimpleConstant = (valueKind == CXToken_Literal);
+    if (valueKind == CXToken_Identifier && valueText) {
+        std::string s(valueText);
+        if (s == "NULL" || s == "nullptr" || s == "true" || s == "false") {
+            if (s == "NULL") valueText = "nullptr";
+            isSimpleConstant = true;
         }
     }
-    result_file += "\n";
+    if (isSimpleConstant && valueText) {
+        CXString nameStr = clang_getCursorSpelling(c);
+        const char* name = clang_getCString(nameStr);
+        result_file += std::string("#define ") + (name ? name : "") + " " + valueText + "\n";
+        clang_disposeString(nameStr);
+    }
+    clang_disposeString(valueStr);
     clang_disposeTokens(tu, tokens, numTokens);
 }
 std::string Translator::translateType(CXType t) {

@@ -20,7 +20,7 @@
 #if defined(_WIN32) || defined(_WIN64)
 #include <print>
 #endif
-const std::string ver = "x1.3.32";
+const std::string ver = "x1.3.35";
 #include <random>
 bool slow = false;
 void slow_print(const std::string& text, const std::string& color = "\033[0m", int min_delay_ms = 100, int max_delay_ms = 450) {
@@ -57,16 +57,6 @@ std::string read_source_file(std::string filename) {
     return buffer.str();
 }
 std::atomic<bool> running{true};
-void spinner() {
-    std::vector<char> frames{'-', '\\', '|', '/'};
-    size_t i = 0;
-    while (running) {
-        std::cout << "\r" << frames[i % frames.size()] << " Running..." << std::flush;
-        std::this_thread::sleep_for(std::chrono::milliseconds(150));
-        i++;
-    }
-    std::cout << "\r" << std::endl; // clear line
-}
 std::string trim_ws(const std::string& s) {
     auto first = std::find_if_not(s.begin(), s.end(), [](unsigned char c) { return std::isspace(c); });
     auto last = std::find_if_not(s.rbegin(), s.rend(), [](unsigned char c) { return std::isspace(c); }).base();
@@ -205,6 +195,8 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: -o requires output filename\n";
                 return 1;
             }
+        } else if (arg == "-dynamic") {
+            config.dynamic = true;
         } else if (arg == "-ad" || arg == "--alias-dir") {
             if (i + 2 < argc) {
                 std::string alias_name = argv[i + 1];
@@ -353,7 +345,6 @@ Examples:
             if (line == "exit") break;
 
             if (line == "!@run") {
-                std::thread spin_thread(spinner);
                 running = true;
                 history.push_back(code_buffer);
                 auto result = run::run("<stdin>", code_buffer, config);
@@ -495,11 +486,9 @@ Examples:
     } else {
         // File mode
         std::string code = read_source_file(filename);
-        std::thread spin_thread(spinner);
         running = true;
         auto result = run::run(filename, code, config);
         running = false;
-        spin_thread.join();
         bool has_fatal = false;
         bool has_warnings = false;
         if (config.dump_tokens) return 0;
