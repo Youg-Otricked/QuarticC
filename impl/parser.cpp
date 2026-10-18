@@ -4636,7 +4636,7 @@ Prs Parser::statement() {
         std::vector<UnionMember> members;
         std::vector<EnumEntry> entries;
         uint64_t counter = 0;
-        bool is_signed_type = enum_type.contains("int");
+        bool is_signed_type = enum_type.contains("int") || enum_type == "ai64_t";
         bool can_auto = true;
         while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
             if (this->current_tok.type != TokenType::IDENTIFIER) {

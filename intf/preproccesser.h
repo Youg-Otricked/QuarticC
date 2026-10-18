@@ -49,6 +49,7 @@ static MatchResult findMatch(const std::string& src, size_t searchStart) {
 struct CommentMask {
     std::vector<unsigned char> bits;
     size_t size = 0;
+    size_t og_line_count;
 };
 enum class ParserState { Code, String, SingleLineComment, MultiLineComment };
 static CommentMask build_comment_mask(const std::string& source) {
@@ -57,10 +58,12 @@ static CommentMask build_comment_mask(const std::string& source) {
     m.bits.assign(source.size() + 1, 0);
     ParserState state = ParserState::Code;
     size_t n = source.size();
+    size_t line_count = 1;
     for (size_t i = 0; i < n; i++) {
         m.bits[i] = (state == ParserState::SingleLineComment || state == ParserState::MultiLineComment);
         char current = source[i];
         char next = (i + 1 < n) ? source[i + 1] : '\0';
+        if (current == '\n') ++line_count;
         switch (state) {
         case ParserState::Code:
             if (current == '/' && next == '/') {
@@ -94,6 +97,7 @@ static CommentMask build_comment_mask(const std::string& source) {
             break;
         }
     }
+    m.og_line_count = line_count;
     return m;
 }
 static bool inside_comment(const CommentMask& mask, size_t pos) {

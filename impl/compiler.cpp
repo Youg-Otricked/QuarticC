@@ -367,7 +367,7 @@ bool LLVMCompiler::fulfillsGenericConstraints(std::vector<GenericType> generics,
     }
     return true;
 };
-ConceptInfo LLVMCompiler::generateGenericConcept(std::string conceptName, UserTypeInfo conceptInfo, std::vector<std::string> genericParams) {
+ConceptInfo LLVMCompiler::generateGenericConcept(std::string conceptName, UserTypeInfo& conceptInfo, std::vector<std::string> genericParams) {
     std::string mangled_concept_name = conceptName + "<";
     for (int j = 0; j < conceptInfo.generics.size(); j++) {
         std::string val;
@@ -440,7 +440,7 @@ ConceptInfo LLVMCompiler::generateGenericConcept(std::string conceptName, UserTy
     inProgressGenerics.erase(mangled_concept_name);
     return {};
 }
-llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, UserTypeInfo classInfo, std::vector<std::string> genericParams) {
+llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, UserTypeInfo& classInfo, std::vector<std::string> genericParams) {
     for (std::string param : genericParams) {
         std::string resolved = resolveTypeName(param, false);
         std::string base = baseTypeName(resolved);
@@ -532,7 +532,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                 collectFields(baseFullName, baseSubs);
             }
             for (auto& field : classIfo.classFields) {
-                std::string resolvedType = resolveTypeName(field.type, false);
+                std::string resolvedType = field.type = resolveTypeName(field.type, false);
                 if (field.name == "__vptr") {
                     if (hasVptr) continue;
                     hasVptr = true;
@@ -652,7 +652,6 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
         auto& method = classInfo.classMethods[methodIdx];
         if (!method.is_static) continue;
         std::string mangledName = mangled_class_name + "::" + method.name_tok.value;
-        for (auto& param : method.params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
         llvm::FunctionType* fnTy = llvmFuncTypeFor(method.return_types, method.params);
         llvm::Function* fn = module->getFunction(mangledName);
         if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, mangledName, module); }
@@ -674,6 +673,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             if (method.params[i].type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
         }
         functionDefs[mangledName] = funcDefFromClassMethod(method, mangled_class_name);
+        emitFuncDef(*functionDefs[mangledName]);
     }
     for (size_t methodIdx = 0; methodIdx < classInfo.classMethods.size(); methodIdx++) {
         auto& method = classInfo.classMethods[methodIdx];
@@ -720,8 +720,21 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
         auto oldThis = currentThis;
         auto oldClassName = currentClassName;
         auto oldFunction = currentFunction;
+        llvm::DISubprogram* oldSubprogram = currentSubprogram;
+        if (config.debug_symbols) {
+            setupDebugFunction(fn, method.name_tok.value, method.name_tok.pos);
+            setDebugLocation(method.name_tok.pos);
+        }
         enterScope();
         currentThis = currentTarget->getArg(0);
+        if (config.debug_symbols) {
+            llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                currentSubprogram, "this", 1, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
+                getDebugType(resolveTypeName(mangled_class_name, false) + "*"), true);
+            diBuilder->insertDbgValueIntrinsic(
+                currentThis, debugParam, diBuilder->createExpression(),
+                llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram), builder->GetInsertBlock());
+        }
         volatileVars["this"] = false;
         varTypes["this"] = resolveTypeName(mangled_class_name, false) + "*";
         currentClassName = resolveTypeName(mangled_class_name, false);
@@ -739,6 +752,15 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             }
             llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
             builder->CreateStore(currentTarget->getArg(i + 1), alloc);
+            if (config.debug_symbols) {
+                llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                    currentSubprogram, param.name.value, i + 1, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
+                    getDebugType(param.type.value), true);
+                diBuilder->insertDbgValueIntrinsic(
+                    currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
+                    llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                    builder->GetInsertBlock());
+            }
             locals[param.name.value] = alloc;
             varTypes[param.name.value] = typeDescriptor;
             volatileVars[param.name.value] = param.isVolatile;
@@ -756,8 +778,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                         }
                         llvm::Function* parentCtor = findMethodOverload(classInfo.baseClassName, classInfo.baseClassName, parentArgs);
                         if (parentCtor) {
-                            std::vector<llvm::Value*> allArgs = {currentThis};
-                            allArgs.insert(allArgs.end(), parentArgs.begin(), parentArgs.end());
+                            std::vector<llvm::Value*> allArgs = reconcileArgs(parentCtor, currentThis, parentArgs);
                             if (insideTry()) {
                                 auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
                                 builder->CreateInvoke(parentCtor, contBB, currentLandingPad(), allArgs);
@@ -786,6 +807,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
         currentClassName = oldClassName;
         currentFunction = oldFunction;
         exitScope();
+        currentSubprogram = oldSubprogram;
         if (!method.modifiers.empty()) {
             llvm::FunctionType* fTy = fn->getFunctionType();
             for (int i = (int)method.modifiers.size() - 1; i >= 0; --i) {
@@ -805,6 +827,11 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                 llvm::Function* layerFunc = isOutermost ? fn : module->getFunction(layerName);
                 if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
                 auto savedDefers = defersStack;
+                llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                if (config.debug_symbols) {
+                    setupDebugFunction(fn, method.name_tok.value, method.name_tok.pos);
+                    setDebugLocation(method.name_tok.pos);
+                }
                 defersStack.clear();
                 enterScope();
                 llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
@@ -814,6 +841,15 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                 auto prevThis = currentThis;
                 currentFunction = layerFunc;
                 currentThis = layerFunc->getArg(0);
+                if (config.debug_symbols) {
+                    llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                        currentSubprogram, "this", 1, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
+                        getDebugType(resolveTypeName(mangled_class_name, false) + "*"), true);
+                    diBuilder->insertDbgValueIntrinsic(
+                        currentThis, debugParam, diBuilder->createExpression(),
+                        llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                        builder->GetInsertBlock());
+                }
                 varTypes["this"] = resolveTypeName(mangled_class_name, false) + "*";
                 std::vector<llvm::Value*> forwardArgs;
                 forwardArgs.push_back(currentThis);
@@ -821,6 +857,15 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                     auto& param = method.params[pIdx];
                     llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
                     argVal->setName(param.name.value);
+                    if (config.debug_symbols) {
+                        llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                            currentSubprogram, param.name.value, pIdx + 2, getDebugFile(method.name_tok.pos.file_id),
+                            getLineNoFromPos(method.name_tok.pos), getDebugType(param.type.value), true);
+                        diBuilder->insertDbgValueIntrinsic(
+                            argVal, debugParam, diBuilder->createExpression(),
+                            llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                            builder->GetInsertBlock());
+                    }
                     auto* alloca = createEntryAlloca(param.name.value, argVal->getType());
                     builder->CreateStore(argVal, alloca);
                     locals[param.name.value] = alloca;
@@ -850,6 +895,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                 currentFunction = prevFunction;
                 currentThis = prevThis;
                 functions.erase("proceed");
+                currentSubprogram = oldSubprogram;
                 exitScope();
                 defersStack = savedDefers;
                 currentTarget = layerFunc;
@@ -865,7 +911,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
     inProgressGenerics.erase(mangled_class_name);
     return classTy;
 }
-llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, UserTypeInfo structInfo, std::vector<std::string> genericParams) {
+llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, UserTypeInfo& structInfo, std::vector<std::string> genericParams) {
     for (std::string param : genericParams) {
         std::string resolved = resolveTypeName(param, false);
         std::string base = baseTypeName(resolved);
@@ -918,8 +964,9 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
     }
     std::vector<llvm::Type*> fieldTypes;
     for (auto& field : structInfo.fields) {
-        if (!resolveTypeName(field.type, false).ends_with("*")) {
-            std::string resolved = resolveTypeName(field.type, false);
+        field.type = resolveTypeName(field.type, false);
+        if (!field.type.ends_with("*")) {
+            std::string resolved = field.type;
             if (!resolved.contains("<")) {
                 if (structTypes.count(resolved) && structTypes.at(resolved)->isOpaque()) {
                     generateStruct(resolved, userTypes.at(resolved));
@@ -945,7 +992,8 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
     currentNonTypeGenericValues = oldNonTypeGenerics;
     return structTy;
 }
-llvm::StructType* LLVMCompiler::generateGenericRawUnion(std::string rawUnionName, UserTypeInfo rawUnionInfo, std::vector<std::string> genericParams) {
+llvm::StructType* LLVMCompiler::generateGenericRawUnion(std::string rawUnionName, UserTypeInfo& rawUnionInfo,
+                                                        std::vector<std::string> genericParams) {
     std::string mangled_rawUnion_name = rawUnionName + "<";
     for (int j = 0; j < rawUnionInfo.generics.size(); j++) {
         std::string val;
@@ -987,7 +1035,7 @@ llvm::StructType* LLVMCompiler::generateGenericRawUnion(std::string rawUnionName
     currentNonTypeGenericValues = oldNonTypeGenerics;
     return rawUnionTy;
 }
-llvm::StructType* LLVMCompiler::generateGenericEnum(std::string enumName, UserTypeInfo enumInfo, std::vector<std::string> genericParams) {
+llvm::StructType* LLVMCompiler::generateGenericEnum(std::string enumName, UserTypeInfo& enumInfo, std::vector<std::string> genericParams) {
     std::string mangled_enum_name = enumName + "<";
     for (int j = 0; j < enumInfo.generics.size(); j++) {
         std::string val;
@@ -1035,7 +1083,7 @@ llvm::StructType* LLVMCompiler::generateGenericEnum(std::string enumName, UserTy
     currentNonTypeGenericValues = oldNonTypeGenerics;
     return enumTy;
 }
-UserTypeInfo LLVMCompiler::generateGenericUnion(std::string unionName, UserTypeInfo unionInfo, std::vector<std::string> genericParams) {
+UserTypeInfo LLVMCompiler::generateGenericUnion(std::string unionName, UserTypeInfo& unionInfo, std::vector<std::string> genericParams) {
     std::string mangled_union_name = unionName + "<";
     for (int j = 0; j < unionInfo.generics.size(); j++) {
         std::string val;
@@ -1071,7 +1119,7 @@ UserTypeInfo LLVMCompiler::generateGenericUnion(std::string unionName, UserTypeI
     }
     UserTypeInfo genericisedInfo;
     genericisedInfo.kind = UserTypeKind::Union;
-    for (UnionMember member : unionInfo.members) {
+    for (UnionMember& member : unionInfo.members) {
         if (currentNonTypeGenericValues.count(member.type)) {
             member.type = std::find_if(unionInfo.generics.begin(), unionInfo.generics.end(), [&](const auto& p) { return p.name == member.type; })
                               ->nonTypeKind +
@@ -1088,7 +1136,7 @@ UserTypeInfo LLVMCompiler::generateGenericUnion(std::string unionName, UserTypeI
     currentNonTypeGenericValues = oldNonTypeGenerics;
     return genericisedInfo;
 }
-std::string LLVMCompiler::generateGenericAlias(std::string aliasName, UserTypeInfo aliasInfo, std::vector<std::string> genericParams) {
+std::string LLVMCompiler::generateGenericAlias(std::string aliasName, UserTypeInfo& aliasInfo, std::vector<std::string> genericParams) {
     std::string mangled_alias_name = aliasName + "<";
     for (int j = 0; j < aliasInfo.generics.size(); j++) {
         std::string val;
@@ -1107,9 +1155,14 @@ std::string LLVMCompiler::generateGenericAlias(std::string aliasName, UserTypeIn
     auto oldGenericTypes = this->currentGenericTypes;
     auto oldGenericTypeStrings = currentGenericTypeStrings;
     auto oldNonTypeGenerics = currentNonTypeGenericValues;
-    if (!fulfillsGenericConstraints(aliasInfo.generics, genericParams, aliasInfo.pos)) return "";
+    if (!fulfillsGenericConstraints(aliasInfo.generics, genericParams, aliasInfo.pos)) {
+        this->currentGenericTypes = oldGenericTypes;
+        currentGenericTypeStrings = oldGenericTypeStrings;
+        currentNonTypeGenericValues = oldNonTypeGenerics;
+        return "";
+    }
     proveConceptsForTypeInfo(mangled_alias_name, aliasInfo);
-    std::string substituted = substituteGenerics(aliasInfo.aliasTarget);
+    std::string substituted = substituteGenerics(resolveTypeName(aliasInfo.aliasTarget, false));
     typeAliases[mangled_alias_name] = substituted;
     inProgressGenerics.erase(mangled_alias_name);
     this->currentGenericTypes = oldGenericTypes;
@@ -1117,7 +1170,7 @@ std::string LLVMCompiler::generateGenericAlias(std::string aliasName, UserTypeIn
     currentNonTypeGenericValues = oldNonTypeGenerics;
     return substituted;
 }
-void LLVMCompiler::generateStruct(const std::string& mapKey, const UserTypeInfo& info) {
+void LLVMCompiler::generateStruct(const std::string& mapKey, UserTypeInfo& info) {
     if (!info.generics.empty()) return;
     if (!structTypes.count(mapKey) || !structTypes[mapKey]->isOpaque()) return;
     std::vector<llvm::Type*> fieldTypes;
@@ -1133,8 +1186,9 @@ void LLVMCompiler::generateStruct(const std::string& mapKey, const UserTypeInfo&
         namespaceStack.push_back(info.namespace_path.substr(start));
     }
     for (auto& field : info.fields) {
+        field.type = resolveTypeName(field.type, false);
         if (!resolveTypeName(field.type, false).ends_with("*")) {
-            std::string resolved = resolveTypeName(field.type, false);
+            std::string resolved = field.type;
             if (structTypes.count(resolved) && structTypes.at(resolved)->isOpaque()) {
                 generateStruct(resolved, userTypes.at(resolved));
             } else if (classTypes.count(resolved) && classTypes.at(resolved)->isOpaque()) {
@@ -1151,7 +1205,7 @@ void LLVMCompiler::generateStruct(const std::string& mapKey, const UserTypeInfo&
     if (structTypes[mapKey]->isOpaque()) { structTypes[mapKey]->setBody(fieldTypes); }
     namespaceStack = oldNamespaceStack;
 }
-void LLVMCompiler::generateClass(const std::string& mapKey, const UserTypeInfo& info) {
+void LLVMCompiler::generateClass(const std::string& mapKey, UserTypeInfo& info) {
     if (!info.generics.empty()) return;
     if (!classTypes.count(mapKey) || !classTypes[mapKey]->isOpaque()) return;
     if (!info.baseClassName.empty()) {
@@ -1214,7 +1268,8 @@ void LLVMCompiler::generateClass(const std::string& mapKey, const UserTypeInfo& 
             }
             bool noAccessFields = true;
             for (auto& field : classIfo.classFields) {
-                std::string resolvedType = resolveTypeName(field.type, false);
+                field.type = resolveTypeName(field.type, false);
+                std::string resolvedType = field.type;
                 if (field.name == "__vptr") {
                     if (hasVptr) continue;
                     hasVptr = true;
@@ -1329,16 +1384,6 @@ void LLVMCompiler::createUserTypes() {
         }
     }
     for (auto& [mapKey, info] : userTypes) {
-        if (info.kind == UserTypeKind::Alias) {
-            if (!info.generics.empty()) {
-                genericAliases[mapKey] = true;
-                continue;
-            }
-            genericAliases[mapKey] = false;
-            typeAliases[mapKey] = info.aliasTarget;
-        }
-    }
-    for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Struct) {
             if (!info.generics.empty()) {
                 genericStructs[mapKey] = true;
@@ -1347,18 +1392,6 @@ void LLVMCompiler::createUserTypes() {
             genericStructs[mapKey] = false;
             llvm::StructType* structTy = getOrCreateStructType(mapKey);
             structTypes[mapKey] = structTy;
-        }
-    }
-    for (auto& [mapKey, info] : userTypes) {
-        if (info.kind == UserTypeKind::Union) {
-            if (!info.generics.empty()) {
-                genericUnions[mapKey] = true;
-                continue;
-            }
-            genericUnions[mapKey] = false;
-            std::vector<llvm::Type*> fields = {builder->getInt32Ty(), llvm::PointerType::get(context, 0)};
-            llvm::StructType* unionTy = getOrCreateStructType(fields, mapKey);
-            unionTypes[mapKey] = unionTy;
         }
     }
     for (auto& [mapKey, info] : userTypes) {
@@ -1383,6 +1416,28 @@ void LLVMCompiler::createUserTypes() {
             genericClasses[mapKey] = false;
             llvm::StructType* classTy = getOrCreateStructType(mapKey);
             classTypes[mapKey] = classTy;
+        }
+    }
+    for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::Union) {
+            if (!info.generics.empty()) {
+                genericUnions[mapKey] = true;
+                continue;
+            }
+            genericUnions[mapKey] = false;
+            std::vector<llvm::Type*> fields = {builder->getInt32Ty(), llvm::PointerType::get(context, 0)};
+            llvm::StructType* unionTy = getOrCreateStructType(fields, mapKey);
+            unionTypes[mapKey] = unionTy;
+        }
+    }
+    for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::Alias) {
+            if (!info.generics.empty()) {
+                genericAliases[mapKey] = true;
+                continue;
+            }
+            genericAliases[mapKey] = false;
+            typeAliases[mapKey] = resolveTypeName(info.aliasTarget, false);
         }
     }
     for (auto& [mapKey, info] : userTypes) {
@@ -1416,7 +1471,6 @@ void LLVMCompiler::createUserTypes() {
             auto& method = info.classMethods[methodIdx];
             if (!method.is_static) continue;
             std::string mangledName = mapKey + "::" + method.name_tok.value;
-            for (auto& param : method.params) { mangledName += "_" + (param.signature.has_value() ? std::string("fn") : param.type.value); }
             llvm::FunctionType* fnTy = llvmFuncTypeFor(method.return_types, method.params);
             llvm::Function* fn = module->getFunction(mangledName);
             if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, mangledName, module); }
@@ -1438,6 +1492,7 @@ void LLVMCompiler::createUserTypes() {
                 if (method.params[i].type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
             }
             functionDefs[mangledName] = funcDefFromClassMethod(method, mapKey);
+            emitFuncDef(*functionDefs[mangledName]);
         }
         for (size_t methodIdx = 0; methodIdx < info.classMethods.size(); methodIdx++) {
             auto& method = info.classMethods[methodIdx];
@@ -1617,8 +1672,9 @@ void LLVMCompiler::cg_error(const Position& pos, const std::string& msg, std::st
 void LLVMCompiler::cg_warn(const Position& pos, const std::string& msg, std::string code) {
     errors.emplace_back(msg, pos, true, code);
 }
-LLVMCompiler::LLVMCompiler(std::unordered_map<std::string, UserTypeInfo>& userTys, llvm::Module* mod, llvm::LLVMContext& ctx, bool is_main)
-    : userTypes(userTys), context(ctx) {
+LLVMCompiler::LLVMCompiler(std::unordered_map<std::string, UserTypeInfo>& userTys, llvm::Module* mod, llvm::LLVMContext& ctx,
+                           llvm::DIBuilder* diBuilder, llvm::DICompileUnit* compUnit, bool is_main)
+    : userTypes(userTys), context(ctx), diBuilder(diBuilder), compileUnit(compUnit) {
     module = (mod == nullptr ? new llvm::Module("qc_module", context) : mod);
     builder = new llvm::IRBuilder<>(context);
     pointerSizeBits = module->getDataLayout().getPointerSizeInBits();
@@ -1648,6 +1704,7 @@ llvm::Value* LLVMCompiler::emitMethodCall(llvm::Function* method, llvm::Value* t
     return returnsVoid ? nullptr : call;
 }
 llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
+    setDebugLocation(get_pos(*bin));
     TokenType op = (*bin)->op_tok.type;
     if (op == TokenType::KEYWORD) {
         if ((*bin)->op_tok.value == "proved_by") {
@@ -3258,6 +3315,7 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
     return nullptr;
 }
 llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
+    setDebugLocation(get_pos(*va));
     std::string name = (*va)->var_name_tok.value;
     add_var_warning(name, (*va)->var_name_tok.pos, (*va)->is_const);
     std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
@@ -3269,6 +3327,12 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         qcType = qcType.substr(9, qcType.length() - 9);
     }
     qcType = resolveTypeName(qcType, false);
+    if (!llvmTypeFor(qcType)) return nullptr;
+    llvm::DILocalVariable* debugVar = config.debug_symbols
+                                          ? diBuilder->createAutoVariable(currentSubprogram, fullName, getDebugFile(get_pos(*va).file_id),
+                                                                          getLineNoFromPos(get_pos(*va)), getDebugType(qcType))
+                                          : nullptr;
+    auto location = config.debug_symbols ? llvm::DILocation::get(context, getLineNoFromPos(get_pos(*va)), 0, currentSubprogram) : nullptr;
     if (qcType == "auto") {
         warn("auto", get_pos(*va), "used implicit variable type", "QC-W009");
         llvm::Value* rhs = emitExpr((*va)->value_node);
@@ -3279,6 +3343,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
 
         llvm::Type* inferredTy = rhs->getType();
         llvm::AllocaInst* alloc = createEntryAlloca(name, inferredTy);
+        if (config.debug_symbols) diBuilder->insertDeclare(alloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
         builder->CreateStore(rhs, alloc, isVolatile);
         std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
         locals[fullName] = alloc;
@@ -3328,6 +3393,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         }
 
         llvm::AllocaInst* alloc = createEntryAlloca(name, rhsTy);
+        if (config.debug_symbols) diBuilder->insertDeclare(alloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
         builder->CreateStore(rhs, alloc, isVolatile);
         name = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
         locals[name] = alloc;
@@ -3396,6 +3462,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             return nullptr;
         }
         llvm::AllocaInst* instance = createEntryAlloca(name, classTy);
+        if (config.debug_symbols) diBuilder->insertDeclare(instance, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
         if ((*va)->value_node.index() == 0) {
             llvm::Value* zeroVal = llvm::ConstantAggregateZero::get(classTy);
             builder->CreateStore(zeroVal, instance, isVolatile);
@@ -3448,8 +3515,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                         std::string mangledName = buildMangledName(qcType, genericParams);
                         llvm::Function* ctor = findMethodOverload(mangledName, ctorMethodName, args);
                         if (ctor) {
-                            std::vector<llvm::Value*> allArgs = {instance};
-                            allArgs.insert(allArgs.end(), args.begin(), args.end());
+                            std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, args);
                             if (insideTry()) {
                                 auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
                                 builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
@@ -3558,6 +3624,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         if ((*va)->value_node.index() == 0) {
             llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
             llvm::Value* zeroVal = llvm::ConstantAggregateZero::get(structTy);
+            if (config.debug_symbols)
+                diBuilder->insertDeclare(structAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
             builder->CreateStore(zeroVal, structAlloc, isVolatile);
             locals[fullName] = structAlloc;
             varTypes[fullName] = qcType;
@@ -3603,6 +3671,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 structVal = builder->CreateInsertValue(structVal, val, i);
             }
             llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
+            if (config.debug_symbols)
+                diBuilder->insertDeclare(structAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
             builder->CreateStore(structVal, structAlloc, isVolatile);
             locals[fullName] = structAlloc;
             varTypes[fullName] = buildMangledName(qcType, genericParams);
@@ -3648,6 +3718,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 structVal = builder->CreateInsertValue(structVal, fieldValue, fieldIndex);
             }
             llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
+            if (config.debug_symbols)
+                diBuilder->insertDeclare(structAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
             builder->CreateStore(structVal, structAlloc, isVolatile);
             locals[fullName] = structAlloc;
             varTypes[fullName] = buildMangledName(qcType, genericParams);
@@ -3670,6 +3742,9 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             }
             llvm::Value* structAlloc = getVarAddress(name);
             if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
+            if (config.debug_symbols)
+                diBuilder->insertDeclare(structAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
+
             builder->CreateStore(rhs, structAlloc, isVolatile);
             locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
             varTypes[fullName] = buildMangledName(qcType, genericParams);
@@ -3710,6 +3785,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
             builder->CreateStore(unionVal, unionAlloc, isVolatile);
         }
+        if (config.debug_symbols) diBuilder->insertDeclare(unionAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
         locals[fullName] = unionAlloc;
         varTypes[fullName] = fixMangling(saved_qc_type);
         volatileVars[fullName] = isVolatile;
@@ -3719,6 +3795,9 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         if ((*va)->value_node.index() == 0) {
             llvm::StructType* structTy = genericiseOrFindStruct(qcType);
             llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
+            if (config.debug_symbols)
+                diBuilder->insertDeclare(structAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
+
             llvm::Value* zeroVal = llvm::ConstantAggregateZero::get(structTy);
             builder->CreateStore(zeroVal, structAlloc, isVolatile);
             locals[fullName] = structAlloc;
@@ -3764,6 +3843,9 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 structVal = builder->CreateInsertValue(structVal, val, i);
             }
             llvm::Value* structAlloc = getVarAddress(name);
+            if (config.debug_symbols)
+                diBuilder->insertDeclare(structAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
+
             if (auto* gv = llvm::dyn_cast_or_null<llvm::GlobalVariable>(structAlloc)) {
                 auto* constant = llvm::dyn_cast<llvm::Constant>(structVal);
                 if (!constant) {
@@ -3828,6 +3910,9 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 structVal = builder->CreateInsertValue(structVal, fieldValue, fieldIndex);
             }
             llvm::Value* structAlloc = getVarAddress(name);
+            if (config.debug_symbols)
+                diBuilder->insertDeclare(structAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
+
             if (auto* gv = llvm::dyn_cast_or_null<llvm::GlobalVariable>(structAlloc)) {
                 auto* constant = llvm::dyn_cast<llvm::Constant>(structVal);
                 if (!constant) {
@@ -3850,6 +3935,9 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             llvm::Value* rhs = emitExpr((*va)->value_node);
             llvm::Value* structAlloc = getVarAddress(name);
             if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
+            if (config.debug_symbols)
+                diBuilder->insertDeclare(structAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
+
             if (rhs) {
                 if (rhs->getType()->isPointerTy()) {
                     if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(structTy)) {
@@ -3871,6 +3959,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
     if (userTypeIt != userTypes.end() && userTypeIt->second.kind == UserTypeKind::Class) {
         llvm::StructType* classTy = genericiseOrFindClass(qcType);
         llvm::AllocaInst* instance = createEntryAlloca(name, classTy);
+        if (config.debug_symbols) diBuilder->insertDeclare(instance, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
         if ((*va)->value_node.index() == 0) {
             llvm::Value* zeroVal = llvm::ConstantAggregateZero::get(classTy);
             builder->CreateStore(zeroVal, instance, isVolatile);
@@ -3924,8 +4013,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                         llvm::Function* ctor = findMethodOverload(qcType, ctorMethodName, args);
 
                         if (ctor) {
-                            std::vector<llvm::Value*> allArgs = {instance};
-                            allArgs.insert(allArgs.end(), args.begin(), args.end());
+                            std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, args);
                             if (insideTry()) {
                                 auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
                                 builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
@@ -4004,6 +4092,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         llvm::StructType* unionTy = unionTypes[qcType];
         llvm::Value* unionAlloc = getVarAddress(name);
         if (!unionAlloc) unionAlloc = createEntryAlloca(name, unionTy);
+        if (config.debug_symbols) diBuilder->insertDeclare(unionAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
         llvm::Value* rhs = emitExpr((*va)->value_node);
         if (rhs) {
             auto storeUnion = [&](llvm::Value* value) {
@@ -4056,6 +4145,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         if (!uTy) return nullptr;
         llvm::Value* uAlloc = getVarAddress(name);
         if (!uAlloc) uAlloc = createEntryAlloca(name, uTy);
+        if (config.debug_symbols) diBuilder->insertDeclare(uAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
+
         llvm::Value* rhs = emitExpr((*va)->value_node);
         if (rhs) {
             if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(uAlloc)) {
@@ -4080,6 +4171,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         if (!enumTy) return nullptr;
         llvm::Value* enumAlloc = getVarAddress(name);
         if (!enumAlloc) enumAlloc = createEntryAlloca(name, enumTy);
+        if (config.debug_symbols) diBuilder->insertDeclare(enumAlloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
+
         llvm::Value* rhs = emitExpr((*va)->value_node);
         if (rhs) {
             if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(enumAlloc)) {
@@ -4127,6 +4220,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             return nullptr;
         }
         alloc = createEntryAlloca(fullName, ty);
+        if (config.debug_symbols) diBuilder->insertDeclare(alloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
+
         locals[fullName] = alloc;
         varTypes[fullName] = qcType;
         volatileVars[fullName] = isVolatile;
@@ -4139,6 +4234,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 static int shadowId = 0;
                 std::string uniqueName = fullName + ".shadow." + std::to_string(shadowId++);
                 alloc = createEntryAlloca(uniqueName, newTy);
+                if (config.debug_symbols)
+                    diBuilder->insertDeclare(alloc, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
                 locals[fullName] = alloc;
                 varTypes[fullName] = qcType;
                 volatileVars[fullName] = isVolatile;
@@ -4251,6 +4348,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
     return nullptr;
 }
 llvm::Value* LLVMCompiler::emitVarAccess(VarAccessNode* const* acc) {
+    setDebugLocation(get_pos(*acc));
     std::string name = (*acc)->var_name_tok.value;
     if (name == "this") {
         if (currentThis) {
@@ -4307,6 +4405,7 @@ llvm::Value* LLVMCompiler::emitVarAccess(VarAccessNode* const* acc) {
     return nullptr;
 }
 llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
+    setDebugLocation((*asn)->getPos());
     if (auto va = std::get_if<VarAccessNode*>(&(*asn)->target)) {
         if (!resolveVarConsts((*va)->var_name_tok.value).empty()) {
             if (resolveVarConsts((*va)->var_name_tok.value).back()) {
@@ -5036,6 +5135,7 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
     return newVal;
 }
 llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
+    setDebugLocation((*unary)->getPos());
     bool isPostfix = (*unary)->is_postfix;
     TokenType op = (*unary)->op_tok.type;
     if ((*unary)->op_tok.type == TokenType::INCREMENT || (*unary)->op_tok.type == TokenType::DECREMENT) {
@@ -5325,6 +5425,7 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
     return nullptr;
 }
 llvm::Value* LLVMCompiler::emitMapLit(MapLiteralNode* const* mapLit) {
+    setDebugLocation((*mapLit)->getPos());
     if ((*mapLit)->struct_type.empty()) {
         cg_error(get_pos(*mapLit), "struct literals must have a struct type", "QC-T042");
         return nullptr;
@@ -5383,6 +5484,7 @@ llvm::Value* LLVMCompiler::emitMapLit(MapLiteralNode* const* mapLit) {
     return structVal;
 }
 llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit) {
+    setDebugLocation((*arrLit)->getPos());
     if (!(*arrLit)->type.empty() && std::holds_alternative<std::monostate>((*arrLit)->length)) {
         llvm::StructType* structTy = genericiseOrFindStruct(resolveTypeName((*arrLit)->type, false));
         if (!structTy) {
@@ -5515,6 +5617,7 @@ llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit) {
     return builder->CreateInBoundsGEP(arrTy, alloc, indices, "arr_ptr");
 }
 llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
+    setDebugLocation((*callPtr)->getPos());
     CallNode& call = *(*callPtr);
     if (auto* varAccess = std::get_if<VarAccessNode*>(&call.node_to_call)) {
         std::string funcName = (*varAccess)->var_name_tok.value;
@@ -5746,9 +5849,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                     ctorArgs.resize(fixedCount);
                     ctorArgs.push_back(packVariadicArgs(varVals));
                 }
-
-                std::vector<llvm::Value*> allArgs = {temp};
-                allArgs.insert(allArgs.end(), ctorArgs.begin(), ctorArgs.end());
+                std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, temp, ctorArgs);
                 if (insideTry()) {
                     auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
                     builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
@@ -7468,6 +7569,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
     return retTy->isVoidTy() ? nullptr : callInst;
 }
 llvm::Value* LLVMCompiler::emitArrAcc(ArrayAccessNode* arrAcc) {
+    setDebugLocation(arrAcc->getPos());
     std::string ptrTy = resolveTypeName(getExpressionType(arrAcc->base), false);
     if (ptrTy.ends_with("*") || ptrTy == "@nullptr" || ptrTy == "string") {
         if (ptrTy == "@nullptr") {
@@ -7572,6 +7674,7 @@ llvm::Value* LLVMCompiler::emitArrAcc(ArrayAccessNode* arrAcc) {
     }
 }
 llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
+    setDebugLocation((*propAccess)->getPos());
     std::string propName = (*propAccess)->property_name.value;
     std::string baseName = "";
     bool isEnum = false;
@@ -7841,6 +7944,7 @@ llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
     return nullptr;
 }
 llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
+    setDebugLocation((*methodCall)->getPos());
     auto* call = methodCall;
     std::string methodName = (*call)->method_name.value;
     llvm::Value* thisPtr = nullptr;
@@ -8460,6 +8564,7 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
     return emitMethodCall(method, thisPtr, args, methodName);
 }
 llvm::Value* LLVMCompiler::emitFieldAssign(FieldAssignNode* const* fieldAssign) {
+    setDebugLocation((*fieldAssign)->getPos());
     std::string fieldName = (*fieldAssign)->field_name.value;
     std::string targetTypeStr = "";
     if (auto varAccess = std::get_if<VarAccessNode*>(&(*fieldAssign)->base)) {
@@ -8614,6 +8719,7 @@ llvm::Value* LLVMCompiler::emitExpr(const AnyNode& node) {
     } else if (auto fieldAssign = std::get_if<FieldAssignNode*>(&node)) {
         return emitFieldAssign(fieldAssign);
     } else if (auto ref = safe_get<RefVarDeclNode>(node)) {
+        setDebugLocation(ref->getPos());
         std::string fullName = (getCurrentNamespace().empty() ? "" : getCurrentNamespace() + "::") + ref->var_name_tok.value;
         std::string baseType = ref->type_tok.value;
         if (baseType.starts_with("volatile ")) { baseType = baseType.substr(9); }
@@ -8623,6 +8729,12 @@ llvm::Value* LLVMCompiler::emitExpr(const AnyNode& node) {
         if (llvm::Value* value = emitLValue(ref->target)) {
             llvm::AllocaInst* refStore = builder->CreateAlloca(builder->getPtrTy(), nullptr, fullName);
             builder->CreateStore(value, refStore);
+            if (config.debug_symbols) {
+                llvm::DILocalVariable* debugVar = diBuilder->createAutoVariable(currentSubprogram, fullName, getDebugFile(get_pos(ref).file_id),
+                                                                                getLineNoFromPos(get_pos(ref)), getDebugType(baseType));
+                auto location = llvm::DILocation::get(context, getLineNoFromPos(get_pos(ref)), 0, currentSubprogram);
+                diBuilder->insertDeclare(refStore, debugVar, diBuilder->createExpression(), location, builder->GetInsertBlock());
+            }
             locals[fullName] = refStore;
         } else {
             cg_error(get_pos(ref), "Failed to emit RHS for reference decl", "QC-S257");
@@ -9117,7 +9229,7 @@ llvm::AllocaInst* LLVMCompiler::createEntryAlloca(const std::string& name, llvm:
     llvm::AllocaInst* alloc = tmp.CreateAlloca(ty, nullptr, name);
     return alloc;
 }
-llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
+llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
     std::string name;
     if (fn.name_tok) {
         name = fn.name_tok->value;
@@ -9152,6 +9264,8 @@ llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
             llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn, fn);
             llvm::Function* layerFunc = module->getFunction(layerName);
             if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
+            llvm::DISubprogram* oldSubprogram = currentSubprogram;
+            if (config.debug_symbols) { setupDebugFunction(layerFunc, fn.name_tok ? fn.name_tok->value : layerName, fn.getPos()); }
             auto savedDefers = defersStack;
             defersStack.clear();
             enterScope();
@@ -9160,10 +9274,20 @@ llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
             builder->SetInsertPoint(entryBB);
             auto* oldFunction = currentFunction;
             currentFunction = layerFunc;
+            if (config.debug_symbols) { setDebugLocation(fn.getPos()); }
             std::vector<llvm::Value*> forwardArgs;
             unsigned idx = 0;
             for (auto& arg : layerFunc->args()) {
                 auto& param = *std::next(fn.params.begin(), idx);
+                if (config.debug_symbols) {
+                    llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                        currentSubprogram, param.name.value, idx + 1, getDebugFile(get_pos(&fn).file_id), getLineNoFromPos(get_pos(&fn)),
+                        getDebugType(param.type.value), true);
+                    diBuilder->insertDbgValueIntrinsic(
+                        &arg, debugParam, diBuilder->createExpression(),
+                        llvm::DILocation::get(builder->getContext(), getLineNoFromPos(get_pos(&fn)), 0, currentSubprogram),
+                        builder->GetInsertBlock());
+                }
                 arg.setName(param.name.value);
                 auto* alloca = createEntryAlloca(arg.getName().str(), arg.getType());
                 builder->CreateStore(&arg, alloca);
@@ -9198,6 +9322,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
             exitScope();
             defersStack = savedDefers;
             currentTarget = layerFunc;
+            currentSubprogram = oldSubprogram;
         }
         functions[name] = currentTarget;
         return currentTarget;
@@ -9214,6 +9339,8 @@ llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
     } else {
         func = llvm::Function::Create(fTy, linkage, name, module);
     }
+    llvm::DISubprogram* oldSubprogram = currentSubprogram;
+    if (config.debug_symbols && !fn.is_foreign && !fn.is_header) { setupDebugFunction(func, fn.name_tok ? fn.name_tok->value : name, fn.getPos()); }
     llvm::SmallVector<llvm::Metadata*, 4> retTypes;
     for (auto& ret : fn.return_types) { retTypes.push_back(llvm::MDString::get(context, ret.value)); }
     func->setMetadata("qc.return_types", llvm::MDNode::get(context, retTypes));
@@ -9243,11 +9370,19 @@ llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
     builder->SetInsertPoint(entryBB);
     auto* oldFunction = currentFunction;
     currentFunction = func;
+    if (config.debug_symbols) { setDebugLocation(fn.getPos()); }
     unsigned idx = 0;
     for (auto& arg : func->args()) {
         auto& param = *std::next(fn.params.begin(), idx);
         arg.setName(param.name.value);
-
+        if (config.debug_symbols) {
+            llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(currentSubprogram, param.name.value, idx + 1,
+                                                                                   getDebugFile(get_pos(&fn).file_id), getLineNoFromPos(get_pos(&fn)),
+                                                                                   getDebugType(param.type.value), true);
+            diBuilder->insertDbgValueIntrinsic(&arg, debugParam, diBuilder->createExpression(),
+                                               llvm::DILocation::get(builder->getContext(), getLineNoFromPos(get_pos(&fn)), 0, currentSubprogram),
+                                               builder->GetInsertBlock());
+        }
         auto* alloca = createEntryAlloca(arg.getName().str(), arg.getType());
         builder->CreateStore(&arg, alloca);
         locals[param.name.value] = alloca;
@@ -9305,6 +9440,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(const FuncDefNode& fn) {
     lambdaTypes = savedLambdaTypes;
     exitScope();
     defersStack = savedDefers;
+    currentSubprogram = oldSubprogram;
     return func;
 }
 std::string LLVMCompiler::mangleName(const FuncDefNode& fn) {
@@ -9317,6 +9453,7 @@ std::string LLVMCompiler::lambdaName() {
     return "__lambda_" + std::to_string(counter++);
 }
 void LLVMCompiler::emitMultiRet(MultiReturnNode* mret) {
+    setDebugLocation(mret->getPos());
     llvm::Type* retTy = currentFunction->getReturnType();
     if (!retTy->isStructTy()) {
         cg_error(mret->pos, "multi-return in non-multi-return function", "QC-S262");
@@ -9353,9 +9490,7 @@ void LLVMCompiler::emitMultiRet(MultiReturnNode* mret) {
 
                     if (ctor) {
                         llvm::AllocaInst* retVal = createEntryAlloca("mret_val_" + std::to_string(i), classTy);
-
-                        std::vector<llvm::Value*> allArgs = {retVal};
-                        allArgs.insert(allArgs.end(), ctorArgs.begin(), ctorArgs.end());
+                        std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, retVal, ctorArgs);
                         if (insideTry()) {
                             auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
                             llvm::InvokeInst* invoke = builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
@@ -9434,6 +9569,7 @@ void LLVMCompiler::emitMultiRet(MultiReturnNode* mret) {
     return;
 }
 void LLVMCompiler::emitRet(ReturnNode* ret) {
+    setDebugLocation(ret->getPos());
     emitDefersDownTo(0);
     if (auto varAccess = std::get_if<VarAccessNode*>(&ret->value)) {
         std::string name = (*varAccess)->var_name_tok.value;
@@ -9465,9 +9601,7 @@ void LLVMCompiler::emitRet(ReturnNode* ret) {
 
                 if (ctor) {
                     llvm::AllocaInst* retVal = createEntryAlloca("ret_val", classTy);
-
-                    std::vector<llvm::Value*> allArgs = {retVal};
-                    allArgs.insert(allArgs.end(), ctorArgs.begin(), ctorArgs.end());
+                    std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, retVal, ctorArgs);
                     if (insideTry()) {
                         auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
                         llvm::InvokeInst* invoke = builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
@@ -9593,6 +9727,7 @@ void LLVMCompiler::emitRet(ReturnNode* ret) {
     return;
 }
 void LLVMCompiler::emitMultiVar(MultiVarDeclNode* mv) {
+    setDebugLocation(mv->getPos());
     llvm::Value* callVal = emitExpr(mv->value);
     if (!callVal) {
         cg_error(mv->var_names[0].pos, "failed to compile multi-var initializer", "QC-S266");
@@ -9638,6 +9773,7 @@ void LLVMCompiler::emitMultiVar(MultiVarDeclNode* mv) {
     return;
 }
 void LLVMCompiler::emitIf(IfNode* if_node) {
+    setDebugLocation(if_node->getPos());
     size_t outerDepth = defersStack.size();
     enterScope();
     if (if_node->init.has_value()) { emitStmt(if_node->init.value()); }
@@ -9766,6 +9902,8 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
     }
 }
 void LLVMCompiler::emitWhile(WhileNode* while_node) {
+    setDebugLocation(while_node->getPos());
+
     size_t outerDepth = defersStack.size();
     loopStack.push_back(outerDepth);
     enterScope();
@@ -9803,6 +9941,7 @@ void LLVMCompiler::emitWhile(WhileNode* while_node) {
     builder->SetInsertPoint(endBB);
 }
 void LLVMCompiler::emitFor(ForNode* for_node) {
+    setDebugLocation(for_node->getPos());
     size_t outerDepth = defersStack.size();
     loopStack.push_back(outerDepth);
     enterScope();
@@ -9839,6 +9978,8 @@ void LLVMCompiler::emitFor(ForNode* for_node) {
     builder->SetInsertPoint(endBB);
 }
 void LLVMCompiler::emitSwitch(SwitchNode* switch_node) {
+    setDebugLocation(switch_node->getPos());
+
     size_t outerDepth = defersStack.size();
     enterScope();
     llvm::Value* switchVal = emitExpr(switch_node->value);
@@ -9934,6 +10075,7 @@ void LLVMCompiler::emitSwitch(SwitchNode* switch_node) {
 }
 void LLVMCompiler::emitQIf(QIfNode* qif_node) {
     size_t outerDepth = defersStack.size();
+    setDebugLocation(qif_node->getPos());
     enterScope();
     if (qif_node->init.has_value()) { emitStmt(qif_node->init.value()); }
     llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "qif.end", currentFunction);
@@ -10009,6 +10151,8 @@ void LLVMCompiler::emitQIf(QIfNode* qif_node) {
     builder->SetInsertPoint(endBB);
 }
 void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
+    setDebugLocation(qsw->getPos());
+
     size_t outerDepth = defersStack.size();
     enterScope();
     llvm::Value* qb_val = emitExpr(qsw->value);
@@ -10094,6 +10238,8 @@ void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
     builder->SetInsertPoint(qswitch_end);
 }
 void LLVMCompiler::emitArrDecl(ArrayDeclNode* arrDecl) {
+    setDebugLocation(arrDecl->getPos());
+
     std::string name = arrDecl->var_name_tok.value;
     std::string elemType = arrDecl->type_tok.value;
     bool isVolatile = false;
@@ -10252,6 +10398,7 @@ void LLVMCompiler::emitArrDecl(ArrayDeclNode* arrDecl) {
     return;
 }
 void LLVMCompiler::emitArrAssign(ArrayAssignNode* arrAssign) {
+    setDebugLocation(arrAssign->getPos());
     if (auto arrAcc = safe_get<ArrayAccessNode>(arrAssign->array_access)) {
         std::string ptrTy = getExpressionType(arrAcc->base);
         if (ptrTy.ends_with("*") || ptrTy == "@nullptr") {
@@ -10323,6 +10470,8 @@ void LLVMCompiler::emitArrAssign(ArrayAssignNode* arrAssign) {
     return;
 }
 void LLVMCompiler::emitForeach(ForeachNode* foreach) {
+    setDebugLocation(foreach->getPos());
+
     size_t outerDepth = defersStack.size();
     loopStack.push_back(outerDepth);
     std::string elemName = foreach->elem_name.value;
@@ -10523,6 +10672,7 @@ void LLVMCompiler::emitTryCatch(TryCatchNode* trycatch) {
         cg_error(get_pos(trycatch), "You cannot have nested try catch blocks. Why would you need them", "QC-TC01");
         return;
     }
+    setDebugLocation(trycatch->getPos());
     size_t outerScope = defersStack.size();
     enterScope();
     auto* tryBB = llvm::BasicBlock::Create(context, "try.start", currentFunction);
@@ -10622,6 +10772,7 @@ void LLVMCompiler::emitTryCatch(TryCatchNode* trycatch) {
     builder->SetInsertPoint(endBB);
 }
 void LLVMCompiler::emitMatch(MatchNode* match_node) {
+    setDebugLocation(match_node->getPos());
     size_t outerDepth = defersStack.size();
     enterScope();
     llvm::Value* matchVal = emitExpr(match_node->value);
@@ -10746,16 +10897,20 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         emitWhile(while_node);
     } else if (std::holds_alternative<BreakNode*>(node)) {
         if (currentBreakBB) {
+            setDebugLocation(get_pos(node));
             if (!loopStack.empty()) emitDefersDownTo(loopStack.back());
             builder->CreateBr(currentBreakBB);
         } else {
             cg_error(get_pos(node), "break outside of loop/switch", "QC-S269");
         }
     } else if (std::holds_alternative<UnreachableNode*>(node)) {
+        setDebugLocation(get_pos(node));
         emitDefersDownTo(defersStack.size());
         builder->CreateUnreachable();
     } else if (std::holds_alternative<ContinueNode*>(node)) {
         if (currentContinueBB) {
+            setDebugLocation(get_pos(node));
+
             if (!loopStack.empty()) emitDefersDownTo(loopStack.back());
             builder->CreateBr(currentContinueBB);
         } else {
@@ -10776,6 +10931,8 @@ void LLVMCompiler::emitStmt(AnyNode node) {
     } else if (auto foreach = safe_get<ForeachNode>(node)) {
         emitForeach(foreach);
     } else if (auto stmts = safe_get<StatementsNode>(node)) {
+        setDebugLocation(get_pos(node));
+
         if (stmts->is_scoped) enterScope();
         for (auto& stmt : stmts->statements) {
             if (LabelNode* label = std::get_if<LabelNode>(&stmt)) {
@@ -10791,6 +10948,8 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         if (stmts->is_scoped) exitScope();
         return;
     } else if (auto ns = safe_get<NamespaceNode>(node)) {
+        setDebugLocation(get_pos(node));
+
         namespaceStack.push_back(ns->name);
         for (auto& decl : ns->body) { emitStmt(decl); }
         namespaceStack.pop_back();
@@ -10803,6 +10962,7 @@ void LLVMCompiler::emitStmt(AnyNode node) {
     } else if (auto match_node = safe_get<MatchNode>(node)) {
         emitMatch(match_node);
     } else if (LabelNode* label = std::get_if<LabelNode>(&node)) {
+        setDebugLocation(arrAssign->getPos());
         llvm::BasicBlock* block = resolveLabel(label->name.value).second.first;
         if (!block) {
             cg_error(get_pos(*label), "could not create label", "QC-LBL1");
@@ -10811,6 +10971,7 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         if (!builder->GetInsertBlock()->getTerminator()) { builder->CreateBr(block); }
         builder->SetInsertPoint(block);
     } else if (GotoNode* goto_stmt = std::get_if<GotoNode>(&node)) {
+        setDebugLocation(goto_stmt->getPos());
         auto info = resolveLabel(goto_stmt->togo.value);
         if (!info.second.first) {
             cg_error(get_pos(*goto_stmt), "no such label '" + goto_stmt->togo.value + "'", "QC-LBL2");
@@ -10975,14 +11136,6 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
         }
     for (auto& [className, info] : userTypes) {
         if (info.kind != UserTypeKind::Class || !info.generics.empty()) continue;
-        for (auto& method : info.classMethods) {
-            if (!method.is_static || !method.generics.empty()) continue;
-            std::string mangledName = className + "::" + method.name_tok.value;
-            if (functionDefs.count(mangledName)) { emitFuncDef(*functionDefs[mangledName]); }
-        }
-    }
-    for (auto& [className, info] : userTypes) {
-        if (info.kind != UserTypeKind::Class || !info.generics.empty()) continue;
         auto oldNamespaceStack = namespaceStack;
         namespaceStack.clear();
         if (!info.namespace_path.empty()) {
@@ -11041,9 +11194,24 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
             auto oldThis = currentThis;
             auto oldClassName = currentClassName;
             auto oldFunction = currentFunction;
+            llvm::DISubprogram* oldSubprogram = currentSubprogram;
+            if (config.debug_symbols) {
+                setupDebugFunction(fn, method.name_tok.value, method.name_tok.pos);
+                setDebugLocation(method.name_tok.pos);
+            }
+
             enterScope();
             if (!isStatic) {
                 currentThis = currentTarget->getArg(0);
+                if (config.debug_symbols) {
+                    llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                        currentSubprogram, "this", 1, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
+                        getDebugType(resolveTypeName(className, false) + "*"), true);
+                    diBuilder->insertDbgValueIntrinsic(
+                        currentTarget->getArg(0), debugParam, diBuilder->createExpression(),
+                        llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                        builder->GetInsertBlock());
+                }
                 varTypes["this"] = resolveTypeName(className, false) + "*";
             } else {
                 currentThis = nullptr;
@@ -11068,6 +11236,15 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                 }
                 llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
                 llvm::Value* argVal = currentTarget->getArg(i + expectedParamOffset);
+                if (config.debug_symbols) {
+                    llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                        currentSubprogram, param.name.value, i + 1 + expectedParamOffset, getDebugFile(method.name_tok.pos.file_id),
+                        getLineNoFromPos(method.name_tok.pos), getDebugType(param.type.value), true);
+                    diBuilder->insertDbgValueIntrinsic(
+                        argVal, debugParam, diBuilder->createExpression(),
+                        llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                        builder->GetInsertBlock());
+                }
                 builder->CreateStore(argVal, alloc);
                 locals[param.name.value] = alloc;
                 varTypes[param.name.value] = typeDescriptor;
@@ -11109,6 +11286,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                     builder->CreateRet(llvm::Constant::getNullValue(currentTarget->getReturnType()));
                 }
             }
+            currentSubprogram = oldSubprogram;
             if (!method.modifiers.empty()) {
                 llvm::FunctionType* fTy = fn->getFunctionType();
                 for (int i = (int)method.modifiers.size() - 1; i >= 0; --i) {
@@ -11128,6 +11306,11 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                     if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
                     auto savedDefers = defersStack;
                     defersStack.clear();
+                    llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                    if (config.debug_symbols) {
+                        setupDebugFunction(layerFunc, method.name_tok.value, method.name_tok.pos);
+                        setDebugLocation(method.name_tok.pos);
+                    }
                     enterScope();
                     llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
                     auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
@@ -11138,6 +11321,15 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                     std::vector<llvm::Value*> forwardArgs;
                     if (!isStatic) {
                         currentThis = layerFunc->getArg(0);
+                        if (config.debug_symbols) {
+                            llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                currentSubprogram, "this", i + 1, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
+                                getDebugType(resolveTypeName(className, false) + "*"), true);
+                            diBuilder->insertDbgValueIntrinsic(
+                                currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
+                                llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                                builder->GetInsertBlock());
+                        }
                         varTypes["this"] = resolveTypeName(className, false) + "*";
                         forwardArgs.push_back(currentThis);
                     } else {
@@ -11147,6 +11339,15 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                         auto& param = method.params[pIdx];
                         llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
                         argVal->setName(param.name.value);
+                        if (config.debug_symbols) {
+                            llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                currentSubprogram, param.name.value, pIdx + 2, getDebugFile(method.name_tok.pos.file_id),
+                                getLineNoFromPos(method.name_tok.pos), getDebugType(param.type.value), true);
+                            diBuilder->insertDbgValueIntrinsic(
+                                argVal, debugParam, diBuilder->createExpression(),
+                                llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                                builder->GetInsertBlock());
+                        }
                         auto* alloca = createEntryAlloca(param.name.value, argVal->getType());
                         builder->CreateStore(argVal, alloca);
                         locals[param.name.value] = alloca;

@@ -20,7 +20,7 @@
 #if defined(_WIN32) || defined(_WIN64)
 #include <print>
 #endif
-const std::string ver = "x1.3.4";
+const std::string ver = "x1.3.45";
 #include <random>
 bool slow = false;
 void slow_print(const std::string& text, const std::string& color = "\033[0m", int min_delay_ms = 100, int max_delay_ms = 450) {
@@ -217,6 +217,8 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: -A requires alias name and path\n";
                 return 1;
             }
+        } else if (arg.starts_with("-I")) {
+            config.include_dirs.push_back(arg.substr(2));
         } else if (arg == "-L") {
             if (i + 1 < argc) {
                 config.library_search_paths.push_back(argv[++i]);
@@ -239,6 +241,8 @@ int main(int argc, char* argv[]) {
             config.link_with.push_back(arg.substr(4));
         } else if (arg == "-d" || arg == "--debug") {
             config.debug = true;
+        } else if (arg == "-g") {
+            config.debug_symbols = true;
         } else if (arg.starts_with("-Wno-")) {
             config.warnings[arg.substr(5)] = run::WarningLevel::None;
         } else if (arg.starts_with("-W")) {
@@ -246,7 +250,7 @@ int main(int argc, char* argv[]) {
         } else if (arg.starts_with("-E")) {
             config.warnings[arg.substr(2)] = run::WarningLevel::Error;
         } else if (arg == "--c-args") {
-            for (int j = i; j < argc; j++) { config.c_args.push_back(argv[j]); }
+            for (int j = i + 1; j < argc; j++) { config.c_args.push_back(argv[j]); }
         } else if (arg == "--help" || arg == "-h") {
             std::cout << GREEN << R"(
 QuarticC Compiler )" << ver

@@ -138,6 +138,8 @@ struct RunConfig {
     std::vector<std::string> link_o_files;
     bool prepro_only = false;
     bool dynamic = false;
+    std::vector<std::string> include_dirs;
+    bool debug_symbols = false;
 };
 Mer run(std::string file, std::string text, RunConfig config);
 } // namespace Run

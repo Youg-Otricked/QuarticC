@@ -341,6 +341,7 @@ int emitObjectFile(llvm::Module& M, const std::string& outputPath, bool debug, s
 #endif
 }
 Mer run(std::string file, std::string text, RunConfig config = {}) {
+    include_paths = config.include_dirs;
     if (config.translate_c) {
         TranslateCtx context{.header = file, .args = config.c_args};
         Translator translator(&context);
@@ -586,6 +587,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
         if (config.compile_mode) {
             llvm::LLVMContext context;
             auto master_module = new llvm::Module("master_module", context);
+            auto* diBuilder = config.debug_symbols ? new llvm::DIBuilder(*master_module) : nullptr;
 #ifdef __EMSCRIPTEN__
             LLVMInitializeWebAssemblyTargetInfo();
             LLVMInitializeWebAssemblyTarget();
@@ -723,7 +725,10 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 }
                 auto types = file_asts[filepath].user_types;
                 for (const auto& dep : reach[filepath]) types.insert(type_registry[dep].begin(), type_registry[dep].end());
-                LLVMCompiler comp(types, master_module, context, filepath == file);
+                auto* dfile = config.debug_symbols ? diBuilder->createFile(filepath, "") : nullptr;
+                auto* compileUnit = config.debug_symbols ? diBuilder->createCompileUnit(llvm::dwarf::DW_LANG_C_plus_plus, dfile, "QuarticC", false, "", 0) : nullptr;
+                if (config.debug_symbols) debug_files[get_pos(file_asts[filepath].statements).file_id] = dfile;
+                LLVMCompiler comp(types, master_module, context, diBuilder, compileUnit, filepath == file);
                 comp.config = config;
                 std::vector<CTError> errs = comp.compile(file_asts[filepath].statements, visSigs, visFDefs, visTypeStr, visLen, visVars, visAlloc,
                                                          visLamb, visSpec, visGlobals);
@@ -841,6 +846,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 delete TM;
             }
 #endif
+            if (config.debug_symbols) diBuilder->finalize();
             master_module->print(out, nullptr);
             if (config.compile_only) {
                 message += ". Compiled to " + ll_file;

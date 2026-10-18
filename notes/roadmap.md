@@ -14,7 +14,6 @@ int x = returning for (int i = 0; i < 10; i++) {
 - Operator.
 - Private/Protected inheritance
 - Constexpr
-- Debug
 - Cqb lib in stl. Ci and build.
 - qcheck (QC Lint(qc linter. duh)
 - qconform (QC Formatter)

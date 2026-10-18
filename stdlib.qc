@@ -35,6 +35,9 @@ namespace Array {
                 return this->size <= this->current_index;
             }
             T _next() {
+                if (this->size == 0) {
+                    throw "Cannot iterate an empty";
+                }
                 if (!this->_atEnd()) {
                     return this->data[this->current_index++];
                 }
@@ -44,6 +47,9 @@ namespace Array {
                 return this->current_index <= 0;
             }
             T _prev() {
+                if (this->size == 0) {
+                    throw "Cannot iterate an empty";
+                }
                 if (!this->_atStart()) {
                     return this->data[--this->current_index];
                 }
@@ -119,6 +125,9 @@ namespace Vector {
                 return this->size <= this->current_index;
             }
             T _next() {
+                if (this->size == 0) {
+                    throw "Cannot iterate an empty";
+                }
                 if (!this->_atEnd()) {
                     return this->data[this->current_index++];
                 }
@@ -128,6 +137,9 @@ namespace Vector {
                 return this->current_index <= 0;
             }
             T _prev() {
+                if (this->size == 0) {
+                    throw "Cannot iterate an empty";
+                }
                 if (!this->_atStart()) {
                     return this->data[--this->current_index];
                 }
@@ -256,6 +268,9 @@ namespace List {
             }
 
             T _next() {
+                if (!this->current) {
+                    throw "cannot iterate an empty";
+                }
                 T value = this->current->data;
                 this->current = this->current->next;
                 return value;
@@ -266,6 +281,9 @@ namespace List {
             }
 
             T _prev() {
+                if (!this->current) {
+                    throw "cannot iterate an empty";
+                }
                 T value = this->current->data;
                 this->current = this->current->prev;
                 return value;
@@ -659,6 +677,9 @@ namespace Span {
                 return this->size <= this->current_index;
             }
             T _next() {
+                if (this->size == 0) {
+                    throw "cannot iterate an empty";
+                }
                 if (!this->_atEnd()) {
                     return this->data[this->current_index++];
                 }
@@ -668,6 +689,9 @@ namespace Span {
                 return this->current_index <= 0;
             }
             T _prev() {
+                if (this->size == 0) {
+                    throw "cannot iterate an empty";
+                }
                 if (!this->_atStart()) {
                     return this->data[--this->current_index];
                 }
@@ -872,6 +896,9 @@ namespace Unordered {
                 return this->bucket_index >= this->num_buckets;
             }
             Pair::Pair<K, V>& _next() {
+                if (!this->current) {
+                    throw "cannot iterate an empty";
+                }
                 Pair::Pair<K, V>& val = this->current->data;
                 this->current = this->current->next;
                 if (this->current == nullptr) {
@@ -909,6 +936,9 @@ namespace Unordered {
                 return this->bucket_index >= this->num_buckets;
             }
             T _next() {
+                if (!this->current) {
+                    throw "cannot iterate an empty";
+                }
                 T val = this->current->value;
                 this->current = this->current->next;
                 if (this->current == nullptr) {

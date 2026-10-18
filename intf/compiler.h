@@ -14,6 +14,8 @@
 #include <variant>
 #include <vector>
 #ifdef ENABLE_LLVM
+#include <llvm/IR/DIBuilder.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/IntrinsicsX86.h>
@@ -25,6 +27,7 @@
 #if defined(_WIN32) || defined(_WIN64)
 #include <print>
 #endif
+inline std::unordered_map<uint32_t, llvm::DIFile*> debug_files;
 extern bool isHeader;
 extern uint64_t invokeCounter;
 bool isCharInSet(char, const std::string&);
@@ -191,10 +194,11 @@ class LLVMCompiler {
     }
     void generateStructReprFunctions();
     llvm::Value* callStringConcat(llvm::Value* a, llvm::Value* b);
-    llvm::Type* getLargestRUType(const UserTypeInfo& info) {
+    llvm::Type* getLargestRUType(UserTypeInfo& info) {
         size_t size = 0;
         auto& DL = module->getDataLayout();
-        for (const StructField& field : info.fields) {
+        for (StructField& field : info.fields) {
+            field.type = resolveTypeName(field.type, false);
             llvm::Type* ty = llvmTypeFor(field.type);
             if (!ty) {
                 cg_error(info.pos, "unknow type: " + field.type, "QC-RU01");
@@ -206,12 +210,13 @@ class LLVMCompiler {
         }
         return llvm::ArrayType::get(builder->getIntNTy(8), size);
     }
-    std::vector<llvm::Type*> getLargestDiscriminantType(const UserTypeInfo& info) {
+    std::vector<llvm::Type*> getLargestDiscriminantType(UserTypeInfo& info) {
         std::vector<size_t> sizes;
         auto& DL = module->getDataLayout();
-        for (const EnumEntry& entry : info.enumEntries) {
+        for (EnumEntry& entry : info.enumEntries) {
             for (int i = 0; i < entry.tags.size(); i++) {
                 if (i >= sizes.size()) { sizes.push_back(0); }
+                entry.tags[i] = resolveTypeName(entry.tags[i]);
                 llvm::Type* ty = llvmTypeFor(entry.tags[i]);
                 if (!ty) {
                     cg_error(info.pos, "unknow type: " + entry.tags[i], "QC-EM05");
@@ -226,7 +231,7 @@ class LLVMCompiler {
         for (size_t size : sizes) { res.push_back(llvm::ArrayType::get(builder->getIntNTy(8), size)); }
         return res;
     }
-    llvm::Type* generateRawUnion(const std::string& name, const UserTypeInfo& info) {
+    llvm::Type* generateRawUnion(const std::string& name, UserTypeInfo& info) {
         if (!info.generics.empty()) return nullptr;
         auto it = rawUnionTypes.find(resolveTypeName(name));
         if (it == rawUnionTypes.end()) return nullptr;
@@ -234,7 +239,7 @@ class LLVMCompiler {
         if (ty->isOpaque()) ty->setBody({getLargestRUType(info)});
         return ty;
     }
-    llvm::Type* generateEnum(const std::string& name, const UserTypeInfo& info) {
+    llvm::Type* generateEnum(const std::string& name, UserTypeInfo& info) {
         if (!info.generics.empty()) return nullptr;
         auto it = enumTypes.find(resolveTypeName(name));
         if (it == enumTypes.end()) return nullptr;
@@ -242,12 +247,44 @@ class LLVMCompiler {
         if (ty->isOpaque()) ty->setBody(getLargestDiscriminantType(info));
         return ty;
     }
+    void setupDebugFunction(llvm::Function* function, const std::string& name, const Position& pos) {
+        if (!config.debug_symbols || !diBuilder) return;
+        auto opt = get_original_line_no(SourceManager::instance().get_file_name(pos.file_id), pos.file_id, pos.line);
+        uint64_t line = opt.has_value() ? opt.value() + 1 : 0;
+        auto* subroutineType = diBuilder->createSubroutineType(diBuilder->getOrCreateTypeArray({}));
+        currentSubprogram = diBuilder->createFunction(getDebugFile(pos.file_id), name, function->getName(), getDebugFile(pos.file_id), line,
+                                                      subroutineType, line, llvm::DINode::FlagZero, llvm::DISubprogram::SPFlagDefinition);
+        function->setSubprogram(currentSubprogram);
+    }
+    void setDebugLocation(const Position& pos) {
+        if (!config.debug_symbols || !diBuilder || !currentSubprogram) return;
+        auto opt = get_original_line_no(SourceManager::instance().get_file_name(pos.file_id), pos.file_id, pos.line);
+        uint64_t line = opt.has_value() ? opt.value() + 1 : 0;
+        uint64_t column = 0;
+        builder->SetCurrentDebugLocation(llvm::DILocation::get(context, line, column, currentSubprogram));
+    }
+    uint64_t getLineNoFromPos(const Position& pos) {
+        auto opt = get_original_line_no(SourceManager::instance().get_file_name(pos.file_id), pos.file_id, pos.line);
+        return opt.has_value() ? opt.value() + 1 : 0;
+    }
     void createUserTypes();
     static bool isIndirectType(const std::string& t) { return !t.empty() && (t.back() == '*' || t.back() == '&'); }
-    void generateStruct(const std::string& mapKey, const UserTypeInfo& info);
-    void generateClass(const std::string& mapKey, const UserTypeInfo& info);
+    void generateStruct(const std::string& mapKey, UserTypeInfo& info);
+    void generateClass(const std::string& mapKey, UserTypeInfo& info);
     llvm::Value* convertToString(llvm::Value* val, AnyNode& expr, Position pos);
-    LLVMCompiler(std::unordered_map<std::string, UserTypeInfo>& userTys, llvm::Module* mod, llvm::LLVMContext& ctx, bool is_main = false);
+    llvm::DISubprogram* currentSubprogram;
+    llvm::DIBuilder* diBuilder;
+    llvm::DICompileUnit* compileUnit;
+    llvm::DIFile* getDebugFile(uint32_t file_id) {
+        if (!config.debug_symbols || !diBuilder) return nullptr;
+        if (auto it = debug_files.find(file_id); it != debug_files.end()) return it->second;
+        const auto& path = SourceManager::instance().get_file_name(file_id);
+        auto* file = diBuilder->createFile(path, "");
+        debug_files[file_id] = file;
+        return file;
+    }
+    LLVMCompiler(std::unordered_map<std::string, UserTypeInfo>& userTys, llvm::Module* mod, llvm::LLVMContext& ctx, llvm::DIBuilder* diBuilder,
+                 llvm::DICompileUnit* diUnit, bool is_main = false);
     std::vector<CTError> compile(StatementsNode* root, std::unordered_map<std::string, FunctionSignature> visibleFunctionSignatures,
                                  std::unordered_map<std::string, FuncDefNode*> visibleFunctionDefs,
                                  std::unordered_map<std::string, std::string> visibleArrayTypeStrings,
@@ -516,13 +553,13 @@ class LLVMCompiler {
     void expandSpreadIntoVector(llvm::Value* collVal, AnyNode& collExpr, std::vector<llvm::Value*>& elements);
     llvm::Value* emitSpreadFunctionCall(llvm::Value* calleeVal, llvm::FunctionType* fnTy, CallNode& call);
     bool fulfillsGenericConstraints(std::vector<GenericType> generics, std::vector<std::string> genericParams, Position pos = Position());
-    llvm::StructType* generateGenericEnum(std::string enumName, UserTypeInfo enumInfo, std::vector<std::string> genericParams);
-    llvm::StructType* generateGenericRawUnion(std::string runionName, UserTypeInfo runionInfo, std::vector<std::string> genericParams);
-    ConceptInfo generateGenericConcept(std::string conceptName, UserTypeInfo conceptInfo, std::vector<std::string> genericParams);
-    llvm::StructType* generateGenericClass(std::string className, UserTypeInfo classInfo, std::vector<std::string> genericParams);
-    llvm::StructType* generateGenericStruct(std::string structName, UserTypeInfo structInfo, std::vector<std::string> genericParams);
-    UserTypeInfo generateGenericUnion(std::string unionName, UserTypeInfo unionInfo, std::vector<std::string> genericParams);
-    std::string generateGenericAlias(std::string aliasName, UserTypeInfo aliasInfo, std::vector<std::string> genericParams);
+    llvm::StructType* generateGenericEnum(std::string enumName, UserTypeInfo& enumInfo, std::vector<std::string> genericParams);
+    llvm::StructType* generateGenericRawUnion(std::string runionName, UserTypeInfo& runionInfo, std::vector<std::string> genericParams);
+    ConceptInfo generateGenericConcept(std::string conceptName, UserTypeInfo& conceptInfo, std::vector<std::string> genericParams);
+    llvm::StructType* generateGenericClass(std::string className, UserTypeInfo& classInfo, std::vector<std::string> genericParams);
+    llvm::StructType* generateGenericStruct(std::string structName, UserTypeInfo& structInfo, std::vector<std::string> genericParams);
+    UserTypeInfo generateGenericUnion(std::string unionName, UserTypeInfo& unionInfo, std::vector<std::string> genericParams);
+    std::string generateGenericAlias(std::string aliasName, UserTypeInfo& aliasInfo, std::vector<std::string> genericParams);
     std::unordered_map<std::string, llvm::GlobalVariable*> globals;
     std::unordered_map<std::string, FunctionSignature> functionSignatures;
     std::unordered_map<std::string, FuncDefNode*> functionDefs;
@@ -597,19 +634,25 @@ class LLVMCompiler {
         }
         return std::make_pair(false, std::make_pair(nullptr, 0));
     }
+
     std::string strip_consts(std::string type) {
         std::string n;
-        bool baseConst = false;
-        bool afterPointer = false;
         std::vector<std::string> tokens;
         std::string token;
+        int angleDepth = 0;
         for (char c : type) {
             if (std::isspace(static_cast<unsigned char>(c))) {
                 if (!token.empty()) {
                     tokens.push_back(token);
                     token.clear();
                 }
-            } else if (c == '*') {
+            } else if (c == '<') {
+                ++angleDepth;
+                token += c;
+            } else if (c == '>') {
+                --angleDepth;
+                token += c;
+            } else if (c == '*' && angleDepth == 0) {
                 if (!token.empty()) {
                     tokens.push_back(token);
                     token.clear();
@@ -619,18 +662,18 @@ class LLVMCompiler {
                 token += c;
             }
         }
-        if (!token.empty()) tokens.push_back(token);
-        for (size_t i = 0; i < tokens.size(); ++i) {
-            const std::string& t = tokens[i];
-            if (t == "const") {
-            } else if (t == "*") {
+        if (!token.empty()) { tokens.push_back(token); }
+        bool afterPointer = false;
+        for (const std::string& t : tokens) {
+            if (t == "const") { continue; }
+            if (t == "*") {
                 afterPointer = true;
                 n += "*";
-            } else {
-                if (!afterPointer) {
-                    if (!n.empty()) n += " ";
-                    n += t;
-                }
+                continue;
+            }
+            if (!afterPointer) {
+                if (!n.empty()) { n += " "; }
+                n += t;
             }
         }
         return n;
@@ -638,17 +681,22 @@ class LLVMCompiler {
     std::string make_consts(std::string fullName, std::string type) {
         std::vector<uint8_t> values;
         std::string n;
-        bool baseConst = false;
-        bool afterPointer = false;
         std::vector<std::string> tokens;
         std::string token;
+        int angleDepth = 0;
         for (char c : type) {
             if (std::isspace(static_cast<unsigned char>(c))) {
                 if (!token.empty()) {
                     tokens.push_back(token);
                     token.clear();
                 }
-            } else if (c == '*') {
+            } else if (c == '<') {
+                ++angleDepth;
+                token += c;
+            } else if (c == '>') {
+                --angleDepth;
+                token += c;
+            } else if (c == '*' && angleDepth == 0) {
                 if (!token.empty()) {
                     tokens.push_back(token);
                     token.clear();
@@ -658,25 +706,23 @@ class LLVMCompiler {
                 token += c;
             }
         }
-        if (!token.empty()) tokens.push_back(token);
+        if (!token.empty()) { tokens.push_back(token); }
         values.push_back(false);
-        for (size_t i = 0; i < tokens.size(); ++i) {
-            const std::string& t = tokens[i];
+        bool afterPointer = false;
+        for (const std::string& t : tokens) {
             if (t == "const") {
                 if (!afterPointer) {
                     values[0] = true;
                 } else {
-                    if (!values.empty()) values.back() = true;
+                    values.back() = true;
                 }
             } else if (t == "*") {
                 values.push_back(false);
                 afterPointer = true;
                 n += "*";
-            } else {
-                if (!afterPointer) {
-                    if (!n.empty()) n += " ";
-                    n += t;
-                }
+            } else if (!afterPointer) {
+                if (!n.empty()) { n += " "; }
+                n += t;
             }
         }
         consts[fullName] = values;
@@ -718,9 +764,9 @@ class LLVMCompiler {
         }
         return sig;
     }
-    std::string getTupleFieldType(const std::string& currentType, size_t idx) {
+    std::vector<std::string> getTupleFieldTypes(const std::string& currentType) {
         std::vector<std::string> elements;
-        if (currentType.length() < 2 || currentType.front() != '(' || currentType.back() != ')') { return "unknown"; }
+        if (currentType.length() < 2 || currentType.front() != '(' || currentType.back() != ')') { return {}; }
         std::string current_element;
         size_t paren = 0; // please don't.
         size_t angle = 0; // PLEASE DON'T.
@@ -746,6 +792,11 @@ class LLVMCompiler {
             }
         }
         if (!current_element.empty()) { elements.push_back(current_element); }
+        return elements;
+    }
+
+    std::string getTupleFieldType(const std::string& currentType, size_t idx) {
+        auto elements = getTupleFieldTypes(currentType);
         if (elements.size() <= idx) return "unknown";
         return elements[idx];
     }
@@ -871,7 +922,15 @@ class LLVMCompiler {
                 return getTupleFieldType(currentType, fieldIdx);
             }
             if (rawUnionTypes.count(currentType) || genericRawUnions.count(currentType)) { return getUnionFieldType(currentType, fieldName); }
+            std::vector<std::string> savedNamespaceStack = namespaceStack;
             while (!currentType.empty() && userTypes.contains(baseTypeName(currentType))) {
+                namespaceStack.clear();
+                size_t pos = 0;
+                size_t last_pos = 0;
+                while ((pos = currentType.find("::", last_pos)) != std::string::npos) {
+                    namespaceStack.push_back(currentType.substr(last_pos, pos - last_pos));
+                    last_pos = pos + 2;
+                }
                 auto& info = userTypes[baseTypeName(currentType)];
                 auto savedGenericTypeStrings = currentGenericTypeStrings;
                 auto savedNonTypeGenerics = currentNonTypeGenericValues;
@@ -887,12 +946,13 @@ class LLVMCompiler {
                         gen.name = val;
                         currentNonTypeGenericValues[gname] = gen;
                     } else {
-                        currentGenericTypeStrings[gen.name] = val;
+                        currentGenericTypeStrings[gen.name] = resolveTypeName(val, false);
                     }
                 }
                 for (const auto& f : info.fields) {
                     if (f.name == fieldName) {
-                        std::string res = substituteGenerics(f.type);
+                        std::string res = resolveTypeName(substituteGenerics(f.type), false);
+                        namespaceStack = savedNamespaceStack;
                         currentGenericTypeStrings = savedGenericTypeStrings;
                         currentNonTypeGenericValues = savedNonTypeGenerics;
                         return res;
@@ -900,12 +960,15 @@ class LLVMCompiler {
                 }
                 for (const auto& f : info.classFields) {
                     if (f.name == fieldName) {
-                        std::string res = substituteGenerics(f.type);
+                        std::string res = resolveTypeName(substituteGenerics(f.type), false);
+                        namespaceStack = savedNamespaceStack;
+
                         currentGenericTypeStrings = savedGenericTypeStrings;
                         currentNonTypeGenericValues = savedNonTypeGenerics;
                         return res;
                     }
                 }
+                namespaceStack = savedNamespaceStack;
                 currentGenericTypeStrings = savedGenericTypeStrings;
                 currentNonTypeGenericValues = savedNonTypeGenerics;
                 currentType = info.baseClassName;
@@ -1184,7 +1247,7 @@ class LLVMCompiler {
 
             return foundReturnType;
         } else if (TypeValueNode* typeValue = std::get_if<TypeValueNode>(&node)) {
-            return resolveTypeName(typeValue->tok.value, false);
+            return "string";
         } else if (ModifierNode* modNode = safe_get<ModifierNode>(node)) {
             if (!modNode || modNode->modifiers.empty()) { return getExpressionType(modNode->node, strip); }
             std::string currentType = getExpressionType(modNode->node, strip);
@@ -1217,17 +1280,477 @@ class LLVMCompiler {
         }
         return "unknown";
     }
-    bool is_primitive_type(const std::string& name) {
-        return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool",
-                                                "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+    bool is_primitive_type(const std::string_view& name) {
+        return std::unordered_set<std::string_view>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool",
+                                                     "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
             .contains(name);
     }
-    bool is_primint_type(const std::string& name) {
-        return std::unordered_set<std::string>({"int", "byte", "nibble", "addr_t", "short int", "long int", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+    bool is_primint_type(const std::string_view& name) {
+        return std::unordered_set<std::string_view>(
+                   {"int", "byte", "nibble", "addr_t", "short int", "long int", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
             .contains(name);
+    }
+    bool is_unsigned_type(const std::string_view& name) {
+        return std::unordered_set<std::string_view>({"byte", "nibble", "addr_t", "ai64u_t", "i32u_t", "i16u_t", "bool", "qbool"}).contains(name);
+    }
+    Token make_number(const Position& start_pos, const std::string& text) {
+        std::string num = "";
+        bool is_octal = false;
+        bool is_binary = false;
+        bool is_long = false;
+        bool is_short = false;
+        bool is_hex = false;
+        bool is_addrt = false;
+        bool is_byte = false;
+        bool is_nibble = false;
+        size_t index = 0;
+        char current_char = text[index];
+        if (current_char == '0') {
+            if (text.length() > index + 1) {
+                switch (text[index + 1]) {
+                case 'x':
+                case 'X':
+                    is_hex = true;
+                    index += 2;
+                    break;
+                case 'o':
+                case 'O':
+                    is_octal = true;
+                    index += 2;
+                    break;
+                case 'b':
+                case 'B':
+                    is_binary = true;
+                    index += 2;
+                    break;
+                }
+            }
+        }
+        current_char = text[index];
+        auto advance = [&index, &text, &current_char]() {
+            ++index;
+            current_char = index < text.length() ? text[index] : '\0';
+        };
+        if (is_hex) {
+            while (current_char != '\0' && isCharInSet(current_char, "1234567890abcdefABCDEF'")) {
+                if (current_char == '\'') { advance(); }
+                num += current_char;
+                advance();
+            }
+            size_t val = std::stoull(num, nullptr, 16);
+            if (current_char == 'l') {
+                advance();
+                return Token(TokenType::LONG_INT, std::to_string(val), start_pos);
+            } else if (current_char == 'i') {
+                advance();
+                return Token(TokenType::INT, std::to_string(val), start_pos);
+            } else if (current_char == 's') {
+                advance();
+                return Token(TokenType::SHORT_INT, std::to_string(val), start_pos);
+            } else if (current_char == 'y') {
+                advance();
+                return Token(TokenType::BYTE, std::to_string(val), start_pos);
+            } else if (current_char == 'n') {
+                advance();
+                return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
+            }
+            if (current_char == 'u') {
+                advance();
+                if (current_char == 'l') advance();
+                if (current_char == 'l') advance();
+            }
+            return Token(TokenType::ADDR_T, std::to_string(val), start_pos);
+        } else if (is_octal) {
+            while (current_char != '\0' && ((std::isdigit(current_char) && current_char - '0' < 8) || current_char == '\'')) {
+                if (current_char == '\'') { advance(); }
+                num += current_char;
+                advance();
+            }
+            size_t val = std::stoull(num, nullptr, 8);
+            if (current_char == 'l') {
+                advance();
+                return Token(TokenType::LONG_INT, std::to_string(val), start_pos);
+            } else if (current_char == 'i') {
+                advance();
+                return Token(TokenType::INT, std::to_string(val), start_pos);
+            } else if (current_char == 's') {
+                advance();
+                return Token(TokenType::SHORT_INT, std::to_string(val), start_pos);
+            } else if (current_char == 'y') {
+                advance();
+                return Token(TokenType::BYTE, std::to_string(val), start_pos);
+            } else if (current_char == 'n') {
+                advance();
+                return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
+            }
+            if (current_char == 'u') {
+                advance();
+                if (current_char == 'l') advance();
+                if (current_char == 'l') advance();
+            }
+            return Token(TokenType::ADDR_T, std::to_string(val), start_pos);
+        } else if (is_binary) {
+            while (current_char != '\0' && ((std::isdigit(current_char) && current_char - '0' < 2) || current_char == '\'')) {
+                if (current_char == '\'') { advance(); }
+                num += current_char;
+                advance();
+            }
+            size_t val = std::stoull(num, nullptr, 2);
+            if (current_char == 'l') {
+                advance();
+                return Token(TokenType::LONG_INT, std::to_string(val), start_pos);
+            } else if (current_char == 'i') {
+                advance();
+                return Token(TokenType::INT, std::to_string(val), start_pos);
+            } else if (current_char == 's') {
+                advance();
+                return Token(TokenType::SHORT_INT, std::to_string(val), start_pos);
+            } else if (current_char == 'y') {
+                advance();
+                return Token(TokenType::BYTE, std::to_string(val), start_pos);
+            } else if (current_char == 'n') {
+                advance();
+                return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
+            }
+            if (current_char == 'u') {
+                advance();
+                if (current_char == 'l') advance();
+                if (current_char == 'l') advance();
+            }
+            return Token(TokenType::ADDR_T, std::to_string(val), start_pos);
+        } else {
+            while (current_char != '\0' && isCharInSet(current_char, "1234567890flsaynu'")) {
+                if (current_char == 'l') {
+                    is_long = true;
+                    advance();
+                    break;
+                } else if (current_char == 's') {
+                    is_short = true;
+                    advance();
+                    break;
+                } else if (current_char == 'a' || current_char == 'u') {
+                    is_addrt = true;
+                    advance();
+                    if (current_char == 'l') advance();
+                    if (current_char == 'l') advance();
+                    break;
+                } else if (current_char == 'y') {
+                    advance();
+                    is_byte = true;
+                    break;
+                } else if (current_char == 'n') {
+                    advance();
+                    is_nibble = true;
+                    break;
+                } else if (current_char == '\'') {
+                    if (num.empty() || !std::isdigit(static_cast<unsigned char>(text[index + 1]))) {
+                        throw new InvalidSyntaxError("QC-IC03: ' delimiter must appear between digits", start_pos);
+                    }
+                    advance();
+                } else {
+                    num += current_char;
+                    advance();
+                }
+            }
+        }
+        if (is_byte) return Token(TokenType::BYTE, num, start_pos);
+        if (is_nibble) return Token(TokenType::NIBBLE, num, start_pos);
+        if (is_addrt) return Token(TokenType::ADDR_T, num, start_pos);
+        if (is_long) return Token(TokenType::LONG_INT, num, start_pos);
+        if (is_short) return Token(TokenType::SHORT_INT, num, start_pos);
+        return Token(TokenType::INT, num, start_pos);
+    }
+    struct FunctionType {
+        std::vector<std::string> params;
+        std::vector<std::string> returns;
+    };
+
+    bool parseFunctionType(const std::string& type, FunctionType& result) {
+        std::string s = trim(type);
+        if (s.size() < 2 || s.compare(0, 2, "fn") != 0) return false;
+        size_t open = s.find('(', 2);
+        if (open == std::string::npos) return false;
+        for (size_t i = 2; i < open; ++i) {
+            if (!std::isspace(static_cast<unsigned char>(s[i]))) return false;
+        }
+        int depth = 0;
+        size_t close = std::string::npos;
+        for (size_t i = open; i < s.size(); ++i) {
+            if (s[i] == '(') {
+                ++depth;
+            } else if (s[i] == ')') {
+                if (--depth < 0) return false;
+                if (depth == 0) {
+                    close = i;
+                    break;
+                }
+            }
+        }
+        if (close == std::string::npos) return false;
+        std::string paramsText = s.substr(open + 1, close - open - 1);
+        std::string rest = trim(s.substr(close + 1));
+        if (rest.size() < 2 || rest[0] != '-' || rest[1] != '>') return false;
+        std::string returnsText = trim(rest.substr(2));
+        if (returnsText.empty()) return false;
+        FunctionType parsed;
+        if (!trim(paramsText).empty()) {
+            parsed.params = splitTopLevel(paramsText);
+            for (auto& param : parsed.params) param = trim(param);
+        }
+        parsed.returns = splitTopLevel(returnsText);
+        for (auto& ret : parsed.returns) ret = trim(ret);
+        result = std::move(parsed);
+        return true;
+    }
+    std::vector<std::string> splitTopLevel(const std::string& text, char delimiter = ',') {
+        std::vector<std::string> result;
+        size_t start = 0;
+        int parens = 0;
+        int brackets = 0;
+        int angles = 0;
+        for (size_t i = 0; i < text.size(); ++i) {
+            switch (text[i]) {
+            case '(': ++parens; break;
+            case ')': --parens; break;
+            case '[': ++brackets; break;
+            case ']': --brackets; break;
+            case '<': ++angles; break;
+            case '>': --angles; break;
+            default: break;
+            }
+            if (text[i] == delimiter && parens == 0 && brackets == 0 && angles == 0) {
+                result.push_back(text.substr(start, i - start));
+                start = i + 1;
+            }
+        }
+        result.push_back(text.substr(start));
+        return result;
     }
 
+    std::unordered_map<std::string, llvm::DIType*> debug_types;
+    llvm::DIType* getDebugType(std::string type) {
+        if (!config.debug_symbols || !diBuilder) return nullptr;
+        if (auto it = debug_types.find(type); it != debug_types.end()) return it->second;
+        type = resolveTypeName(type, false);
+        if (is_primitive_type(type) && type != "string") {
+            if (type == "void") {
+                debug_types[type] = diBuilder->createUnspecifiedType("void");
+                return debug_types[type];
+            }
+            const llvm::DataLayout& datalayout = module->getDataLayout();
+            debug_types[type] = diBuilder->createBasicType(type, datalayout.getTypeSizeInBits(llvmTypeFor(type)),
+                                                           is_primint_type(type)
+                                                               ? is_unsigned_type(type) ? llvm::dwarf::DW_ATE_unsigned : llvm::dwarf::DW_ATE_signed
+                                                               : llvm::dwarf::DW_ATE_float);
+            return debug_types[type];
+        } else if (type == "string" || type.ends_with("*") || type.ends_with("&")) {
+            const llvm::DataLayout& datalayout = module->getDataLayout();
+            std::string pointeeType = type == "string" ? "char*" : type;
+            pointeeType.pop_back();
+            debug_types[type] = diBuilder->createPointerType(getDebugType(pointeeType), getPtrSize(), 0, std::nullopt, type);
+            return debug_types[type];
+        } else if (type.starts_with("(")) {
+            const llvm::DataLayout& datalayout = module->getDataLayout();
+            llvm::StructType* st = llvm::cast<llvm::StructType>(llvmTypeFor(type));
+            const llvm::StructLayout* sl = datalayout.getStructLayout(st);
+            std::vector<llvm::Metadata*> members;
+            auto elements = getTupleFieldTypes(type);
+            for (size_t i = 0; i < elements.size(); ++i) {
+                llvm::Type* elementType = st->getElementType(i);
+                llvm::DIType* elementDIType = getDebugType(elements[i]);
+                members.push_back(diBuilder->createMemberType(
+                    compileUnit, std::to_string(i), nullptr, 0, datalayout.getTypeAllocSizeInBits(elementType),
+                    datalayout.getABITypeAlign(elementType).value() * 8, sl->getElementOffsetInBits(i), llvm::DINode::FlagZero, elementDIType));
+            }
+            llvm::DINodeArray member = diBuilder->getOrCreateArray(members);
+            debug_types[type] = diBuilder->createStructType(compileUnit, type, nullptr, 0, datalayout.getTypeAllocSizeInBits(st),
+                                                            datalayout.getABITypeAlign(st).value() * 8, llvm::DINode::FlagZero, nullptr, member);
+            return debug_types[type];
+        } else if (trim(type).starts_with("fn")) {
+            FunctionType parsed;
+            if (!parseFunctionType(type, parsed)) return nullptr;
+            std::vector<llvm::Metadata*> types;
+            types.reserve(1 + parsed.params.size());
+            if (parsed.returns.size() == 1 && parsed.returns[0] == "void") {
+                types.push_back(nullptr);
+            } else if (parsed.returns.size() == 1) {
+                types.push_back(getDebugType(parsed.returns[0]));
+            }
+            for (const std::string& param : parsed.params) {
+                llvm::DIType* paramType = getDebugType(param);
+                if (!paramType) return nullptr;
+                types.push_back(paramType);
+            }
+            llvm::DITypeRefArray typeArray = diBuilder->getOrCreateTypeArray(types);
+            debug_types[type] = diBuilder->createSubroutineType(typeArray);
+            return debug_types[type];
+        } else if (type.ends_with("]")) {
+            size_t bracket = type.rfind('[');
+            if (bracket == std::string::npos) return nullptr;
+            std::string elementTypeName = trim(type.substr(0, bracket));
+            std::string countText = trim(type.substr(bracket + 1, type.size() - bracket - 2));
+            llvm::DIType* elementDIType = getDebugType(elementTypeName);
+            if (!elementDIType) return nullptr;
+            const llvm::DataLayout& datalayout = module->getDataLayout();
+            if (countText.empty()) {
+                debug_types[type] = diBuilder->createPointerType(elementDIType, datalayout.getPointerSizeInBits());
+            } else {
+                size_t elementCount = std::stoull(countText);
+                llvm::Type* arrayLLVMType = llvmTypeFor(type);
+                auto* arrayType = llvm::cast<llvm::ArrayType>(arrayLLVMType);
+                auto* subrange = diBuilder->getOrCreateSubrange(0, static_cast<int64_t>(elementCount));
+                llvm::DINodeArray subscripts = diBuilder->getOrCreateArray({subrange});
+                debug_types[type] = diBuilder->createArrayType(datalayout.getTypeAllocSizeInBits(arrayType),
+                                                               datalayout.getABITypeAlign(arrayType).value() * 8, elementDIType, subscripts);
+            }
+            return debug_types[type];
+        } else if (userTypes.count(baseTypeName(type))) {
+            UserTypeInfo ifo = userTypes[baseTypeName(type)];
+            auto file = getDebugFile(ifo.pos.file_id);
+            uint64_t line = getLineNoFromPos(ifo.pos);
+            llvm::Type* ty = llvmTypeFor(type);
+            llvm::StructType* st = llvm::cast<llvm::StructType>(ty);
+            const llvm::DataLayout& datalayout = module->getDataLayout();
+            const llvm::StructLayout* layout = datalayout.getStructLayout(st);
+            if (ifo.kind == UserTypeKind::Struct || ifo.kind == UserTypeKind::Class) {
+                std::vector<std::string> genericParams = genericParamsFromName(type);
+                auto oldGenericTypes = this->currentGenericTypes;
+                auto oldGenericTypeStrings = currentGenericTypeStrings;
+                auto oldNonTypeGenerics = currentNonTypeGenericValues;
+                if (!ifo.generics.empty()) {
+                    if (!fulfillsGenericConstraints(ifo.generics, genericParams, ifo.pos)) {
+                        this->currentGenericTypes = oldGenericTypes;
+                        currentGenericTypeStrings = oldGenericTypeStrings;
+                        currentNonTypeGenericValues = oldNonTypeGenerics;
+                        return nullptr;
+                    }
+                }
+                std::vector<llvm::Metadata*> members;
+                for (size_t i = 0; i < ifo.fields.size(); i++) {
+                    const StructField& field = ifo.fields[i];
+                    llvm::Type* fieldType = st->getElementType(i);
+                    members.push_back(diBuilder->createMemberType(
+                        file, field.name, file, line, datalayout.getTypeAllocSizeInBits(fieldType), datalayout.getABITypeAlign(fieldType).value() * 8,
+                        layout->getElementOffsetInBits(i), llvm::DINode::FlagZero, getDebugType(field.type)));
+                }
+                for (size_t i = 0; i < ifo.classFields.size(); i++) {
+                    const ClassField& field = ifo.classFields[i];
+                    llvm::Type* fieldType = st->getElementType(i);
+                    members.push_back(diBuilder->createMemberType(
+                        file, field.name, file, line, datalayout.getTypeAllocSizeInBits(fieldType), datalayout.getABITypeAlign(fieldType).value() * 8,
+                        layout->getElementOffsetInBits(i), llvm::DINode::FlagZero, getDebugType(field.type)));
+                }
+                llvm::DINodeArray member_array = diBuilder->getOrCreateArray(members);
+                debug_types[type] = diBuilder->createStructType(compileUnit, type, file, line, datalayout.getTypeAllocSizeInBits(st),
+                                                                datalayout.getABITypeAlign(st).value() * 8, llvm::DINode::FlagZero, nullptr,
+                                                                member_array);
+                this->currentGenericTypes = oldGenericTypes;
+                this->currentGenericTypeStrings = oldGenericTypeStrings;
+                currentNonTypeGenericValues = oldNonTypeGenerics;
+                return debug_types[type];
+            } else if (ifo.kind == UserTypeKind::Enum) {
+                std::vector<std::string> genericParams = genericParamsFromName(type);
+                auto oldGenericTypes = this->currentGenericTypes;
+                auto oldGenericTypeStrings = currentGenericTypeStrings;
+                auto oldNonTypeGenerics = currentNonTypeGenericValues;
+                if (!ifo.generics.empty()) {
+                    if (!fulfillsGenericConstraints(ifo.generics, genericParams, ifo.pos)) {
+                        this->currentGenericTypes = oldGenericTypes;
+                        currentGenericTypeStrings = oldGenericTypeStrings;
+                        currentNonTypeGenericValues = oldNonTypeGenerics;
+                        return nullptr;
+                    }
+                }
+                const llvm::DataLayout& datalayout = module->getDataLayout();
+                const llvm::StructLayout* sl = datalayout.getStructLayout(st);
+                auto* tagLLVMType = st->getElementType(0);
+                auto* tagDIType = getDebugType(ifo.enumType);
+                auto* discriminant = diBuilder->createMemberType(
+                    compileUnit, "discriminant", file, line, datalayout.getTypeAllocSizeInBits(tagLLVMType),
+                    datalayout.getABITypeAlign(tagLLVMType).value() * 8, sl->getElementOffsetInBits(0), llvm::DINode::FlagZero, tagDIType);
+                std::vector<llvm::Metadata*> variants;
+                for (const EnumEntry& entry : ifo.enumEntries) {
+                    std::vector<llvm::Metadata*> payloadMembers;
+                    for (size_t i = 0; i < entry.tags.size(); ++i) {
+                        llvm::DIType* payloadDIType = getDebugType(entry.tags[i]);
+                        payloadMembers.push_back(diBuilder->createMemberType(
+                            compileUnit, resolveTypeName(entry.tags[i], false), file, line, payloadDIType->getSizeInBits(),
+                            payloadDIType->getAlignInBits(), sl->getElementOffsetInBits(i + 1), llvm::DINode::FlagZero, payloadDIType));
+                    }
+                    variants.push_back(diBuilder->createVariantMemberType(
+                        compileUnit, diBuilder->getOrCreateArray(payloadMembers),
+                        llvm::cast<llvm::Constant>(emitExpr(NumberNode{make_number(ifo.pos, entry.value)})), nullptr));
+                }
+                llvm::DINodeArray variant = diBuilder->getOrCreateArray(variants);
+                auto* variantPart = diBuilder->createVariantPart(compileUnit, "", file, line, datalayout.getTypeAllocSizeInBits(st),
+                                                                 datalayout.getABITypeAlign(st).value() * 8, llvm::DINode::FlagZero, discriminant,
+                                                                 variant);
+                llvm::DINodeArray members = diBuilder->getOrCreateArray({discriminant, variantPart});
+                debug_types[type] = diBuilder->createStructType(compileUnit, type, file, line, datalayout.getTypeAllocSizeInBits(st),
+                                                                datalayout.getABITypeAlign(st).value() * 8, llvm::DINode::FlagZero, nullptr, members);
+                this->currentGenericTypes = oldGenericTypes;
+                this->currentGenericTypeStrings = oldGenericTypeStrings;
+                currentNonTypeGenericValues = oldNonTypeGenerics;
+                return debug_types[type];
+            } else if (ifo.kind == UserTypeKind::Union) {
+                const llvm::DataLayout& datalayout = module->getDataLayout();
+                auto* st = llvm::cast<llvm::StructType>(llvmTypeFor(type));
+                const llvm::StructLayout* sl = datalayout.getStructLayout(st);
+                std::vector<llvm::Metadata*> members;
+                llvm::Type* tagType = st->getElementType(0);
+                llvm::DIType* tagDIType = getDebugType(ifo.enumType);
+                members.push_back(diBuilder->createMemberType(compileUnit, "tag", file, line, datalayout.getTypeAllocSizeInBits(tagType),
+                                                              datalayout.getABITypeAlign(tagType).value() * 8, sl->getElementOffsetInBits(0),
+                                                              llvm::DINode::FlagZero, tagDIType));
+                llvm::Type* payloadType = st->getElementType(1);
+                llvm::DIType* payloadDIType = diBuilder->createPointerType(diBuilder->createUnspecifiedType("void"),
+                                                                           datalayout.getPointerSizeInBits());
+                members.push_back(diBuilder->createMemberType(compileUnit, "value", file, line, datalayout.getTypeAllocSizeInBits(payloadType),
+                                                              datalayout.getABITypeAlign(payloadType).value() * 8, sl->getElementOffsetInBits(1),
+                                                              llvm::DINode::FlagZero, payloadDIType));
+                llvm::DINodeArray memberArray = diBuilder->getOrCreateArray(members);
+                debug_types[type] = diBuilder->createStructType(compileUnit, type, file, line, datalayout.getTypeAllocSizeInBits(st),
+                                                                datalayout.getABITypeAlign(st).value() * 8, llvm::DINode::FlagZero, nullptr,
+                                                                memberArray);
+                return debug_types[type];
+            } else if (ifo.kind == UserTypeKind::RawUnion) {
+                std::vector<std::string> genericParams = genericParamsFromName(type);
+                auto oldGenericTypes = this->currentGenericTypes;
+                auto oldGenericTypeStrings = currentGenericTypeStrings;
+                auto oldNonTypeGenerics = currentNonTypeGenericValues;
+                if (!ifo.generics.empty()) {
+                    if (!fulfillsGenericConstraints(ifo.generics, genericParams, ifo.pos)) {
+                        this->currentGenericTypes = oldGenericTypes;
+                        currentGenericTypeStrings = oldGenericTypeStrings;
+                        currentNonTypeGenericValues = oldNonTypeGenerics;
+                        return nullptr;
+                    }
+                }
+                const llvm::DataLayout& datalayout = module->getDataLayout();
+                llvm::Type* ty = llvmTypeFor(type);
+                auto* st = llvm::cast<llvm::StructType>(ty);
+                std::vector<llvm::Metadata*> members;
+                for (size_t i = 0; i < ifo.fields.size(); ++i) {
+                    const auto& member = ifo.fields[i];
+                    llvm::DIType* memberDIType = getDebugType(member.type);
+                    if (!memberDIType) return nullptr;
+                    members.push_back(diBuilder->createMemberType(compileUnit, member.name, file, line, memberDIType->getSizeInBits(),
+                                                                  memberDIType->getAlignInBits(), 0, llvm::DINode::FlagZero, memberDIType));
+                }
+                llvm::DINodeArray memberArray = diBuilder->getOrCreateArray(members);
+                debug_types[type] = diBuilder->createUnionType(compileUnit, type, file, line, datalayout.getTypeAllocSizeInBits(ty),
+                                                               datalayout.getABITypeAlign(ty).value() * 8, llvm::DINode::FlagZero, memberArray);
+                this->currentGenericTypes = oldGenericTypes;
+                this->currentGenericTypeStrings = oldGenericTypeStrings;
+                currentNonTypeGenericValues = oldNonTypeGenerics;
+                return debug_types[type];
+            }
+        }
+        cg_error(Position(), "unknown type: " + type);
+        return nullptr;
+    }
     llvm::Value* emitModifierNode(ModifierNode* node) {
+        setDebugLocation(node->getPos());
         if (!node || node->modifiers.empty()) { return emitExpr(node->node); }
         llvm::Value* currentValue = emitExpr(node->node);
         if (!currentValue) return nullptr;
@@ -2033,6 +2556,14 @@ class LLVMCompiler {
         return new MethodCallNode(call->node_to_call, Token(TokenType::IDENTIFIER, name, get_pos(call)),
                                   std::vector<AnyNode>(call->arg_nodes.begin(), call->arg_nodes.end()));
     }
+    ClassMethodInfo* classMethodFromFuncDef(const FuncDefNode* func_def, const std::string& className, const std::string& funName) {
+        return new ClassMethodInfo{.name_tok = Token(TokenType::IDENTIFIER, funName, func_def->name_tok->pos),
+                                   .params = std::vector(func_def->params.begin(), func_def->params.end()),
+                                   .return_types = func_def->return_types,
+                                   .body = func_def->body,
+                                   .modifiers = func_def->modifiers,
+                                   .generics = func_def->generics};
+    }
     FuncDefNode* funcDefFromClassMethod(const ClassMethodInfo& method, const std::string& className, std::string delim = "::") {
         std::string mangledName = className + delim + method.name_tok.value;
         Token nameTok(TokenType::IDENTIFIER, mangledName, method.name_tok.pos);
@@ -2288,13 +2819,14 @@ class LLVMCompiler {
             } else if (llvm::StructType* st = llvm::dyn_cast<llvm::StructType>(expected); st && actual->getType()->isArrayTy()) {
                 if (!st->isOpaque()) {
                     std::string mangledClassName = st->getName().str();
-                    llvm::Function* opMethod = findMethodOverloadFromTypes(mangledClassName,
-                                                                           "operator[]=", {actual->getType()->getArrayElementType(), builder->getInt32Ty()});
+                    llvm::Function* opMethod = findMethodOverloadFromTypes(
+                        mangledClassName, "operator[]=", {actual->getType()->getArrayElementType(), builder->getInt32Ty()});
                     if (opMethod) {
                         llvm::Value* hiddenInstance = builder->CreateAlloca(expected, nullptr, "arr_lit_tmp");
                         builder->CreateMemSet(hiddenInstance, builder->getInt8(0), module->getDataLayout().getTypeAllocSize(expected),
                                               llvm::MaybeAlign());
-                        emitVirtualOrDirectCall(mangledClassName, "operator[]=", hiddenInstance, {actual, builder->getInt32(actual->getType()->getArrayNumElements())});
+                        emitVirtualOrDirectCall(mangledClassName, "operator[]=", hiddenInstance,
+                                                {actual, builder->getInt32(actual->getType()->getArrayNumElements())});
                         if (expected->isPointerTy()) {
                             reconciled.push_back(hiddenInstance);
                         } else {
@@ -2408,9 +2940,11 @@ class LLVMCompiler {
         }
         std::string currentClass = resolvedClassName;
         while (!currentClass.empty()) {
+            std::string name = resolveTypeName(currentClass, false) + "_" + methodName;
             std::string baseName = baseTypeName(currentClass);
             if (baseName.find('<') != std::string::npos) { baseName = baseName.substr(0, baseName.find('<')); }
             auto typeIt = userTypes.find(baseName);
+            if (functionDefs.count(name)) { return classMethodFromFuncDef(functionDefs[name], resolveTypeName(currentClass, false), methodName); }
             if (typeIt != userTypes.end()) {
                 ClassMethodInfo* bestMatch = nullptr;
                 int bestScore = 999999;
@@ -2485,11 +3019,7 @@ class LLVMCompiler {
         return nullptr;
     }
     llvm::Function* findMethodOverloadFromTypes(const std::string& className, const std::string& methodName, const std::vector<llvm::Type*>& args) {
-        std::string resolvedClassName = className;
-        if (className.find("::") == std::string::npos && !getCurrentNamespace().empty()) {
-            std::string qualifiedName = getCurrentNamespace() + "::" + className;
-            if (classMethods.find(qualifiedName) != classMethods.end()) { resolvedClassName = qualifiedName; }
-        }
+        std::string resolvedClassName = resolveTypeName(className, false);
         std::string currentClass = resolvedClassName;
         while (!currentClass.empty()) {
             auto classIt = classMethods.find(currentClass);
@@ -2753,11 +3283,24 @@ class LLVMCompiler {
             currentTarget = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage, implName, module);
         }
         currentFunction = currentTarget;
+        llvm::DISubprogram* oldSubprogram = currentSubprogram;
+        if (config.debug_symbols) {
+            setupDebugFunction(currentTarget, specializedName, method.name_tok.pos);
+            setDebugLocation(method.name_tok.pos);
+        }
         currentClassName = className;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", currentTarget);
         builder->SetInsertPoint(entry);
         currentThis = currentTarget->getArg(0);
-        varTypes["this"] = className + "*";
+        if (config.debug_symbols) {
+            llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                currentSubprogram, "this", 1, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
+                getDebugType(resolveTypeName(className, false) + "*"), true);
+            diBuilder->insertDbgValueIntrinsic(
+                currentThis, debugParam, diBuilder->createExpression(),
+                llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram), builder->GetInsertBlock());
+        }
+        varTypes["this"] = resolveTypeName(className, false) + "*";
         volatileVars["this"] = false;
         for (size_t i = 0; i < method.params.size(); i++) {
             auto& param = method.params[i];
@@ -2772,6 +3315,15 @@ class LLVMCompiler {
             }
             llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
             builder->CreateStore(currentTarget->getArg(i + 1), alloc);
+            if (config.debug_symbols) {
+                llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                    currentSubprogram, param.name.value, i + 2, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
+                    getDebugType(param.type.value), true);
+                diBuilder->insertDbgValueIntrinsic(
+                    currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
+                    llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                    builder->GetInsertBlock());
+            }
             locals[param.name.value] = alloc;
             varTypes[param.name.value] = typeDescriptor;
             volatileVars[param.name.value] = param.isVolatile;
@@ -2787,6 +3339,7 @@ class LLVMCompiler {
             }
         }
         exitScope();
+        currentSubprogram = oldSubprogram;
         if (!method.modifiers.empty()) {
             for (int i = (int)method.modifiers.size() - 1; i >= 0; --i) {
                 Token modTok = method.modifiers[i];
@@ -2805,6 +3358,11 @@ class LLVMCompiler {
                 if (!layerFunc) { layerFunc = llvm::Function::Create(fnTy, linkage, layerName, module); }
                 auto savedDefers = defersStack;
                 defersStack.clear();
+                llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                if (config.debug_symbols) {
+                    setupDebugFunction(layerFunc, specializedName, method.name_tok.pos);
+                    setDebugLocation(method.name_tok.pos);
+                }
                 enterScope();
                 llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
                 auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
@@ -2813,6 +3371,15 @@ class LLVMCompiler {
                 auto prevThis = currentThis;
                 currentFunction = layerFunc;
                 currentThis = layerFunc->getArg(0);
+                if (config.debug_symbols) {
+                    llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                        currentSubprogram, "this", 1, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
+                        getDebugType(resolveTypeName(className, false) + "*"), true);
+                    diBuilder->insertDbgValueIntrinsic(
+                        currentThis, debugParam, diBuilder->createExpression(),
+                        llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                        builder->GetInsertBlock());
+                }
                 varTypes["this"] = className + "*";
                 std::vector<llvm::Value*> forwardArgs;
                 forwardArgs.push_back(currentThis);
@@ -2820,6 +3387,15 @@ class LLVMCompiler {
                     auto& param = method.params[pIdx];
                     llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
                     argVal->setName(param.name.value);
+                    if (config.debug_symbols) {
+                        llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                            currentSubprogram, param.name.value, pIdx + 2, getDebugFile(method.name_tok.pos.file_id),
+                            getLineNoFromPos(method.name_tok.pos), getDebugType(param.type.value), true);
+                        diBuilder->insertDbgValueIntrinsic(
+                            argVal, debugParam, diBuilder->createExpression(),
+                            llvm::DILocation::get(builder->getContext(), getLineNoFromPos(method.name_tok.pos), 0, currentSubprogram),
+                            builder->GetInsertBlock());
+                    }
                     auto* alloca = createEntryAlloca(param.name.value, argVal->getType());
                     builder->CreateStore(argVal, alloca);
                     locals[param.name.value] = alloca;
@@ -2852,6 +3428,7 @@ class LLVMCompiler {
                 exitScope();
                 defersStack = savedDefers;
                 currentTarget = layerFunc;
+                currentSubprogram = oldSubprogram;
             }
         }
         namespaceStack = savedNamespaceStack;
@@ -2941,12 +3518,26 @@ class LLVMCompiler {
             if (it->type.value.ends_with("restrict")) { fn->addParamAttr(i, llvm::Attribute::NoAlias); }
         }
         currentFunction = fn;
+        llvm::DISubprogram* oldSubprogram = currentSubprogram;
+        if (config.debug_symbols) {
+            setupDebugFunction(fn, specializedName, get_pos(funcDef));
+            setDebugLocation(get_pos(funcDef));
+        }
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", fn);
         builder->SetInsertPoint(entry);
         auto argIt = fn->arg_begin();
         unsigned idx = 0;
         for (auto& arg : fn->args()) {
             auto& param = *std::next(funcDef->params.begin(), idx);
+            if (config.debug_symbols) {
+                llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                    currentSubprogram, param.name.value, idx + 1, getDebugFile(get_pos(funcDef).file_id), getLineNoFromPos(get_pos(funcDef)),
+                    getDebugType(param.type.value), true);
+                diBuilder->insertDbgValueIntrinsic(
+                    &arg, debugParam, diBuilder->createExpression(),
+                    llvm::DILocation::get(builder->getContext(), getLineNoFromPos(get_pos(funcDef)), 0, currentSubprogram),
+                    builder->GetInsertBlock());
+            }
             arg.setName(param.name.value);
             auto* alloca = createEntryAlloca(arg.getName().str(), arg.getType());
             builder->CreateStore(&arg, alloca);
@@ -3005,9 +3596,10 @@ class LLVMCompiler {
                 builder->CreateRet(llvm::Constant::getNullValue(fnTy->getReturnType()));
             }
         }
+        exitScope();
+        currentSubprogram = oldSubprogram;
         currentThis = savedThis;
         currentClassName = savedClassName;
-        exitScope();
         namespaceStack = savedNamespaceStack;
         currentFunction = savedFunction;
         globals = savedGlobals;
@@ -3174,6 +3766,7 @@ class LLVMCompiler {
                 continue;
             }
             UserTypeInfo userInfo = userIt->second;
+            if (!userInfo.generics.empty()) continue;
             std::unordered_set<std::string> additionalProofNames;
             for (auto& proofMethod : proof.additionalProof) { additionalProofNames.insert(proofMethod.name_tok.value); }
             auto alreadyDefd = [&](const std::string& methodName, const std::vector<Parameter>& sigParams) -> bool {
@@ -3325,14 +3918,20 @@ class LLVMCompiler {
                 bool blockPassed = verifyBlock(block);
                 if (!blockPassed && !block.second.has_value()) { allConceptBlocksPassed = false; }
                 if (blockPassed || block.second.has_value()) {
-                    if (info.kind == UserTypeKind::Class) {
+                    if (userInfo.kind == UserTypeKind::Class) {
                         for (auto& proofMethod : proof.additionalProof) {
-                            info.classMethods.push_back(proofMethod);
-                            size_t newIdx = info.classMethods.size() - 1;
+                            userInfo.classMethods.push_back(proofMethod);
+                            size_t newIdx = userInfo.classMethods.size() - 1;
                             if (!proofMethod.generics.empty()) {
                                 if (!proofMethod.is_static) { genericMethodIndices[mapKey].push_back(newIdx); }
                             } else {
-                                std::string methodName = mapKey + "_" + proofMethod.name_tok.value;
+                                std::string methodName = resolveTypeName(mapKey, false) + (proofMethod.is_static ? "::" : "_") +
+                                                         proofMethod.name_tok.value;
+                                if (proofMethod.is_static) {
+                                    functionDefs[methodName] = funcDefFromClassMethod(proofMethod, mapKey, "::");
+                                    emitFuncDef(*functionDefs[methodName]);
+                                    continue;
+                                }
                                 std::vector<llvm::Type*> paramTypes;
                                 paramTypes.push_back(llvm::PointerType::get(context, 0));
                                 llvm::FunctionType* baseFuncTy = llvmFuncTypeFor(proofMethod.return_types, proofMethod.params);
@@ -3340,8 +3939,175 @@ class LLVMCompiler {
                                 llvm::FunctionType* fnTy = llvm::FunctionType::get(baseFuncTy->getReturnType(), paramTypes, false);
                                 llvm::Function* fn = module->getFunction(methodName);
                                 if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, methodName, module); }
-                                classMethods[mapKey][proofMethod.name_tok.value].push_back(fn);
                                 functionDefs[methodName] = funcDefFromClassMethod(proofMethod, mapKey, "_");
+                                classMethods[mapKey][proofMethod.name_tok.value].push_back(fn);
+                                llvm::Function* currentTarget = fn;
+                                if (!proofMethod.modifiers.empty()) {
+                                    std::string implName = "_impl_" + methodName;
+                                    currentTarget = llvm::Function::Create(fn->getFunctionType(), llvm::Function::InternalLinkage, implName, module);
+                                }
+                                llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", currentTarget);
+                                builder->SetInsertPoint(entry);
+                                auto oldThis = currentThis;
+                                auto oldClassName = currentClassName;
+                                auto oldFunction = currentFunction;
+                                llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                if (config.debug_symbols) {
+                                    setupDebugFunction(fn, proofMethod.name_tok.value, proofMethod.name_tok.pos);
+                                    setDebugLocation(proofMethod.name_tok.pos);
+                                }
+                                enterScope();
+                                currentThis = currentTarget->getArg(0);
+                                if (config.debug_symbols) {
+                                    llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                        currentSubprogram, "this", 1, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                        getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"), true);
+                                    diBuilder->insertDbgValueIntrinsic(currentThis, debugParam, diBuilder->createExpression(),
+                                                                       llvm::DILocation::get(builder->getContext(),
+                                                                                             getLineNoFromPos(proofMethod.name_tok.pos), 0,
+                                                                                             currentSubprogram),
+                                                                       builder->GetInsertBlock());
+                                }
+                                volatileVars["this"] = false;
+                                varTypes["this"] = resolveTypeName(mapKey, false) + "*";
+                                currentClassName = resolveTypeName(mapKey, false);
+                                currentFunction = currentTarget;
+                                for (size_t i = 0; i < proofMethod.params.size(); i++) {
+                                    auto& param = proofMethod.params[i];
+                                    llvm::Type* paramTy;
+                                    std::string typeDescriptor;
+                                    if (param.signature.has_value()) {
+                                        paramTy = llvm::PointerType::get(context, 0);
+                                        typeDescriptor = "fn";
+                                    } else {
+                                        typeDescriptor = resolveTypeName(param.type.value, false);
+                                        paramTy = llvmTypeFor(typeDescriptor);
+                                    }
+                                    llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
+                                    builder->CreateStore(currentTarget->getArg(i + 1), alloc);
+                                    if (config.debug_symbols) {
+                                        llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                            currentSubprogram, param.name.value, i + 1, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                            getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(param.type.value), true);
+                                        diBuilder->insertDbgValueIntrinsic(currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
+                                                                           llvm::DILocation::get(builder->getContext(),
+                                                                                                 getLineNoFromPos(proofMethod.name_tok.pos), 0,
+                                                                                                 currentSubprogram),
+                                                                           builder->GetInsertBlock());
+                                    }
+                                    locals[param.name.value] = alloc;
+                                    varTypes[param.name.value] = typeDescriptor;
+                                    volatileVars[param.name.value] = param.isVolatile;
+                                }
+                                if (proofMethod.body) { emitStmt(proofMethod.body); }
+                                if (!builder->GetInsertBlock()->getTerminator()) {
+                                    if (currentTarget->getReturnType()->isVoidTy()) {
+                                        builder->CreateRetVoid();
+                                    } else {
+                                        builder->CreateRet(llvm::Constant::getNullValue(currentTarget->getReturnType()));
+                                    }
+                                }
+                                currentThis = oldThis;
+                                currentClassName = oldClassName;
+                                currentFunction = oldFunction;
+                                exitScope();
+                                currentSubprogram = oldSubprogram;
+                                if (!proofMethod.modifiers.empty()) {
+                                    llvm::FunctionType* fTy = fn->getFunctionType();
+                                    for (int i = (int)proofMethod.modifiers.size() - 1; i >= 0; --i) {
+                                        Token modTok = proofMethod.modifiers[i];
+                                        if (!modifiers.count(modTok.value)) {
+                                            cg_error(modTok.pos, "unknown modifier '" + modTok.value + "'", "QC-S112");
+                                            addTypeNotes(modTok.value, modTok.pos, UserTypeKind::Modifier);
+                                            continue;
+                                        }
+                                        ModifierInfo& modInfo = modifiers[modTok.value];
+                                        bool isOutermost = (i == 0);
+                                        std::string layerName = isOutermost ? methodName : ("_mod_" + std::to_string(i) + "_" + methodName);
+                                        auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                                        std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
+                                        llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn,
+                                                                                        *funcDefFromClassMethod(proofMethod, mapKey, "_"));
+                                        llvm::Function* layerFunc = isOutermost ? fn : module->getFunction(layerName);
+                                        if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
+                                        auto savedDefers = defersStack;
+                                        llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                        if (config.debug_symbols) {
+                                            setupDebugFunction(fn, proofMethod.name_tok.value, proofMethod.name_tok.pos);
+                                            setDebugLocation(proofMethod.name_tok.pos);
+                                        }
+                                        defersStack.clear();
+                                        enterScope();
+                                        llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                                        auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
+                                        builder->SetInsertPoint(entryBB);
+                                        auto* prevFunction = currentFunction;
+                                        auto prevThis = currentThis;
+                                        currentFunction = layerFunc;
+                                        currentThis = layerFunc->getArg(0);
+                                        if (config.debug_symbols) {
+                                            llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                currentSubprogram, "this", 1, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                                getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"), true);
+                                            diBuilder->insertDbgValueIntrinsic(currentThis, debugParam, diBuilder->createExpression(),
+                                                                               llvm::DILocation::get(builder->getContext(),
+                                                                                                     getLineNoFromPos(proofMethod.name_tok.pos), 0,
+                                                                                                     currentSubprogram),
+                                                                               builder->GetInsertBlock());
+                                        }
+                                        varTypes["this"] = resolveTypeName(mapKey, false) + "*";
+                                        std::vector<llvm::Value*> forwardArgs;
+                                        forwardArgs.push_back(currentThis);
+                                        for (size_t pIdx = 0; pIdx < proofMethod.params.size(); pIdx++) {
+                                            auto& param = proofMethod.params[pIdx];
+                                            llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
+                                            argVal->setName(param.name.value);
+                                            if (config.debug_symbols) {
+                                                llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                    currentSubprogram, param.name.value, pIdx + 2, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                                    getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(param.type.value), true);
+                                                diBuilder->insertDbgValueIntrinsic(argVal, debugParam, diBuilder->createExpression(),
+                                                                                   llvm::DILocation::get(builder->getContext(),
+                                                                                                         getLineNoFromPos(proofMethod.name_tok.pos),
+                                                                                                         0, currentSubprogram),
+                                                                                   builder->GetInsertBlock());
+                                            }
+                                            auto* alloca = createEntryAlloca(param.name.value, argVal->getType());
+                                            builder->CreateStore(argVal, alloca);
+                                            locals[param.name.value] = alloca;
+                                            varTypes[param.name.value] = param.signature.has_value() ? "fn"
+                                                                                                     : resolveTypeName(param.type.value, false);
+                                            forwardArgs.push_back(argVal);
+                                        }
+                                        functions["proceed"] = proceedFunc;
+                                        if (modInfo.onCall) {
+                                            emitStmt(modInfo.onCall);
+                                        } else {
+                                            if (fTy->getReturnType()->isVoidTy()) {
+                                                builder->CreateCall(proceedFunc, forwardArgs);
+                                                builder->CreateRetVoid();
+                                            } else {
+                                                llvm::Value* retVal = builder->CreateCall(proceedFunc, forwardArgs);
+                                                builder->CreateRet(retVal);
+                                            }
+                                        }
+                                        if (!builder->GetInsertBlock()->getTerminator()) {
+                                            if (fTy->getReturnType()->isVoidTy()) {
+                                                builder->CreateRetVoid();
+                                            } else {
+                                                builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
+                                            }
+                                        }
+                                        if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
+                                        currentFunction = prevFunction;
+                                        currentThis = prevThis;
+                                        functions.erase("proceed");
+                                        currentSubprogram = oldSubprogram;
+                                        exitScope();
+                                        defersStack = savedDefers;
+                                        currentTarget = layerFunc;
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -3363,7 +4129,7 @@ class LLVMCompiler {
                 }
                 if (!blockPassed && block.second.has_value()) {
                     auto& defaultBlock = block.second.value();
-                    std::string targetModifier = (info.kind == UserTypeKind::Class) ? "class" : "else";
+                    std::string targetModifier = (userInfo.kind == UserTypeKind::Class) ? "class" : "else";
                     for (auto& [modifierTok, defaultMethod] : defaultBlock.definitions) {
                         if (modifierTok.value == targetModifier) {
                             std::string methodName = defaultMethod.name_tok.value;
@@ -3384,13 +4150,20 @@ class LLVMCompiler {
                                 for (auto& ret : concreteMethod.return_types) {
                                     if (ret.value == "Self") { ret.value = mapKey + "*"; }
                                 }
-                                if (info.kind == UserTypeKind::Class) {
-                                    info.classMethods.push_back(concreteMethod);
-                                    size_t newIdx = info.classMethods.size() - 1;
+                                if (userInfo.kind == UserTypeKind::Class) {
+                                    userInfo.classMethods.push_back(concreteMethod);
+                                    size_t newIdx = userInfo.classMethods.size() - 1;
                                     if (!concreteMethod.generics.empty()) {
                                         if (!concreteMethod.is_static) { genericMethodIndices[mapKey].push_back(newIdx); }
                                     } else {
                                         std::string mangledName = mapKey + "_" + concreteMethod.name_tok.value;
+                                        std::string methodName = resolveTypeName(mapKey, false) + (concreteMethod.is_static ? "::" : "_") +
+                                                                 concreteMethod.name_tok.value;
+                                        if (concreteMethod.is_static) {
+                                            functionDefs[methodName] = funcDefFromClassMethod(concreteMethod, mapKey, "::");
+                                            emitFuncDef(*functionDefs[methodName]);
+                                            continue;
+                                        }
                                         std::vector<llvm::Type*> paramTypes;
                                         paramTypes.push_back(llvm::PointerType::get(context, 0));
                                         llvm::FunctionType* baseFuncTy = llvmFuncTypeFor(concreteMethod.return_types, concreteMethod.params);
@@ -3400,6 +4173,179 @@ class LLVMCompiler {
                                         if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, mangledName, module); }
                                         classMethods[mapKey][concreteMethod.name_tok.value].push_back(fn);
                                         functionDefs[mangledName] = funcDefFromClassMethod(concreteMethod, mapKey, "_");
+                                        llvm::Function* currentTarget = fn;
+                                        if (!concreteMethod.modifiers.empty()) {
+                                            std::string implName = "_impl_" + methodName;
+                                            currentTarget = llvm::Function::Create(fn->getFunctionType(), llvm::Function::InternalLinkage, implName,
+                                                                                   module);
+                                        }
+                                        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", currentTarget);
+                                        builder->SetInsertPoint(entry);
+                                        auto oldThis = currentThis;
+                                        auto oldClassName = currentClassName;
+                                        auto oldFunction = currentFunction;
+                                        llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                        if (config.debug_symbols) {
+                                            setupDebugFunction(fn, concreteMethod.name_tok.value, concreteMethod.name_tok.pos);
+                                            setDebugLocation(concreteMethod.name_tok.pos);
+                                        }
+                                        enterScope();
+                                        currentThis = currentTarget->getArg(0);
+                                        if (config.debug_symbols) {
+                                            llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                currentSubprogram, "this", 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"),
+                                                true);
+                                            diBuilder->insertDbgValueIntrinsic(currentThis, debugParam, diBuilder->createExpression(),
+                                                                               llvm::DILocation::get(builder->getContext(),
+                                                                                                     getLineNoFromPos(concreteMethod.name_tok.pos), 0,
+                                                                                                     currentSubprogram),
+                                                                               builder->GetInsertBlock());
+                                        }
+                                        volatileVars["this"] = false;
+                                        varTypes["this"] = resolveTypeName(mapKey, false) + "*";
+                                        currentClassName = resolveTypeName(mapKey, false);
+                                        currentFunction = currentTarget;
+                                        for (size_t i = 0; i < concreteMethod.params.size(); i++) {
+                                            auto& param = concreteMethod.params[i];
+                                            llvm::Type* paramTy;
+                                            std::string typeDescriptor;
+                                            if (param.signature.has_value()) {
+                                                paramTy = llvm::PointerType::get(context, 0);
+                                                typeDescriptor = "fn";
+                                            } else {
+                                                typeDescriptor = resolveTypeName(param.type.value, false);
+                                                paramTy = llvmTypeFor(typeDescriptor);
+                                            }
+                                            llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
+                                            builder->CreateStore(currentTarget->getArg(i + 1), alloc);
+                                            if (config.debug_symbols) {
+                                                llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                    currentSubprogram, param.name.value, i + 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                    getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(param.type.value), true);
+                                                diBuilder->insertDbgValueIntrinsic(
+                                                    currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
+                                                    llvm::DILocation::get(builder->getContext(), getLineNoFromPos(concreteMethod.name_tok.pos), 0,
+                                                                          currentSubprogram),
+                                                    builder->GetInsertBlock());
+                                            }
+                                            locals[param.name.value] = alloc;
+                                            varTypes[param.name.value] = typeDescriptor;
+                                            volatileVars[param.name.value] = param.isVolatile;
+                                        }
+                                        if (concreteMethod.body) { emitStmt(concreteMethod.body); }
+                                        if (!builder->GetInsertBlock()->getTerminator()) {
+                                            if (currentTarget->getReturnType()->isVoidTy()) {
+                                                builder->CreateRetVoid();
+                                            } else {
+                                                builder->CreateRet(llvm::Constant::getNullValue(currentTarget->getReturnType()));
+                                            }
+                                        }
+                                        currentThis = oldThis;
+                                        currentClassName = oldClassName;
+                                        currentFunction = oldFunction;
+                                        exitScope();
+                                        currentSubprogram = oldSubprogram;
+                                        if (!concreteMethod.modifiers.empty()) {
+                                            llvm::FunctionType* fTy = fn->getFunctionType();
+                                            for (int i = (int)concreteMethod.modifiers.size() - 1; i >= 0; --i) {
+                                                Token modTok = concreteMethod.modifiers[i];
+                                                if (!modifiers.count(modTok.value)) {
+                                                    cg_error(modTok.pos, "unknown modifier '" + modTok.value + "'", "QC-S112");
+                                                    addTypeNotes(modTok.value, modTok.pos, UserTypeKind::Modifier);
+                                                    continue;
+                                                }
+                                                ModifierInfo& modInfo = modifiers[modTok.value];
+                                                bool isOutermost = (i == 0);
+                                                std::string layerName = isOutermost ? methodName : ("_mod_" + std::to_string(i) + "_" + methodName);
+                                                auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                                                std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
+                                                llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn,
+                                                                                                *funcDefFromClassMethod(concreteMethod, mapKey, "_"));
+                                                llvm::Function* layerFunc = isOutermost ? fn : module->getFunction(layerName);
+                                                if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
+                                                auto savedDefers = defersStack;
+                                                llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                                if (config.debug_symbols) {
+                                                    setupDebugFunction(fn, concreteMethod.name_tok.value, concreteMethod.name_tok.pos);
+                                                    setDebugLocation(concreteMethod.name_tok.pos);
+                                                }
+                                                defersStack.clear();
+                                                enterScope();
+                                                llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                                                auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
+                                                builder->SetInsertPoint(entryBB);
+                                                auto* prevFunction = currentFunction;
+                                                auto prevThis = currentThis;
+                                                currentFunction = layerFunc;
+                                                currentThis = layerFunc->getArg(0);
+                                                if (config.debug_symbols) {
+                                                    llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                        currentSubprogram, "this", 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                        getLineNoFromPos(concreteMethod.name_tok.pos),
+                                                        getDebugType(resolveTypeName(mapKey, false) + "*"), true);
+                                                    diBuilder->insertDbgValueIntrinsic(
+                                                        currentThis, debugParam, diBuilder->createExpression(),
+                                                        llvm::DILocation::get(builder->getContext(), getLineNoFromPos(concreteMethod.name_tok.pos), 0,
+                                                                              currentSubprogram),
+                                                        builder->GetInsertBlock());
+                                                }
+                                                varTypes["this"] = resolveTypeName(mapKey, false) + "*";
+                                                std::vector<llvm::Value*> forwardArgs;
+                                                forwardArgs.push_back(currentThis);
+                                                for (size_t pIdx = 0; pIdx < concreteMethod.params.size(); pIdx++) {
+                                                    auto& param = concreteMethod.params[pIdx];
+                                                    llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
+                                                    argVal->setName(param.name.value);
+                                                    if (config.debug_symbols) {
+                                                        llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                            currentSubprogram, param.name.value, pIdx + 2,
+                                                            getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                            getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(param.type.value), true);
+                                                        diBuilder->insertDbgValueIntrinsic(
+                                                            argVal, debugParam, diBuilder->createExpression(),
+                                                            llvm::DILocation::get(builder->getContext(),
+                                                                                  getLineNoFromPos(concreteMethod.name_tok.pos), 0,
+                                                                                  currentSubprogram),
+                                                            builder->GetInsertBlock());
+                                                    }
+                                                    auto* alloca = createEntryAlloca(param.name.value, argVal->getType());
+                                                    builder->CreateStore(argVal, alloca);
+                                                    locals[param.name.value] = alloca;
+                                                    varTypes[param.name.value] = param.signature.has_value()
+                                                                                     ? "fn"
+                                                                                     : resolveTypeName(param.type.value, false);
+                                                    forwardArgs.push_back(argVal);
+                                                }
+                                                functions["proceed"] = proceedFunc;
+                                                if (modInfo.onCall) {
+                                                    emitStmt(modInfo.onCall);
+                                                } else {
+                                                    if (fTy->getReturnType()->isVoidTy()) {
+                                                        builder->CreateCall(proceedFunc, forwardArgs);
+                                                        builder->CreateRetVoid();
+                                                    } else {
+                                                        llvm::Value* retVal = builder->CreateCall(proceedFunc, forwardArgs);
+                                                        builder->CreateRet(retVal);
+                                                    }
+                                                }
+                                                if (!builder->GetInsertBlock()->getTerminator()) {
+                                                    if (fTy->getReturnType()->isVoidTy()) {
+                                                        builder->CreateRetVoid();
+                                                    } else {
+                                                        builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
+                                                    }
+                                                }
+                                                if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
+                                                currentFunction = prevFunction;
+                                                currentThis = prevThis;
+                                                functions.erase("proceed");
+                                                currentSubprogram = oldSubprogram;
+                                                exitScope();
+                                                defersStack = savedDefers;
+                                                currentTarget = layerFunc;
+                                            }
+                                        }
                                     }
                                 } else {
                                     std::string mangledName = mapKey + "_" + concreteMethod.name_tok.value;
@@ -3585,7 +4531,13 @@ class LLVMCompiler {
                             if (!proofMethod.generics.empty()) {
                                 if (!proofMethod.is_static) { genericMethodIndices[mapKey].push_back(newIdx); }
                             } else {
-                                std::string methodName = mapKey + "_" + proofMethod.name_tok.value;
+                                std::string methodName = resolveTypeName(mapKey, false) + (proofMethod.is_static ? "::" : "_") +
+                                                         proofMethod.name_tok.value;
+                                if (proofMethod.is_static) {
+                                    functionDefs[methodName] = funcDefFromClassMethod(proofMethod, mapKey, "::");
+                                    emitFuncDef(*functionDefs[methodName]);
+                                    continue;
+                                }
                                 std::vector<llvm::Type*> paramTypes;
                                 paramTypes.push_back(llvm::PointerType::get(context, 0));
                                 llvm::FunctionType* baseFuncTy = llvmFuncTypeFor(proofMethod.return_types, proofMethod.params);
@@ -3593,7 +4545,175 @@ class LLVMCompiler {
                                 llvm::FunctionType* fnTy = llvm::FunctionType::get(baseFuncTy->getReturnType(), paramTypes, false);
                                 llvm::Function* fn = module->getFunction(methodName);
                                 if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, methodName, module); }
+                                functionDefs[methodName] = funcDefFromClassMethod(proofMethod, mapKey, "_");
                                 classMethods[mapKey][proofMethod.name_tok.value].push_back(fn);
+                                llvm::Function* currentTarget = fn;
+                                if (!proofMethod.modifiers.empty()) {
+                                    std::string implName = "_impl_" + methodName;
+                                    currentTarget = llvm::Function::Create(fn->getFunctionType(), llvm::Function::InternalLinkage, implName, module);
+                                }
+                                llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", currentTarget);
+                                builder->SetInsertPoint(entry);
+                                auto oldThis = currentThis;
+                                auto oldClassName = currentClassName;
+                                auto oldFunction = currentFunction;
+                                llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                if (config.debug_symbols) {
+                                    setupDebugFunction(fn, proofMethod.name_tok.value, proofMethod.name_tok.pos);
+                                    setDebugLocation(proofMethod.name_tok.pos);
+                                }
+                                enterScope();
+                                currentThis = currentTarget->getArg(0);
+                                if (config.debug_symbols) {
+                                    llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                        currentSubprogram, "this", 1, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                        getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"), true);
+                                    diBuilder->insertDbgValueIntrinsic(currentThis, debugParam, diBuilder->createExpression(),
+                                                                       llvm::DILocation::get(builder->getContext(),
+                                                                                             getLineNoFromPos(proofMethod.name_tok.pos), 0,
+                                                                                             currentSubprogram),
+                                                                       builder->GetInsertBlock());
+                                }
+                                volatileVars["this"] = false;
+                                varTypes["this"] = resolveTypeName(mapKey, false) + "*";
+                                currentClassName = resolveTypeName(mapKey, false);
+                                currentFunction = currentTarget;
+                                for (size_t i = 0; i < proofMethod.params.size(); i++) {
+                                    auto& param = proofMethod.params[i];
+                                    llvm::Type* paramTy;
+                                    std::string typeDescriptor;
+                                    if (param.signature.has_value()) {
+                                        paramTy = llvm::PointerType::get(context, 0);
+                                        typeDescriptor = "fn";
+                                    } else {
+                                        typeDescriptor = resolveTypeName(param.type.value, false);
+                                        paramTy = llvmTypeFor(typeDescriptor);
+                                    }
+                                    llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
+                                    builder->CreateStore(currentTarget->getArg(i + 1), alloc);
+                                    if (config.debug_symbols) {
+                                        llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                            currentSubprogram, param.name.value, i + 1, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                            getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(param.type.value), true);
+                                        diBuilder->insertDbgValueIntrinsic(currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
+                                                                           llvm::DILocation::get(builder->getContext(),
+                                                                                                 getLineNoFromPos(proofMethod.name_tok.pos), 0,
+                                                                                                 currentSubprogram),
+                                                                           builder->GetInsertBlock());
+                                    }
+                                    locals[param.name.value] = alloc;
+                                    varTypes[param.name.value] = typeDescriptor;
+                                    volatileVars[param.name.value] = param.isVolatile;
+                                }
+                                if (proofMethod.body) { emitStmt(proofMethod.body); }
+                                if (!builder->GetInsertBlock()->getTerminator()) {
+                                    if (currentTarget->getReturnType()->isVoidTy()) {
+                                        builder->CreateRetVoid();
+                                    } else {
+                                        builder->CreateRet(llvm::Constant::getNullValue(currentTarget->getReturnType()));
+                                    }
+                                }
+                                currentThis = oldThis;
+                                currentClassName = oldClassName;
+                                currentFunction = oldFunction;
+                                exitScope();
+                                currentSubprogram = oldSubprogram;
+                                if (!proofMethod.modifiers.empty()) {
+                                    llvm::FunctionType* fTy = fn->getFunctionType();
+                                    for (int i = (int)proofMethod.modifiers.size() - 1; i >= 0; --i) {
+                                        Token modTok = proofMethod.modifiers[i];
+                                        if (!modifiers.count(modTok.value)) {
+                                            cg_error(modTok.pos, "unknown modifier '" + modTok.value + "'", "QC-S112");
+                                            addTypeNotes(modTok.value, modTok.pos, UserTypeKind::Modifier);
+                                            continue;
+                                        }
+                                        ModifierInfo& modInfo = modifiers[modTok.value];
+                                        bool isOutermost = (i == 0);
+                                        std::string layerName = isOutermost ? methodName : ("_mod_" + std::to_string(i) + "_" + methodName);
+                                        auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                                        std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
+                                        llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn,
+                                                                                        *funcDefFromClassMethod(proofMethod, mapKey, "_"));
+                                        llvm::Function* layerFunc = isOutermost ? fn : module->getFunction(layerName);
+                                        if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
+                                        auto savedDefers = defersStack;
+                                        llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                        if (config.debug_symbols) {
+                                            setupDebugFunction(fn, proofMethod.name_tok.value, proofMethod.name_tok.pos);
+                                            setDebugLocation(proofMethod.name_tok.pos);
+                                        }
+                                        defersStack.clear();
+                                        enterScope();
+                                        llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                                        auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
+                                        builder->SetInsertPoint(entryBB);
+                                        auto* prevFunction = currentFunction;
+                                        auto prevThis = currentThis;
+                                        currentFunction = layerFunc;
+                                        currentThis = layerFunc->getArg(0);
+                                        if (config.debug_symbols) {
+                                            llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                currentSubprogram, "this", 1, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                                getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"), true);
+                                            diBuilder->insertDbgValueIntrinsic(currentThis, debugParam, diBuilder->createExpression(),
+                                                                               llvm::DILocation::get(builder->getContext(),
+                                                                                                     getLineNoFromPos(proofMethod.name_tok.pos), 0,
+                                                                                                     currentSubprogram),
+                                                                               builder->GetInsertBlock());
+                                        }
+                                        varTypes["this"] = resolveTypeName(mapKey, false) + "*";
+                                        std::vector<llvm::Value*> forwardArgs;
+                                        forwardArgs.push_back(currentThis);
+                                        for (size_t pIdx = 0; pIdx < proofMethod.params.size(); pIdx++) {
+                                            auto& param = proofMethod.params[pIdx];
+                                            llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
+                                            argVal->setName(param.name.value);
+                                            if (config.debug_symbols) {
+                                                llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                    currentSubprogram, param.name.value, pIdx + 2, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                                    getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(param.type.value), true);
+                                                diBuilder->insertDbgValueIntrinsic(argVal, debugParam, diBuilder->createExpression(),
+                                                                                   llvm::DILocation::get(builder->getContext(),
+                                                                                                         getLineNoFromPos(proofMethod.name_tok.pos),
+                                                                                                         0, currentSubprogram),
+                                                                                   builder->GetInsertBlock());
+                                            }
+                                            auto* alloca = createEntryAlloca(param.name.value, argVal->getType());
+                                            builder->CreateStore(argVal, alloca);
+                                            locals[param.name.value] = alloca;
+                                            varTypes[param.name.value] = param.signature.has_value() ? "fn"
+                                                                                                     : resolveTypeName(param.type.value, false);
+                                            forwardArgs.push_back(argVal);
+                                        }
+                                        functions["proceed"] = proceedFunc;
+                                        if (modInfo.onCall) {
+                                            emitStmt(modInfo.onCall);
+                                        } else {
+                                            if (fTy->getReturnType()->isVoidTy()) {
+                                                builder->CreateCall(proceedFunc, forwardArgs);
+                                                builder->CreateRetVoid();
+                                            } else {
+                                                llvm::Value* retVal = builder->CreateCall(proceedFunc, forwardArgs);
+                                                builder->CreateRet(retVal);
+                                            }
+                                        }
+                                        if (!builder->GetInsertBlock()->getTerminator()) {
+                                            if (fTy->getReturnType()->isVoidTy()) {
+                                                builder->CreateRetVoid();
+                                            } else {
+                                                builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
+                                            }
+                                        }
+                                        if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
+                                        currentFunction = prevFunction;
+                                        currentThis = prevThis;
+                                        functions.erase("proceed");
+                                        currentSubprogram = oldSubprogram;
+                                        exitScope();
+                                        defersStack = savedDefers;
+                                        currentTarget = layerFunc;
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -3653,6 +4773,182 @@ class LLVMCompiler {
                                             if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, mangledName, module); }
                                             classMethods[mapKey][concreteMethod.name_tok.value].push_back(fn);
                                             functionDefs[mangledName] = funcDefFromClassMethod(concreteMethod, mapKey, "_");
+                                            llvm::Function* currentTarget = fn;
+                                            if (!concreteMethod.modifiers.empty()) {
+                                                std::string implName = "_impl_" + methodName;
+                                                currentTarget = llvm::Function::Create(fn->getFunctionType(), llvm::Function::InternalLinkage,
+                                                                                       implName, module);
+                                            }
+                                            llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", currentTarget);
+                                            builder->SetInsertPoint(entry);
+                                            auto oldThis = currentThis;
+                                            auto oldClassName = currentClassName;
+                                            auto oldFunction = currentFunction;
+                                            llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                            if (config.debug_symbols) {
+                                                setupDebugFunction(fn, concreteMethod.name_tok.value, concreteMethod.name_tok.pos);
+                                                setDebugLocation(concreteMethod.name_tok.pos);
+                                            }
+                                            enterScope();
+                                            currentThis = currentTarget->getArg(0);
+                                            if (config.debug_symbols) {
+                                                llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                    currentSubprogram, "this", 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                    getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"),
+                                                    true);
+                                                diBuilder->insertDbgValueIntrinsic(
+                                                    currentThis, debugParam, diBuilder->createExpression(),
+                                                    llvm::DILocation::get(builder->getContext(), getLineNoFromPos(concreteMethod.name_tok.pos), 0,
+                                                                          currentSubprogram),
+                                                    builder->GetInsertBlock());
+                                            }
+                                            volatileVars["this"] = false;
+                                            varTypes["this"] = resolveTypeName(mapKey, false) + "*";
+                                            currentClassName = resolveTypeName(mapKey, false);
+                                            currentFunction = currentTarget;
+                                            for (size_t i = 0; i < concreteMethod.params.size(); i++) {
+                                                auto& param = concreteMethod.params[i];
+                                                llvm::Type* paramTy;
+                                                std::string typeDescriptor;
+                                                if (param.signature.has_value()) {
+                                                    paramTy = llvm::PointerType::get(context, 0);
+                                                    typeDescriptor = "fn";
+                                                } else {
+                                                    typeDescriptor = resolveTypeName(param.type.value, false);
+                                                    paramTy = llvmTypeFor(typeDescriptor);
+                                                }
+                                                llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
+                                                builder->CreateStore(currentTarget->getArg(i + 1), alloc);
+                                                if (config.debug_symbols) {
+                                                    llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                        currentSubprogram, param.name.value, i + 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                        getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(param.type.value), true);
+                                                    diBuilder->insertDbgValueIntrinsic(
+                                                        currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
+                                                        llvm::DILocation::get(builder->getContext(), getLineNoFromPos(concreteMethod.name_tok.pos), 0,
+                                                                              currentSubprogram),
+                                                        builder->GetInsertBlock());
+                                                }
+                                                locals[param.name.value] = alloc;
+                                                varTypes[param.name.value] = typeDescriptor;
+                                                volatileVars[param.name.value] = param.isVolatile;
+                                            }
+                                            if (concreteMethod.body) { emitStmt(concreteMethod.body); }
+                                            if (!builder->GetInsertBlock()->getTerminator()) {
+                                                if (currentTarget->getReturnType()->isVoidTy()) {
+                                                    builder->CreateRetVoid();
+                                                } else {
+                                                    builder->CreateRet(llvm::Constant::getNullValue(currentTarget->getReturnType()));
+                                                }
+                                            }
+                                            currentThis = oldThis;
+                                            currentClassName = oldClassName;
+                                            currentFunction = oldFunction;
+                                            exitScope();
+                                            currentSubprogram = oldSubprogram;
+                                            if (!concreteMethod.modifiers.empty()) {
+                                                llvm::FunctionType* fTy = fn->getFunctionType();
+                                                for (int i = (int)concreteMethod.modifiers.size() - 1; i >= 0; --i) {
+                                                    Token modTok = concreteMethod.modifiers[i];
+                                                    if (!modifiers.count(modTok.value)) {
+                                                        cg_error(modTok.pos, "unknown modifier '" + modTok.value + "'", "QC-S112");
+                                                        addTypeNotes(modTok.value, modTok.pos, UserTypeKind::Modifier);
+                                                        continue;
+                                                    }
+                                                    ModifierInfo& modInfo = modifiers[modTok.value];
+                                                    bool isOutermost = (i == 0);
+                                                    std::string layerName = isOutermost ? methodName
+                                                                                        : ("_mod_" + std::to_string(i) + "_" + methodName);
+                                                    auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                                                    std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
+                                                    llvm::Function* proceedFunc = synthesizeProceed(
+                                                        proceedName, currentTarget, modInfo.onReturn,
+                                                        *funcDefFromClassMethod(concreteMethod, mapKey, "_"));
+                                                    llvm::Function* layerFunc = isOutermost ? fn : module->getFunction(layerName);
+                                                    if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
+                                                    auto savedDefers = defersStack;
+                                                    llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                                    if (config.debug_symbols) {
+                                                        setupDebugFunction(fn, concreteMethod.name_tok.value, concreteMethod.name_tok.pos);
+                                                        setDebugLocation(concreteMethod.name_tok.pos);
+                                                    }
+                                                    defersStack.clear();
+                                                    enterScope();
+                                                    llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                                                    auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
+                                                    builder->SetInsertPoint(entryBB);
+                                                    auto* prevFunction = currentFunction;
+                                                    auto prevThis = currentThis;
+                                                    currentFunction = layerFunc;
+                                                    currentThis = layerFunc->getArg(0);
+                                                    if (config.debug_symbols) {
+                                                        llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                            currentSubprogram, "this", 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                            getLineNoFromPos(concreteMethod.name_tok.pos),
+                                                            getDebugType(resolveTypeName(mapKey, false) + "*"), true);
+                                                        diBuilder->insertDbgValueIntrinsic(
+                                                            currentThis, debugParam, diBuilder->createExpression(),
+                                                            llvm::DILocation::get(builder->getContext(),
+                                                                                  getLineNoFromPos(concreteMethod.name_tok.pos), 0,
+                                                                                  currentSubprogram),
+                                                            builder->GetInsertBlock());
+                                                    }
+                                                    varTypes["this"] = resolveTypeName(mapKey, false) + "*";
+                                                    std::vector<llvm::Value*> forwardArgs;
+                                                    forwardArgs.push_back(currentThis);
+                                                    for (size_t pIdx = 0; pIdx < concreteMethod.params.size(); pIdx++) {
+                                                        auto& param = concreteMethod.params[pIdx];
+                                                        llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
+                                                        argVal->setName(param.name.value);
+                                                        if (config.debug_symbols) {
+                                                            llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                                                                currentSubprogram, param.name.value, pIdx + 2,
+                                                                getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                                getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(param.type.value), true);
+                                                            diBuilder->insertDbgValueIntrinsic(
+                                                                argVal, debugParam, diBuilder->createExpression(),
+                                                                llvm::DILocation::get(builder->getContext(),
+                                                                                      getLineNoFromPos(concreteMethod.name_tok.pos), 0,
+                                                                                      currentSubprogram),
+                                                                builder->GetInsertBlock());
+                                                        }
+                                                        auto* alloca = createEntryAlloca(param.name.value, argVal->getType());
+                                                        builder->CreateStore(argVal, alloca);
+                                                        locals[param.name.value] = alloca;
+                                                        varTypes[param.name.value] = param.signature.has_value()
+                                                                                         ? "fn"
+                                                                                         : resolveTypeName(param.type.value, false);
+                                                        forwardArgs.push_back(argVal);
+                                                    }
+                                                    functions["proceed"] = proceedFunc;
+                                                    if (modInfo.onCall) {
+                                                        emitStmt(modInfo.onCall);
+                                                    } else {
+                                                        if (fTy->getReturnType()->isVoidTy()) {
+                                                            builder->CreateCall(proceedFunc, forwardArgs);
+                                                            builder->CreateRetVoid();
+                                                        } else {
+                                                            llvm::Value* retVal = builder->CreateCall(proceedFunc, forwardArgs);
+                                                            builder->CreateRet(retVal);
+                                                        }
+                                                    }
+                                                    if (!builder->GetInsertBlock()->getTerminator()) {
+                                                        if (fTy->getReturnType()->isVoidTy()) {
+                                                            builder->CreateRetVoid();
+                                                        } else {
+                                                            builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
+                                                        }
+                                                    }
+                                                    if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
+                                                    currentFunction = prevFunction;
+                                                    currentThis = prevThis;
+                                                    functions.erase("proceed");
+                                                    currentSubprogram = oldSubprogram;
+                                                    exitScope();
+                                                    defersStack = savedDefers;
+                                                    currentTarget = layerFunc;
+                                                }
+                                            }
                                         }
                                     } else {
                                         std::string mangledName = mapKey + "_" + concreteMethod.name_tok.value;
@@ -4234,8 +5530,7 @@ class LLVMCompiler {
     std::pair<bool, int> checkJagged(AnyNode& node);
     llvm::Value* boolToQBool(llvm::Value* boolVal);
     void addRuntimeToModule();
-    llvm::Function* synthesizeProceed(const std::string& proceedName, llvm::Function* nextTargetFunc, StatementsNode* onReturnBody,
-                                      const FuncDefNode& fn) {
+    llvm::Function* synthesizeProceed(const std::string& proceedName, llvm::Function* nextTargetFunc, StatementsNode* onReturnBody, FuncDefNode& fn) {
         llvm::FunctionType* fTy = nextTargetFunc->getFunctionType();
         llvm::Function* proceedFunc = llvm::Function::Create(fTy, llvm::Function::InternalLinkage, proceedName, module);
         enterScope();
@@ -4250,6 +5545,14 @@ class LLVMCompiler {
         for (auto& arg : proceedFunc->args()) {
             if (paramIt == fn.params.end()) break;
             auto& param = *paramIt++;
+            if (config.debug_symbols) {
+                llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
+                    currentSubprogram, param.name.value, idx + 1, getDebugFile(get_pos(&fn).file_id), getLineNoFromPos(get_pos(&fn)),
+                    getDebugType(param.type.value), true);
+                diBuilder->insertDbgValueIntrinsic(&arg, debugParam, diBuilder->createExpression(),
+                                                   llvm::DILocation::get(builder->getContext(), getLineNoFromPos(get_pos(&fn)), 0, currentSubprogram),
+                                                   builder->GetInsertBlock());
+            }
             arg.setName(param.name.value);
             auto* alloca = createEntryAlloca(arg.getName().str(), arg.getType());
             builder->CreateStore(&arg, alloca);
@@ -4288,7 +5591,7 @@ class LLVMCompiler {
         exitScope();
         return proceedFunc;
     }
-    llvm::Function* emitFuncDef(const FuncDefNode& fn);
+    llvm::Function* emitFuncDef(FuncDefNode& fn);
     llvm::FunctionType* llvmFuncTypeForHelper(const std::vector<Token>& returnTypes, const std::vector<ParamTypeInfo>& params);
     llvm::FunctionType* llvmFuncTypeFor(const std::vector<Token>& retTypes, const std::list<Parameter>& params);
     llvm::FunctionType* llvmFuncTypeFor(const std::vector<Token>& returnTypes, const std::vector<Parameter>& params);

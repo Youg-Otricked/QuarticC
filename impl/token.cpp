@@ -15,8 +15,21 @@ uint32_t SourceManager::add_file(std::string filepath, std::string text) {
     if (auto id = get_id(filepath)) { return *id; }
     uint32_t new_id = static_cast<uint32_t>(files.size());
     path_to_id[filepath] = new_id;
+    uint64_t line_cnt = 1;
+    for (char c : text)
+        if (c == '\n') line_cnt++;
+    this->line_counts[new_id] = line_cnt;
+    id_rev_map[new_id] = filepath;
     files.push_back({std::move(filepath), std::move(text)});
     return new_id;
+}
+std::string SourceManager::get_file_name(uint32_t id) const {
+    if (id == Position::INVALID_FILE_ID) return "<scratch>";
+    return id_rev_map.at(id); 
+}
+uint64_t SourceManager::get_file_line_count(uint32_t id) const {
+    if (id == Position::INVALID_FILE_ID) return ~0ull;
+    return line_counts.at(id);
 }
 bool SourceManager::has_id(uint32_t id) const {
     return id < files.size();
@@ -42,7 +55,8 @@ std::string Position::string(size_t context) const {
     std::string result;
     size_t width = std::to_string(last + 1).size();
     for (size_t i = first; i <= last; i++) {
-        std::string num = std::to_string(i + 1);
+        std::optional<uint64_t> fixed_line_no = get_original_line_no(file.filename, this->file_id, i + 1);
+        std::string num = fixed_line_no.has_value() ? std::to_string(*fixed_line_no) : std::to_string(i + 1);
         result += "  ";
         result += std::string(width - num.size(), ' ');
         result += num;
@@ -66,7 +80,8 @@ std::string Position::arrow_string(size_t context) const {
     std::string result;
     size_t width = std::to_string(last + 1).size();
     for (size_t i = first; i <= last; i++) {
-        std::string num = std::to_string(i + 1);
+        std::optional<uint64_t> fixed_line_no = get_original_line_no(file.filename, this->file_id, i + 1);
+        std::string num = fixed_line_no.has_value() ? std::to_string(*fixed_line_no) : std::to_string(i + 1);
         result += "  ";
         result += std::string(width - num.size(), ' ');
         result += num;

@@ -26,7 +26,6 @@ class Position {
     Position copy();
     bool operator==(const Position&) const = default;
 };
-
 class SourceManager {
   private:
     const SourceFile INVALID = SourceFile{
@@ -34,14 +33,23 @@ class SourceManager {
         "scratchscratchscratchscratchscratchscratchscratchscratchscratchscratch...",
     };
     std::vector<SourceFile> files;
+    std::unordered_map<uint32_t, uint64_t> line_counts;
     std::unordered_map<std::string, uint32_t> path_to_id;
+    std::unordered_map<uint32_t, std::string> id_rev_map;
   public:
+    std::string get_file_name(uint32_t id) const;
     static SourceManager& instance();
+    uint64_t get_file_line_count(uint32_t id) const;
     std::optional<uint32_t> get_id(const std::string& filepath) const;
     uint32_t add_file(std::string filepath, std::string text);
     bool has_id(uint32_t id) const;
     const SourceFile& get(uint32_t id) const;
 };
+inline std::unordered_map<std::string, uint64_t> file_og_line_counts;
+static inline std::optional<uint64_t> get_original_line_no(std::string file_name, uint32_t file_id, uint64_t line) {
+    uint64_t res = line - (SourceManager::instance().get_file_line_count(file_id) - file_og_line_counts[file_name]);
+    return res > line ? std::nullopt : std::make_optional(res);
+}
 enum class TokenType {
     INT,
     LONG_DOUBLE,

@@ -29,7 +29,14 @@ std::string resolve_path(const std::string& current_file, const std::string& inc
     if (include.is_absolute()) { return std::filesystem::weakly_canonical(include).string(); }
     std::filesystem::path current(current_file);
     std::filesystem::path resolved = current.parent_path() / include;
-    return std::filesystem::weakly_canonical(resolved).string();
+    resolved = std::filesystem::weakly_canonical(resolved).string();
+    if (!std::filesystem::exists(resolved)) {
+        for (const std::string& path : include_paths) {
+            std::filesystem::path res = std::filesystem::path(path) / include;
+            if (std::filesystem::exists(res)) return res.string();
+        }
+    }
+    return resolved.string();
 }
 static const std::vector<std::string>& system_include_dirs() {
     static std::vector<std::string> dirs;
@@ -69,8 +76,10 @@ static std::string find_c_header(const std::string& relative_guess, const std::s
     }
     return relative_guess;
 }
+bool first_pass = true;
 PreprocessResult preprocess_includes(std::string& source, const std::string& current_file, const std::vector<std::string>& c_args, bool fci) {
     CommentMask cm = build_comment_mask(source);
+    if (first_pass) file_og_line_counts[current_file] = cm.og_line_count;
     PreprocessResult res;
     res.accessible_namespaces.clear();
     res.accessible_namespaces.insert("Exported");
@@ -279,33 +288,36 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             if (line_end == std::string::npos) line_end = source.size();
             std::string directiveText = trim(source.substr(directive_pos + keyword_len, line_end - directive_pos - keyword_len));
             bool condition;
-            if (isIfdef)
-                condition = definitions.count(directiveText) > 0;
-            else if (isIfndef)
-                condition = definitions.count(directiveText) == 0;
-            else
-                condition = evalIf(directiveText);
-            MatchResult m = findMatch(source, line_end + 1);
+            if (isIfdef) condition = definitions.count(directiveText) > 0;
+            else if (isIfndef) condition = definitions.count(directiveText) == 0;
+            else condition = evalIf(directiveText);
+            MatchResult m = findMatch(source, line_end < source.size() ? line_end + 1 : line_end);
             if (m.endif_pos == std::string::npos) { throw std::runtime_error("unterminated #if/#ifdef/#ifndef — missing #endif"); }
-            std::string keptRegion;
+            size_t body_start = line_end < source.size() ? line_end + 1 : line_end;
+            size_t body_end = m.endif_pos;
             if (condition) {
-                size_t thenEnd = (m.else_pos != std::string::npos) ? m.else_pos : m.endif_pos;
-                keptRegion = source.substr(line_end + 1, thenEnd - (line_end + 1));
+                if (m.else_pos != std::string::npos) body_end = m.else_pos;
             } else if (m.else_pos != std::string::npos) {
-                size_t elseLineEnd = source.find('\n', m.else_pos);
-                if (elseLineEnd == std::string::npos)
-                    elseLineEnd = source.size();
-                else
-                    elseLineEnd++;
-                keptRegion = source.substr(elseLineEnd, m.endif_pos - elseLineEnd);
+                size_t else_line_end = source.find('\n', m.else_pos);
+                body_start = else_line_end == std::string::npos ? source.size() : else_line_end + 1;
+            } else {
+                body_start = body_end;
             }
-            size_t endifLineEnd = source.find('\n', m.endif_pos);
-            if (endifLineEnd == std::string::npos)
-                endifLineEnd = source.size();
-            else
-                endifLineEnd++;
-            source = source.substr(0, directive_pos) + keptRegion + source.substr(endifLineEnd);
-            pos = directive_pos;
+            size_t endif_line_end = source.find('\n', m.endif_pos);
+            size_t region_end = endif_line_end == std::string::npos ? source.size() : endif_line_end + 1;
+            std::string replacement;
+            replacement.reserve(region_end - directive_pos);
+            size_t kept_pos = body_start;
+            for (size_t i = directive_pos; i < region_end; ++i) {
+                bool is_kept = i >= body_start && i < body_end;
+                if (is_kept) {
+                    replacement += source[i];
+                } else if (source[i] == '\n') {
+                    replacement += '\n';
+                }
+            }
+            source.replace(directive_pos, region_end - directive_pos, replacement);
+            pos = directive_pos + replacement.size();
             continue;
         }
         bool isDefine = (directive_pos == define_pos);
@@ -324,7 +336,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
                 std::string name = source.substr(directive_pos + keyword_len, line_end - directive_pos - keyword_len);
                 definitions.erase(name);
             }
-            source.erase(directive_pos, line_end - directive_pos + (line_end < source.size() ? 1 : 0));
+            source.erase(directive_pos, line_end - directive_pos);
             pos = directive_pos;
         } else {
             pos = directive_pos + keyword_len;
@@ -537,7 +549,6 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         result2 += source.substr(last_pos, pos - last_pos);
         size_t end = source.find('>', pos);
         last_pos = end + 1;
-        if (last_pos < source.size() && source[last_pos] == '\n') { last_pos++; }
         pos = last_pos;
     }
     result2 += source.substr(last_pos);
@@ -547,11 +558,11 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(cm, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
-            result2.erase(pos, line_end - pos + 1);
+            result2.erase(pos, line_end - pos);
         } else {
             pos++;
         }
@@ -562,11 +573,11 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(cm, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
-            result2.erase(pos, line_end - pos + 1);
+            result2.erase(pos, line_end - pos);
         } else {
             pos++;
         }
@@ -577,11 +588,11 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(cm, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
-            result2.erase(pos, line_end - pos + 1);
+            result2.erase(pos, line_end - pos);
         } else {
             pos++;
         }
@@ -592,11 +603,11 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(cm, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
-            result2.erase(pos, line_end - pos + 1);
+            result2.erase(pos, line_end - pos);
         } else {
             pos++;
         }
@@ -607,11 +618,11 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         for (size_t check = 0; check < pos; check++) {
             if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
         }
-        if (inside_comment(cm, pos)) { in_string = true; }
+        if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
             size_t line_end = result2.find('\n', pos);
             if (line_end == std::string::npos) line_end = result2.size();
-            result2.erase(pos, line_end - pos + 1);
+            result2.erase(pos, line_end - pos);
         } else {
             pos++;
         }
@@ -636,7 +647,9 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     for (auto it = translated.rbegin(); it != translated.rend(); ++it) output += *it;
     output += result2;
     if (!to_c_include.empty()) {
+        first_pass = false;
         auto res2 = preprocess_includes(output, current_file, c_args, fci);
+        first_pass = true;
         res.errors.insert(res.errors.end(), res2.errors.begin(), res2.errors.end());
         res.clean_source = std::move(res2.clean_source);
     } else

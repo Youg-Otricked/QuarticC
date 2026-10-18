@@ -113,8 +113,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.3.4 = "Include system upgrade "
-Next Version: x1.3.5 = "Formatter, More STL, Other QOL"
+Current Version: x1.3.455 = "DebugSymbols"
+Next Version: x1.3.5 = "Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
 
