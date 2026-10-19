@@ -553,13 +553,13 @@ class LLVMCompiler {
     void expandSpreadIntoVector(llvm::Value* collVal, AnyNode& collExpr, std::vector<llvm::Value*>& elements);
     llvm::Value* emitSpreadFunctionCall(llvm::Value* calleeVal, llvm::FunctionType* fnTy, CallNode& call);
     bool fulfillsGenericConstraints(std::vector<GenericType> generics, std::vector<std::string> genericParams, Position pos = Position());
-    llvm::StructType* generateGenericEnum(std::string enumName, UserTypeInfo& enumInfo, std::vector<std::string> genericParams);
-    llvm::StructType* generateGenericRawUnion(std::string runionName, UserTypeInfo& runionInfo, std::vector<std::string> genericParams);
-    ConceptInfo generateGenericConcept(std::string conceptName, UserTypeInfo& conceptInfo, std::vector<std::string> genericParams);
-    llvm::StructType* generateGenericClass(std::string className, UserTypeInfo& classInfo, std::vector<std::string> genericParams);
-    llvm::StructType* generateGenericStruct(std::string structName, UserTypeInfo& structInfo, std::vector<std::string> genericParams);
-    UserTypeInfo generateGenericUnion(std::string unionName, UserTypeInfo& unionInfo, std::vector<std::string> genericParams);
-    std::string generateGenericAlias(std::string aliasName, UserTypeInfo& aliasInfo, std::vector<std::string> genericParams);
+    llvm::StructType* generateGenericEnum(std::string enumName, UserTypeInfo enumInfo, std::vector<std::string> genericParams);
+    llvm::StructType* generateGenericRawUnion(std::string runionName, UserTypeInfo runionInfo, std::vector<std::string> genericParams);
+    ConceptInfo generateGenericConcept(std::string conceptName, UserTypeInfo conceptInfo, std::vector<std::string> genericParams);
+    llvm::StructType* generateGenericClass(std::string className, UserTypeInfo classInfo, std::vector<std::string> genericParams);
+    llvm::StructType* generateGenericStruct(std::string structName, UserTypeInfo structInfo, std::vector<std::string> genericParams);
+    UserTypeInfo generateGenericUnion(std::string unionName, UserTypeInfo unionInfo, std::vector<std::string> genericParams);
+    std::string generateGenericAlias(std::string aliasName, UserTypeInfo aliasInfo, std::vector<std::string> genericParams);
     std::unordered_map<std::string, llvm::GlobalVariable*> globals;
     std::unordered_map<std::string, FunctionSignature> functionSignatures;
     std::unordered_map<std::string, FuncDefNode*> functionDefs;
@@ -600,8 +600,17 @@ class LLVMCompiler {
 #define findVarType(name) findInStack(varTypesStack, name)
 #define findArrayType(name) findInStack(arrayTypeStringsStack, name)
 #define findConst(name) findInStack(constsStack, name)
+    std::unordered_set<llvm::DILocalVariable*> debugVars; // why must i use this
+    void insertDebugVar(llvm::Value* alloc, llvm::DILocalVariable* var, llvm::DILocation* loc) {
+        if (!config.debug_symbols || !var) return;
+        if (!debugVars.insert(var).second) return;
+        diBuilder->insertDeclare(alloc, var, diBuilder->createExpression(), loc, builder->GetInsertBlock());
+    }
     void enterScope() {
-        if (defersStack.size() == 0) { all_labels = {}; }
+        if (defersStack.size() == 0) {
+            all_labels = {};
+            debugVars = {};
+        }
         if (defersStack.size() <= 1) { scope_labels = {}; }
         defersStack.push_back({});
         localsStack.push_back({});
@@ -617,7 +626,10 @@ class LLVMCompiler {
         if (currentBlock && !currentBlock->getTerminator()) { emitDefersDownTo(defersStack.size()); }
         defersStack.pop_back();
         if (defersStack.size() <= 1) scope_labels = {};
-        if (defersStack.size() == 0) all_labels = {};
+        if (defersStack.size() == 0) {
+            all_labels = {};
+            debugVars = {};
+        }
         localsStack.pop_back();
         volatileVarsStack.pop_back();
         arrayTypeStringsStack.pop_back();
@@ -1282,7 +1294,7 @@ class LLVMCompiler {
     }
     bool is_primitive_type(const std::string_view& name) {
         return std::unordered_set<std::string_view>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool",
-                                                     "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+                                                     "ai64u_t", "ai64_t", "i32u_t", "i16u_t", "short int", "long int"})
             .contains(name);
     }
     bool is_primint_type(const std::string_view& name) {
@@ -1530,8 +1542,8 @@ class LLVMCompiler {
     std::unordered_map<std::string, llvm::DIType*> debug_types;
     llvm::DIType* getDebugType(std::string type) {
         if (!config.debug_symbols || !diBuilder) return nullptr;
-        if (auto it = debug_types.find(type); it != debug_types.end()) return it->second;
         type = resolveTypeName(type, false);
+        if (auto it = debug_types.find(type); it != debug_types.end()) return it->second;
         if (is_primitive_type(type) && type != "string") {
             if (type == "void") {
                 debug_types[type] = diBuilder->createUnspecifiedType("void");
@@ -1544,10 +1556,21 @@ class LLVMCompiler {
                                                                : llvm::dwarf::DW_ATE_float);
             return debug_types[type];
         } else if (type == "string" || type.ends_with("*") || type.ends_with("&")) {
-            const llvm::DataLayout& datalayout = module->getDataLayout();
             std::string pointeeType = type == "string" ? "char*" : type;
             pointeeType.pop_back();
-            debug_types[type] = diBuilder->createPointerType(getDebugType(pointeeType), getPtrSize(), 0, std::nullopt, type);
+            llvm::DIType* pointee = nullptr;
+            std::string base = baseTypeName(resolveTypeName(pointeeType, false));
+            bool describable = is_primitive_type(pointeeType) || pointeeType == "void" || pointeeType.ends_with("*") || pointeeType.ends_with("&") ||
+                               pointeeType.ends_with("]") || pointeeType.starts_with("(") || trim(pointeeType).starts_with("fn") ||
+                               userTypes.count(base);
+            if (describable) {
+                pointee = getDebugType(pointeeType);
+            } else {
+                auto& slot = debug_types[pointeeType];
+                if (!slot) slot = diBuilder->createForwardDecl(llvm::dwarf::DW_TAG_structure_type, pointeeType, compileUnit, nullptr, 0);
+                pointee = slot;
+            }
+            debug_types[type] = diBuilder->createPointerType(pointee, getPtrSize(), 0, std::nullopt, type);
             return debug_types[type];
         } else if (type.starts_with("(")) {
             const llvm::DataLayout& datalayout = module->getDataLayout();
@@ -1612,6 +1635,17 @@ class LLVMCompiler {
             llvm::StructType* st = llvm::cast<llvm::StructType>(ty);
             const llvm::DataLayout& datalayout = module->getDataLayout();
             const llvm::StructLayout* layout = datalayout.getStructLayout(st);
+            auto oldNamespaceStack = namespaceStack;
+            namespaceStack.clear();
+            if (!ifo.namespace_path.empty()) {
+                size_t start = 0;
+                size_t pos;
+                while ((pos = ifo.namespace_path.find("::", start)) != std::string::npos) {
+                    namespaceStack.push_back(ifo.namespace_path.substr(start, pos - start));
+                    start = pos + 2;
+                }
+                namespaceStack.push_back(ifo.namespace_path.substr(start));
+            }
             if (ifo.kind == UserTypeKind::Struct || ifo.kind == UserTypeKind::Class) {
                 std::vector<std::string> genericParams = genericParamsFromName(type);
                 auto oldGenericTypes = this->currentGenericTypes;
@@ -1622,9 +1656,14 @@ class LLVMCompiler {
                         this->currentGenericTypes = oldGenericTypes;
                         currentGenericTypeStrings = oldGenericTypeStrings;
                         currentNonTypeGenericValues = oldNonTypeGenerics;
+                        namespaceStack = oldNamespaceStack;
                         return nullptr;
                     }
                 }
+                auto* fwd = diBuilder->createReplaceableCompositeType(
+                    ifo.kind == UserTypeKind::Class ? llvm::dwarf::DW_TAG_class_type : llvm::dwarf::DW_TAG_structure_type, type, compileUnit, file,
+                    line, 0, datalayout.getTypeAllocSizeInBits(st), datalayout.getABITypeAlign(st).value() * 8);
+                debug_types[type] = fwd;
                 std::vector<llvm::Metadata*> members;
                 for (size_t i = 0; i < ifo.fields.size(); i++) {
                     const StructField& field = ifo.fields[i];
@@ -1644,9 +1683,11 @@ class LLVMCompiler {
                 debug_types[type] = diBuilder->createStructType(compileUnit, type, file, line, datalayout.getTypeAllocSizeInBits(st),
                                                                 datalayout.getABITypeAlign(st).value() * 8, llvm::DINode::FlagZero, nullptr,
                                                                 member_array);
+                diBuilder->replaceTemporary(llvm::TempDIType(fwd), debug_types[type]);
                 this->currentGenericTypes = oldGenericTypes;
                 this->currentGenericTypeStrings = oldGenericTypeStrings;
                 currentNonTypeGenericValues = oldNonTypeGenerics;
+                namespaceStack = oldNamespaceStack;
                 return debug_types[type];
             } else if (ifo.kind == UserTypeKind::Enum) {
                 std::vector<std::string> genericParams = genericParamsFromName(type);
@@ -1658,16 +1699,19 @@ class LLVMCompiler {
                         this->currentGenericTypes = oldGenericTypes;
                         currentGenericTypeStrings = oldGenericTypeStrings;
                         currentNonTypeGenericValues = oldNonTypeGenerics;
+                        namespaceStack = oldNamespaceStack;
                         return nullptr;
                     }
                 }
-                const llvm::DataLayout& datalayout = module->getDataLayout();
-                const llvm::StructLayout* sl = datalayout.getStructLayout(st);
+                auto* fwd = diBuilder->createReplaceableCompositeType(llvm::dwarf::DW_TAG_enumeration_type, type, compileUnit, file, line, 0,
+                                                                      datalayout.getTypeAllocSizeInBits(st),
+                                                                      datalayout.getABITypeAlign(st).value() * 8);
+                debug_types[type] = fwd;
                 auto* tagLLVMType = st->getElementType(0);
                 auto* tagDIType = getDebugType(ifo.enumType);
                 auto* discriminant = diBuilder->createMemberType(
                     compileUnit, "discriminant", file, line, datalayout.getTypeAllocSizeInBits(tagLLVMType),
-                    datalayout.getABITypeAlign(tagLLVMType).value() * 8, sl->getElementOffsetInBits(0), llvm::DINode::FlagZero, tagDIType);
+                    datalayout.getABITypeAlign(tagLLVMType).value() * 8, layout->getElementOffsetInBits(0), llvm::DINode::FlagZero, tagDIType);
                 std::vector<llvm::Metadata*> variants;
                 for (const EnumEntry& entry : ifo.enumEntries) {
                     std::vector<llvm::Metadata*> payloadMembers;
@@ -1675,7 +1719,7 @@ class LLVMCompiler {
                         llvm::DIType* payloadDIType = getDebugType(entry.tags[i]);
                         payloadMembers.push_back(diBuilder->createMemberType(
                             compileUnit, resolveTypeName(entry.tags[i], false), file, line, payloadDIType->getSizeInBits(),
-                            payloadDIType->getAlignInBits(), sl->getElementOffsetInBits(i + 1), llvm::DINode::FlagZero, payloadDIType));
+                            payloadDIType->getAlignInBits(), layout->getElementOffsetInBits(i + 1), llvm::DINode::FlagZero, payloadDIType));
                     }
                     variants.push_back(diBuilder->createVariantMemberType(
                         compileUnit, diBuilder->getOrCreateArray(payloadMembers),
@@ -1688,9 +1732,11 @@ class LLVMCompiler {
                 llvm::DINodeArray members = diBuilder->getOrCreateArray({discriminant, variantPart});
                 debug_types[type] = diBuilder->createStructType(compileUnit, type, file, line, datalayout.getTypeAllocSizeInBits(st),
                                                                 datalayout.getABITypeAlign(st).value() * 8, llvm::DINode::FlagZero, nullptr, members);
+                diBuilder->replaceTemporary(llvm::TempDIType(fwd), debug_types[type]);
                 this->currentGenericTypes = oldGenericTypes;
                 this->currentGenericTypeStrings = oldGenericTypeStrings;
                 currentNonTypeGenericValues = oldNonTypeGenerics;
+                namespaceStack = oldNamespaceStack;
                 return debug_types[type];
             } else if (ifo.kind == UserTypeKind::Union) {
                 const llvm::DataLayout& datalayout = module->getDataLayout();
@@ -1698,7 +1744,7 @@ class LLVMCompiler {
                 const llvm::StructLayout* sl = datalayout.getStructLayout(st);
                 std::vector<llvm::Metadata*> members;
                 llvm::Type* tagType = st->getElementType(0);
-                llvm::DIType* tagDIType = getDebugType(ifo.enumType);
+                llvm::DIType* tagDIType = getDebugType(ifo.enumType == "" ? "int" : ifo.enumType);
                 members.push_back(diBuilder->createMemberType(compileUnit, "tag", file, line, datalayout.getTypeAllocSizeInBits(tagType),
                                                               datalayout.getABITypeAlign(tagType).value() * 8, sl->getElementOffsetInBits(0),
                                                               llvm::DINode::FlagZero, tagDIType));
@@ -1712,6 +1758,7 @@ class LLVMCompiler {
                 debug_types[type] = diBuilder->createStructType(compileUnit, type, file, line, datalayout.getTypeAllocSizeInBits(st),
                                                                 datalayout.getABITypeAlign(st).value() * 8, llvm::DINode::FlagZero, nullptr,
                                                                 memberArray);
+                namespaceStack = oldNamespaceStack;
                 return debug_types[type];
             } else if (ifo.kind == UserTypeKind::RawUnion) {
                 std::vector<std::string> genericParams = genericParamsFromName(type);
@@ -1723,28 +1770,33 @@ class LLVMCompiler {
                         this->currentGenericTypes = oldGenericTypes;
                         currentGenericTypeStrings = oldGenericTypeStrings;
                         currentNonTypeGenericValues = oldNonTypeGenerics;
+                        namespaceStack = oldNamespaceStack;
                         return nullptr;
                     }
                 }
-                const llvm::DataLayout& datalayout = module->getDataLayout();
-                llvm::Type* ty = llvmTypeFor(type);
-                auto* st = llvm::cast<llvm::StructType>(ty);
+                auto* fwd = diBuilder->createReplaceableCompositeType(llvm::dwarf::DW_TAG_union_type, type, compileUnit, file, line, 0,
+                                                                      datalayout.getTypeAllocSizeInBits(st),
+                                                                      datalayout.getABITypeAlign(st).value() * 8);
+                debug_types[type] = fwd;
                 std::vector<llvm::Metadata*> members;
                 for (size_t i = 0; i < ifo.fields.size(); ++i) {
                     const auto& member = ifo.fields[i];
                     llvm::DIType* memberDIType = getDebugType(member.type);
-                    if (!memberDIType) return nullptr;
-                    members.push_back(diBuilder->createMemberType(compileUnit, member.name, file, line, memberDIType->getSizeInBits(),
-                                                                  memberDIType->getAlignInBits(), 0, llvm::DINode::FlagZero, memberDIType));
+                    if (memberDIType)
+                        members.push_back(diBuilder->createMemberType(compileUnit, member.name, file, line, memberDIType->getSizeInBits(),
+                                                                      memberDIType->getAlignInBits(), 0, llvm::DINode::FlagZero, memberDIType));
                 }
                 llvm::DINodeArray memberArray = diBuilder->getOrCreateArray(members);
                 debug_types[type] = diBuilder->createUnionType(compileUnit, type, file, line, datalayout.getTypeAllocSizeInBits(ty),
                                                                datalayout.getABITypeAlign(ty).value() * 8, llvm::DINode::FlagZero, memberArray);
+                diBuilder->replaceTemporary(llvm::TempDIType(fwd), debug_types[type]);
                 this->currentGenericTypes = oldGenericTypes;
                 this->currentGenericTypeStrings = oldGenericTypeStrings;
                 currentNonTypeGenericValues = oldNonTypeGenerics;
+                namespaceStack = oldNamespaceStack;
                 return debug_types[type];
             }
+            namespaceStack = oldNamespaceStack;
         }
         cg_error(Position(), "unknown type: " + type);
         return nullptr;
@@ -3284,6 +3336,7 @@ class LLVMCompiler {
         }
         currentFunction = currentTarget;
         llvm::DISubprogram* oldSubprogram = currentSubprogram;
+        llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
         if (config.debug_symbols) {
             setupDebugFunction(currentTarget, specializedName, method.name_tok.pos);
             setDebugLocation(method.name_tok.pos);
@@ -3292,7 +3345,7 @@ class LLVMCompiler {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", currentTarget);
         builder->SetInsertPoint(entry);
         currentThis = currentTarget->getArg(0);
-        if (config.debug_symbols) {
+        if (config.debug_symbols && currentSubprogram) {
             llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                 currentSubprogram, "this", 1, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
                 getDebugType(resolveTypeName(className, false) + "*"), true);
@@ -3315,7 +3368,7 @@ class LLVMCompiler {
             }
             llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
             builder->CreateStore(currentTarget->getArg(i + 1), alloc);
-            if (config.debug_symbols) {
+            if (config.debug_symbols && currentSubprogram) {
                 llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                     currentSubprogram, param.name.value, i + 2, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
                     getDebugType(param.type.value), true);
@@ -3340,6 +3393,7 @@ class LLVMCompiler {
         }
         exitScope();
         currentSubprogram = oldSubprogram;
+        builder->SetCurrentDebugLocation(oldDebugLoc);
         if (!method.modifiers.empty()) {
             for (int i = (int)method.modifiers.size() - 1; i >= 0; --i) {
                 Token modTok = method.modifiers[i];
@@ -3359,6 +3413,7 @@ class LLVMCompiler {
                 auto savedDefers = defersStack;
                 defersStack.clear();
                 llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
                 if (config.debug_symbols) {
                     setupDebugFunction(layerFunc, specializedName, method.name_tok.pos);
                     setDebugLocation(method.name_tok.pos);
@@ -3371,7 +3426,7 @@ class LLVMCompiler {
                 auto prevThis = currentThis;
                 currentFunction = layerFunc;
                 currentThis = layerFunc->getArg(0);
-                if (config.debug_symbols) {
+                if (config.debug_symbols && currentSubprogram) {
                     llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                         currentSubprogram, "this", 1, getDebugFile(method.name_tok.pos.file_id), getLineNoFromPos(method.name_tok.pos),
                         getDebugType(resolveTypeName(className, false) + "*"), true);
@@ -3387,7 +3442,7 @@ class LLVMCompiler {
                     auto& param = method.params[pIdx];
                     llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
                     argVal->setName(param.name.value);
-                    if (config.debug_symbols) {
+                    if (config.debug_symbols && currentSubprogram) {
                         llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                             currentSubprogram, param.name.value, pIdx + 2, getDebugFile(method.name_tok.pos.file_id),
                             getLineNoFromPos(method.name_tok.pos), getDebugType(param.type.value), true);
@@ -3429,6 +3484,7 @@ class LLVMCompiler {
                 defersStack = savedDefers;
                 currentTarget = layerFunc;
                 currentSubprogram = oldSubprogram;
+                builder->SetCurrentDebugLocation(oldDebugLoc);
             }
         }
         namespaceStack = savedNamespaceStack;
@@ -3519,6 +3575,7 @@ class LLVMCompiler {
         }
         currentFunction = fn;
         llvm::DISubprogram* oldSubprogram = currentSubprogram;
+        llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
         if (config.debug_symbols) {
             setupDebugFunction(fn, specializedName, get_pos(funcDef));
             setDebugLocation(get_pos(funcDef));
@@ -3529,7 +3586,7 @@ class LLVMCompiler {
         unsigned idx = 0;
         for (auto& arg : fn->args()) {
             auto& param = *std::next(funcDef->params.begin(), idx);
-            if (config.debug_symbols) {
+            if (config.debug_symbols && currentSubprogram) {
                 llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                     currentSubprogram, param.name.value, idx + 1, getDebugFile(get_pos(funcDef).file_id), getLineNoFromPos(get_pos(funcDef)),
                     getDebugType(param.type.value), true);
@@ -3598,6 +3655,7 @@ class LLVMCompiler {
         }
         exitScope();
         currentSubprogram = oldSubprogram;
+        builder->SetCurrentDebugLocation(oldDebugLoc);
         currentThis = savedThis;
         currentClassName = savedClassName;
         namespaceStack = savedNamespaceStack;
@@ -3766,7 +3824,10 @@ class LLVMCompiler {
                 continue;
             }
             UserTypeInfo userInfo = userIt->second;
-            if (!userInfo.generics.empty()) continue;
+            if (!userInfo.generics.empty()) {
+                namespaceStack = oldNamespaceStack;
+                continue;
+            }
             std::unordered_set<std::string> additionalProofNames;
             for (auto& proofMethod : proof.additionalProof) { additionalProofNames.insert(proofMethod.name_tok.value); }
             auto alreadyDefd = [&](const std::string& methodName, const std::vector<Parameter>& sigParams) -> bool {
@@ -3952,13 +4013,14 @@ class LLVMCompiler {
                                 auto oldClassName = currentClassName;
                                 auto oldFunction = currentFunction;
                                 llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
                                 if (config.debug_symbols) {
                                     setupDebugFunction(fn, proofMethod.name_tok.value, proofMethod.name_tok.pos);
                                     setDebugLocation(proofMethod.name_tok.pos);
                                 }
                                 enterScope();
                                 currentThis = currentTarget->getArg(0);
-                                if (config.debug_symbols) {
+                                if (config.debug_symbols && currentSubprogram) {
                                     llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                         currentSubprogram, "this", 1, getDebugFile(proofMethod.name_tok.pos.file_id),
                                         getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"), true);
@@ -3985,9 +4047,9 @@ class LLVMCompiler {
                                     }
                                     llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
                                     builder->CreateStore(currentTarget->getArg(i + 1), alloc);
-                                    if (config.debug_symbols) {
+                                    if (config.debug_symbols && currentSubprogram) {
                                         llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
-                                            currentSubprogram, param.name.value, i + 1, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                            currentSubprogram, param.name.value, i + 2, getDebugFile(proofMethod.name_tok.pos.file_id),
                                             getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(param.type.value), true);
                                         diBuilder->insertDbgValueIntrinsic(currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
                                                                            llvm::DILocation::get(builder->getContext(),
@@ -4012,6 +4074,7 @@ class LLVMCompiler {
                                 currentFunction = oldFunction;
                                 exitScope();
                                 currentSubprogram = oldSubprogram;
+                                builder->SetCurrentDebugLocation(oldDebugLoc);
                                 if (!proofMethod.modifiers.empty()) {
                                     llvm::FunctionType* fTy = fn->getFunctionType();
                                     for (int i = (int)proofMethod.modifiers.size() - 1; i >= 0; --i) {
@@ -4032,6 +4095,7 @@ class LLVMCompiler {
                                         if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
                                         auto savedDefers = defersStack;
                                         llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                        llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
                                         if (config.debug_symbols) {
                                             setupDebugFunction(fn, proofMethod.name_tok.value, proofMethod.name_tok.pos);
                                             setDebugLocation(proofMethod.name_tok.pos);
@@ -4045,7 +4109,7 @@ class LLVMCompiler {
                                         auto prevThis = currentThis;
                                         currentFunction = layerFunc;
                                         currentThis = layerFunc->getArg(0);
-                                        if (config.debug_symbols) {
+                                        if (config.debug_symbols && currentSubprogram) {
                                             llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                 currentSubprogram, "this", 1, getDebugFile(proofMethod.name_tok.pos.file_id),
                                                 getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"), true);
@@ -4062,7 +4126,7 @@ class LLVMCompiler {
                                             auto& param = proofMethod.params[pIdx];
                                             llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
                                             argVal->setName(param.name.value);
-                                            if (config.debug_symbols) {
+                                            if (config.debug_symbols && currentSubprogram) {
                                                 llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                     currentSubprogram, param.name.value, pIdx + 2, getDebugFile(proofMethod.name_tok.pos.file_id),
                                                     getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(param.type.value), true);
@@ -4103,6 +4167,7 @@ class LLVMCompiler {
                                         currentThis = prevThis;
                                         functions.erase("proceed");
                                         currentSubprogram = oldSubprogram;
+                                        builder->SetCurrentDebugLocation(oldDebugLoc);
                                         exitScope();
                                         defersStack = savedDefers;
                                         currentTarget = layerFunc;
@@ -4185,13 +4250,14 @@ class LLVMCompiler {
                                         auto oldClassName = currentClassName;
                                         auto oldFunction = currentFunction;
                                         llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                        llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
                                         if (config.debug_symbols) {
                                             setupDebugFunction(fn, concreteMethod.name_tok.value, concreteMethod.name_tok.pos);
                                             setDebugLocation(concreteMethod.name_tok.pos);
                                         }
                                         enterScope();
                                         currentThis = currentTarget->getArg(0);
-                                        if (config.debug_symbols) {
+                                        if (config.debug_symbols && currentSubprogram) {
                                             llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                 currentSubprogram, "this", 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
                                                 getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"),
@@ -4219,9 +4285,9 @@ class LLVMCompiler {
                                             }
                                             llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
                                             builder->CreateStore(currentTarget->getArg(i + 1), alloc);
-                                            if (config.debug_symbols) {
+                                            if (config.debug_symbols && currentSubprogram) {
                                                 llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
-                                                    currentSubprogram, param.name.value, i + 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                    currentSubprogram, param.name.value, i + 2, getDebugFile(concreteMethod.name_tok.pos.file_id),
                                                     getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(param.type.value), true);
                                                 diBuilder->insertDbgValueIntrinsic(
                                                     currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
@@ -4246,6 +4312,7 @@ class LLVMCompiler {
                                         currentFunction = oldFunction;
                                         exitScope();
                                         currentSubprogram = oldSubprogram;
+                                        builder->SetCurrentDebugLocation(oldDebugLoc);
                                         if (!concreteMethod.modifiers.empty()) {
                                             llvm::FunctionType* fTy = fn->getFunctionType();
                                             for (int i = (int)concreteMethod.modifiers.size() - 1; i >= 0; --i) {
@@ -4266,6 +4333,7 @@ class LLVMCompiler {
                                                 if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
                                                 auto savedDefers = defersStack;
                                                 llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                                llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
                                                 if (config.debug_symbols) {
                                                     setupDebugFunction(fn, concreteMethod.name_tok.value, concreteMethod.name_tok.pos);
                                                     setDebugLocation(concreteMethod.name_tok.pos);
@@ -4279,7 +4347,7 @@ class LLVMCompiler {
                                                 auto prevThis = currentThis;
                                                 currentFunction = layerFunc;
                                                 currentThis = layerFunc->getArg(0);
-                                                if (config.debug_symbols) {
+                                                if (config.debug_symbols && currentSubprogram) {
                                                     llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                         currentSubprogram, "this", 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
                                                         getLineNoFromPos(concreteMethod.name_tok.pos),
@@ -4297,7 +4365,7 @@ class LLVMCompiler {
                                                     auto& param = concreteMethod.params[pIdx];
                                                     llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
                                                     argVal->setName(param.name.value);
-                                                    if (config.debug_symbols) {
+                                                    if (config.debug_symbols && currentSubprogram) {
                                                         llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                             currentSubprogram, param.name.value, pIdx + 2,
                                                             getDebugFile(concreteMethod.name_tok.pos.file_id),
@@ -4341,6 +4409,7 @@ class LLVMCompiler {
                                                 currentThis = prevThis;
                                                 functions.erase("proceed");
                                                 currentSubprogram = oldSubprogram;
+                                                builder->SetCurrentDebugLocation(oldDebugLoc);
                                                 exitScope();
                                                 defersStack = savedDefers;
                                                 currentTarget = layerFunc;
@@ -4558,13 +4627,14 @@ class LLVMCompiler {
                                 auto oldClassName = currentClassName;
                                 auto oldFunction = currentFunction;
                                 llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
                                 if (config.debug_symbols) {
                                     setupDebugFunction(fn, proofMethod.name_tok.value, proofMethod.name_tok.pos);
                                     setDebugLocation(proofMethod.name_tok.pos);
                                 }
                                 enterScope();
                                 currentThis = currentTarget->getArg(0);
-                                if (config.debug_symbols) {
+                                if (config.debug_symbols && currentSubprogram) {
                                     llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                         currentSubprogram, "this", 1, getDebugFile(proofMethod.name_tok.pos.file_id),
                                         getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"), true);
@@ -4591,9 +4661,9 @@ class LLVMCompiler {
                                     }
                                     llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
                                     builder->CreateStore(currentTarget->getArg(i + 1), alloc);
-                                    if (config.debug_symbols) {
+                                    if (config.debug_symbols && currentSubprogram) {
                                         llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
-                                            currentSubprogram, param.name.value, i + 1, getDebugFile(proofMethod.name_tok.pos.file_id),
+                                            currentSubprogram, param.name.value, i + 2, getDebugFile(proofMethod.name_tok.pos.file_id),
                                             getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(param.type.value), true);
                                         diBuilder->insertDbgValueIntrinsic(currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
                                                                            llvm::DILocation::get(builder->getContext(),
@@ -4618,6 +4688,7 @@ class LLVMCompiler {
                                 currentFunction = oldFunction;
                                 exitScope();
                                 currentSubprogram = oldSubprogram;
+                                builder->SetCurrentDebugLocation(oldDebugLoc);
                                 if (!proofMethod.modifiers.empty()) {
                                     llvm::FunctionType* fTy = fn->getFunctionType();
                                     for (int i = (int)proofMethod.modifiers.size() - 1; i >= 0; --i) {
@@ -4638,6 +4709,7 @@ class LLVMCompiler {
                                         if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
                                         auto savedDefers = defersStack;
                                         llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                        llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
                                         if (config.debug_symbols) {
                                             setupDebugFunction(fn, proofMethod.name_tok.value, proofMethod.name_tok.pos);
                                             setDebugLocation(proofMethod.name_tok.pos);
@@ -4651,7 +4723,7 @@ class LLVMCompiler {
                                         auto prevThis = currentThis;
                                         currentFunction = layerFunc;
                                         currentThis = layerFunc->getArg(0);
-                                        if (config.debug_symbols) {
+                                        if (config.debug_symbols && currentSubprogram) {
                                             llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                 currentSubprogram, "this", 1, getDebugFile(proofMethod.name_tok.pos.file_id),
                                                 getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"), true);
@@ -4668,7 +4740,7 @@ class LLVMCompiler {
                                             auto& param = proofMethod.params[pIdx];
                                             llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
                                             argVal->setName(param.name.value);
-                                            if (config.debug_symbols) {
+                                            if (config.debug_symbols && currentSubprogram) {
                                                 llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                     currentSubprogram, param.name.value, pIdx + 2, getDebugFile(proofMethod.name_tok.pos.file_id),
                                                     getLineNoFromPos(proofMethod.name_tok.pos), getDebugType(param.type.value), true);
@@ -4709,6 +4781,7 @@ class LLVMCompiler {
                                         currentThis = prevThis;
                                         functions.erase("proceed");
                                         currentSubprogram = oldSubprogram;
+                                        builder->SetCurrentDebugLocation(oldDebugLoc);
                                         exitScope();
                                         defersStack = savedDefers;
                                         currentTarget = layerFunc;
@@ -4785,13 +4858,14 @@ class LLVMCompiler {
                                             auto oldClassName = currentClassName;
                                             auto oldFunction = currentFunction;
                                             llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                            llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
                                             if (config.debug_symbols) {
                                                 setupDebugFunction(fn, concreteMethod.name_tok.value, concreteMethod.name_tok.pos);
                                                 setDebugLocation(concreteMethod.name_tok.pos);
                                             }
                                             enterScope();
                                             currentThis = currentTarget->getArg(0);
-                                            if (config.debug_symbols) {
+                                            if (config.debug_symbols && currentSubprogram) {
                                                 llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                     currentSubprogram, "this", 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
                                                     getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(resolveTypeName(mapKey, false) + "*"),
@@ -4819,9 +4893,9 @@ class LLVMCompiler {
                                                 }
                                                 llvm::AllocaInst* alloc = createEntryAlloca(param.name.value, paramTy);
                                                 builder->CreateStore(currentTarget->getArg(i + 1), alloc);
-                                                if (config.debug_symbols) {
+                                                if (config.debug_symbols && currentSubprogram) {
                                                     llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
-                                                        currentSubprogram, param.name.value, i + 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
+                                                        currentSubprogram, param.name.value, i + 2, getDebugFile(concreteMethod.name_tok.pos.file_id),
                                                         getLineNoFromPos(concreteMethod.name_tok.pos), getDebugType(param.type.value), true);
                                                     diBuilder->insertDbgValueIntrinsic(
                                                         currentTarget->getArg(i + 1), debugParam, diBuilder->createExpression(),
@@ -4846,6 +4920,7 @@ class LLVMCompiler {
                                             currentFunction = oldFunction;
                                             exitScope();
                                             currentSubprogram = oldSubprogram;
+                                            builder->SetCurrentDebugLocation(oldDebugLoc);
                                             if (!concreteMethod.modifiers.empty()) {
                                                 llvm::FunctionType* fTy = fn->getFunctionType();
                                                 for (int i = (int)concreteMethod.modifiers.size() - 1; i >= 0; --i) {
@@ -4868,6 +4943,7 @@ class LLVMCompiler {
                                                     if (!layerFunc) { layerFunc = llvm::Function::Create(fTy, linkage, layerName, module); }
                                                     auto savedDefers = defersStack;
                                                     llvm::DISubprogram* oldSubprogram = currentSubprogram;
+                                                    llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
                                                     if (config.debug_symbols) {
                                                         setupDebugFunction(fn, concreteMethod.name_tok.value, concreteMethod.name_tok.pos);
                                                         setDebugLocation(concreteMethod.name_tok.pos);
@@ -4881,7 +4957,7 @@ class LLVMCompiler {
                                                     auto prevThis = currentThis;
                                                     currentFunction = layerFunc;
                                                     currentThis = layerFunc->getArg(0);
-                                                    if (config.debug_symbols) {
+                                                    if (config.debug_symbols && currentSubprogram) {
                                                         llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                             currentSubprogram, "this", 1, getDebugFile(concreteMethod.name_tok.pos.file_id),
                                                             getLineNoFromPos(concreteMethod.name_tok.pos),
@@ -4900,7 +4976,7 @@ class LLVMCompiler {
                                                         auto& param = concreteMethod.params[pIdx];
                                                         llvm::Value* argVal = layerFunc->getArg(pIdx + 1);
                                                         argVal->setName(param.name.value);
-                                                        if (config.debug_symbols) {
+                                                        if (config.debug_symbols && currentSubprogram) {
                                                             llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                                                                 currentSubprogram, param.name.value, pIdx + 2,
                                                                 getDebugFile(concreteMethod.name_tok.pos.file_id),
@@ -4944,6 +5020,7 @@ class LLVMCompiler {
                                                     currentThis = prevThis;
                                                     functions.erase("proceed");
                                                     currentSubprogram = oldSubprogram;
+                                                    builder->SetCurrentDebugLocation(oldDebugLoc);
                                                     exitScope();
                                                     defersStack = savedDefers;
                                                     currentTarget = layerFunc;
@@ -5074,6 +5151,7 @@ class LLVMCompiler {
             return name;
         }
         name = strip_consts(name);
+        name = substituteGenerics(name);
         std::string suffix;
         while (!name.empty() && (name.ends_with("*") || name.ends_with("&") || name.ends_with("[]"))) {
             if (name.ends_with("[]")) {
@@ -5545,7 +5623,7 @@ class LLVMCompiler {
         for (auto& arg : proceedFunc->args()) {
             if (paramIt == fn.params.end()) break;
             auto& param = *paramIt++;
-            if (config.debug_symbols) {
+            if (config.debug_symbols && currentSubprogram) {
                 llvm::DILocalVariable* debugParam = diBuilder->createParameterVariable(
                     currentSubprogram, param.name.value, idx + 1, getDebugFile(get_pos(&fn).file_id), getLineNoFromPos(get_pos(&fn)),
                     getDebugType(param.type.value), true);
