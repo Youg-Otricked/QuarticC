@@ -1538,7 +1538,122 @@ class LLVMCompiler {
         result.push_back(text.substr(start));
         return result;
     }
+    llvm::Value* castValue(llvm::Value* rhs, llvm::Type* destTy, std::string lhsTypeString = "", std::string rhsTypeString = "", Position pos = Position()) {
+        if (classTypes.count(lhsTypeString) || genericClasses.count(baseTypeName(lhsTypeString))) {
+            if (rhs->getType()->isArrayTy()) {
+                llvm::Value* res = decayArrayToClass(rhs, lhsTypeString,
+                                                     builder->getInt64(llvm::cast<llvm::ArrayType>(rhs->getType())->getArrayNumElements()));
+                if (res)
+                    return res;
+                else {
+                    cg_error(pos, "no valid operator[]= method found on class " + lhsTypeString, "QC-S140");
+                    return nullptr;
+                }
+            }
+        }
+        llvm::Type *srcTy = rhs->getType();
+        if (isUnionType(srcTy) && !isUnionType(destTy)) {
+            llvm::Value* dataPtr = builder->CreateExtractValue(rhs, 1, "union_data");
+            if (destTy->isPointerTy()) {
+                rhs = builder->CreateBitCast(dataPtr, destTy);
+            } else {
+                llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
+                rhs = builder->CreateLoad(destTy, typedPtr);
+            }
+            srcTy = destTy;
+        }
+        if (srcTy != destTy) {
+            if (srcTy->isPointerTy() && !destTy->isPointerTy()) {
+                llvm::Type* newbase = llvmTypeFor(rhsTypeString);
+                if (!newbase->isPointerTy()) {
+                    rhs = builder->CreateLoad(newbase, rhs);
+                    srcTy = newbase;
+                }
+            }
+            if (srcTy->isFloatTy() && destTy->isDoubleTy()) {
+                warn("implicit-extend", pos, "implicit extension in assignment", "QC-W012");
+                rhs = builder->CreateFPExt(rhs, destTy, "f2d");
+            } else if (srcTy->isArrayTy() && destTy->isPointerTy()) {
+                rhs = this->decayArrayToPointer(rhs);
+            } else if (srcTy->isPointerTy() && destTy->isArrayTy()) {
+                auto* arr_alloca = builder->CreateAlloca(srcTy);
+                builder->CreateStore(rhs, arr_alloca);
+                rhs = builder->CreateGEP(srcTy, arr_alloca, {builder->getInt32(0), builder->getInt32(0)});
+            } else if (srcTy->isArrayTy() && destTy->isArrayTy()) {
+                auto* srcArrTy = llvm::cast<llvm::ArrayType>(srcTy);
+                auto* destArrTy = llvm::cast<llvm::ArrayType>(destTy);
+                if (srcArrTy->getElementType() != destArrTy->getElementType()) {
+                    cg_error(pos, "array element type mismatch in assignment", "QC-T032");
+                    return nullptr;
+                }
+                uint64_t srcLen = srcArrTy->getNumElements();
+                uint64_t destLen = destArrTy->getNumElements();
+                if (srcLen > destLen) {
+                    cg_error(pos, "source array is larger than destination array", "QC-S148");
+                    return nullptr;
+                }
+                if (!rhs->getType()->isPointerTy()) {
+                    auto* tmp = createEntryAlloca("src_array_tmp", srcArrTy);
+                    builder->CreateStore(rhs, tmp);
+                    rhs = tmp;
+                }
+                llvm::AllocaInst* newArr = createEntryAlloca("array_copy", destArrTy);
+                uint64_t bytes = srcLen * srcArrTy->getElementType()->getPrimitiveSizeInBits() / 8;
+                builder->CreateMemCpy(newArr, llvm::MaybeAlign(), rhs, llvm::MaybeAlign(), bytes);
+                if (destLen > srcLen) {
+                    llvm::Value* zeroStart = builder->CreateGEP(destArrTy, newArr, {builder->getInt32(0), builder->getInt32(srcLen)});
+                    uint64_t zeroBytes = (destLen - srcLen) * srcArrTy->getElementType()->getPrimitiveSizeInBits() / 8;
+                    builder->CreateMemSetInline(zeroStart, llvm::MaybeAlign(), builder->getInt8(0), builder->getInt64(zeroBytes));
+                }
+                rhs = newArr;
+            } else if (srcTy->isDoubleTy() && destTy->isFloatTy()) {
+                cg_error(pos, "cannot assign double to float (loses percision)", "QC-S149");
+                return nullptr;
+            } else if (srcTy->isIntegerTy() && destTy->isIntegerTy()) {
+                unsigned srcBits = srcTy->getIntegerBitWidth();
+                unsigned destBits = destTy->getIntegerBitWidth();
+                if (srcBits > destBits) {
+                    warn("truncation", pos, "implicit truncation in assignment", "QC-W011");
+                    rhs = builder->CreateTrunc(rhs, destTy, "trunc");
+                } else if (srcBits < destBits) {
+                    warn("implicit-extend", pos, "implicit extension in assignment", "QC-W012");
+                    rhs = builder->CreateSExt(rhs, destTy, "sext");
+                }
+            } else if (srcTy->isIntegerTy() && destTy->isFloatingPointTy()) {
+                warn("implicit-int-float", pos, "implicit cast between integer and decimal type in assignment", "QC-W013");
+                rhs = builder->CreateSIToFP(rhs, destTy, "i2f");
+            } else {
+                cg_error(pos, "type mismatch in assignment in compiled mode", "QC-T033");
+                return nullptr;
+            }
+        }
+        if (rhsTypeString.ends_with("&") && destTy->isPointerTy()) { // i hate references. if only i didn't need operator[]
+            std::string stripped = rhsTypeString.substr(0, rhsTypeString.size() - 1);
+            if (!lhsTypeString.ends_with("&")) rhs = builder->CreateLoad(llvmTypeFor(stripped), rhs, "deref_ref");
+        }
+        return rhs;
+    }
+    // i'm not sure if it's decaying or undecaying the array.
+    llvm::Value* decayArrayToClass(llvm::Value* array, std::string mangledName, llvm::Value* len, llvm::Value* out = nullptr) {
+        array = decayArrayToPointer(array);
+        if (array == nullptr) { return nullptr; }
+        bool no_out = out == nullptr;
+        if (!out) { 
+            out = createEntryAlloca("type_decay", llvmTypeFor(mangledName)); }
+        llvm::Function* opMethod = findMethodOverload(mangledName, "operator[]=", {array, len});
+        if (opMethod) {
+            emitVirtualOrDirectCall(mangledName, "operator[]=", out, {array, len});
 
+        } else {
+            return nullptr;
+        }
+        auto vtableIt = vtables.find(mangledName);
+        if (vtableIt != vtables.end()) {
+            llvm::Value* vptrField = builder->CreateStructGEP(llvmTypeFor(mangledName), out, 0, "vptr_field");
+            builder->CreateStore(vtableIt->second, vptrField);
+        }
+        return no_out ? builder->CreateLoad(llvmTypeFor(mangledName), out) : out;
+    }
     std::unordered_map<std::string, llvm::DIType*> debug_types;
     llvm::DIType* getDebugType(std::string type) {
         if (!config.debug_symbols || !diBuilder) return nullptr;
@@ -2869,7 +2984,7 @@ class LLVMCompiler {
                     reconciled.push_back(actual);
                 }
             } else if (llvm::StructType* st = llvm::dyn_cast<llvm::StructType>(expected); st && actual->getType()->isArrayTy()) {
-                if (!st->isOpaque()) {
+                if (!st->isOpaque() && !st->isLiteral()) {
                     std::string mangledClassName = st->getName().str();
                     llvm::Function* opMethod = findMethodOverloadFromTypes(
                         mangledClassName, "operator[]=", {actual->getType()->getArrayElementType(), builder->getInt32Ty()});
@@ -2889,7 +3004,7 @@ class LLVMCompiler {
             } else if (expected->isPointerTy() && actual->getType()->isArrayTy()) {
                 reconciled.push_back(decayArrayToPointer(actual));
             } else {
-                reconciled.push_back(builder->CreateBitCast(actual, expected));
+                reconciled.push_back(castValue(actual, expected));
             }
         }
         return reconciled;
@@ -5691,9 +5806,9 @@ class LLVMCompiler {
     [[gnu::noinline]]
     llvm::Value* emitUnaryOp(UnaryOpNode* const* unary);
     [[gnu::noinline]]
-    llvm::Value* emitMapLit(MapLiteralNode* const* mapLit);
+    llvm::Value* emitMapLit(MapLiteralNode* const* mapLit, std::string type_override = "");
     [[gnu::noinline]]
-    llvm::Value* emitArrLit(ArrayLiteralNode* const* arrLit);
+    llvm::Value* emitArrLit(ArrayLiteralNode* const* arrLit, std::string type_override = "");
     [[gnu::noinline]]
     llvm::Value* emitCall(CallNode* const* callPtr);
     [[gnu::noinline]]

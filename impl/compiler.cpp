@@ -3333,7 +3333,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
     qcType = resolveTypeName(qcType, false);
     if (!llvmTypeFor(qcType)) return nullptr;
     llvm::DILocalVariable* debugVar = config.debug_symbols && currentSubprogram
-                                          ? diBuilder->createAutoVariable(currentSubprogram, fullName, getDebugFile(get_pos(*va).file_id),
+                                          ? diBuilder->createAutoVariable(currentSubprogram, name, getDebugFile(get_pos(*va).file_id),
                                                                           getLineNoFromPos(get_pos(*va)), getDebugType(qcType))
                                           : nullptr;
     auto location = config.debug_symbols && currentSubprogram ? llvm::DILocation::get(context, getLineNoFromPos(get_pos(*va)), 0, currentSubprogram)
@@ -3559,23 +3559,15 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         } else if (auto arrLit = std::get_if<ArrayLiteralNode*>(&(*va)->value_node)) {
             llvm::Value* rhsVal = emitExpr(*arrLit);
             llvm::Value* len = builder->getInt32((*arrLit)->elements.size());
-            rhsVal = decayArrayToPointer(rhsVal);
-            if (rhsVal == nullptr) { return nullptr; }
             std::string mangledName = buildMangledName(qcType, genericParams);
-            llvm::Function* opMethod = findMethodOverload(mangledName, "operator[]=", {rhsVal, len});
-            if (opMethod) {
-                emitVirtualOrDirectCall(mangledName, "operator[]=", instance, {rhsVal, len});
+            decayArrayToClass(rhsVal, mangledName, len, instance);
+            if (instance) {
                 locals[fullName] = instance;
                 varTypes[fullName] = mangledName;
                 volatileVars[fullName] = isVolatile;
             } else {
                 cg_error((*va)->var_name_tok.pos, "no valid operator[]= method found on class " + qcType, "QC-S140");
                 return nullptr;
-            }
-            auto vtableIt = vtables.find(mangledName);
-            if (vtableIt != vtables.end()) {
-                llvm::Value* vptrField = builder->CreateStructGEP(classTy, instance, 0, "vptr_field");
-                builder->CreateStore(vtableIt->second, vptrField);
             }
             return nullptr;
         } else {
@@ -3636,122 +3628,35 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             volatileVars[fullName] = isVolatile;
             return nullptr;
         }
+        llvm::Value* rhs = nullptr;
         if (auto arrLit = std::get_if<ArrayLiteralNode*>(&(*va)->value_node)) {
-            llvm::StructType* structTy = genericiseOrFindStruct(buildMangledName(qcType, genericParams));
-            if (!(*arrLit)->type.empty()) {
-                if (buildMangledName(qcType, genericParams) != fixMangling(resolveTypeName((*arrLit)->type, false))) {
-                    cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*arrLit),
-                            "got type " + fixMangling(resolveTypeName((*arrLit)->type, false)) + ", expected " +
-                                buildMangledName(qcType, genericParams),
-                            true);
-                    return nullptr;
-                }
-            }
-            llvm::Value* structVal = llvm::ConstantAggregateZero::get(structTy);
-            auto& structInfo = userTypeIt->second;
-            for (size_t i = 0; i < (*arrLit)->elements.size(); i++) {
-                std::string fieldType = structInfo.fields[i].type;
-                auto fieldTypeIt = userTypes.find(fieldType);
-                llvm::Value* val;
-                if (fieldTypeIt != userTypes.end() && fieldTypeIt->second.kind == UserTypeKind::Struct) {
-                    if (auto nestedArrLit = std::get_if<ArrayLiteralNode*>(&(*arrLit)->elements[i])) {
-                        llvm::StructType* nestedStructTy = genericiseOrFindStruct(fieldType);
-                        llvm::Value* nestedStruct = llvm::ConstantAggregateZero::get(nestedStructTy);
-                        for (size_t j = 0; j < (*nestedArrLit)->elements.size(); j++) {
-                            llvm::Value* fieldVal = emitExpr((*nestedArrLit)->elements[j]);
-                            if (!fieldVal) return nullptr;
-                            nestedStruct = builder->CreateInsertValue(nestedStruct, fieldVal, j);
-                        }
-                        val = nestedStruct;
-                    } else {
-                        val = emitExpr((*arrLit)->elements[i]);
-                        if (!val) return nullptr;
-                    }
-                } else {
-                    val = emitExpr((*arrLit)->elements[i]);
-                    if (!val) return nullptr;
-                }
-                structVal = builder->CreateInsertValue(structVal, val, i);
-            }
-            llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
-            if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
-            builder->CreateStore(structVal, structAlloc, isVolatile);
-            locals[fullName] = structAlloc;
-            varTypes[fullName] = buildMangledName(qcType, genericParams);
-            volatileVars[fullName] = isVolatile;
-            return nullptr;
+            rhs = emitArrLit(arrLit, resolveTypeName(buildMangledName(qcType, genericParams), false));
         } else if (auto mapLit = std::get_if<MapLiteralNode*>(&(*va)->value_node)) {
-            llvm::StructType* structTy = genericiseOrFindStruct(buildMangledName(qcType, genericParams));
-            if (!(*mapLit)->struct_type.empty()) {
-                if (buildMangledName(qcType, genericParams) != fixMangling(resolveTypeName((*mapLit)->struct_type, false))) {
-                    cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*mapLit),
-                            "got type " + fixMangling(resolveTypeName((*mapLit)->struct_type, false)) + ", expected " +
-                                buildMangledName(qcType, genericParams),
-                            true);
-                    return nullptr;
-                }
-            }
-            llvm::Value* structVal = llvm::ConstantAggregateZero::get(structTy);
-            auto& structInfo = userTypeIt->second;
-            for (auto& [keyNode, valueNode] : (*mapLit)->pairs) {
-                std::string fieldName;
-                if (auto key = std::get_if<VarAccessNode*>(&keyNode)) {
-                    fieldName = (*key)->var_name_tok.value;
-                } else if (auto key = std::get_if<StringNode>(&keyNode)) {
-                    fieldName = key->tok.value;
-                } else {
-                    cg_error((*mapLit)->pos, "struct field name must be an identifier", "QC-S141");
-                    return nullptr;
-                }
-                int fieldIndex = -1;
-                for (size_t i = 0; i < structInfo.fields.size(); i++) {
-                    if (structInfo.fields[i].name == fieldName) {
-                        fieldIndex = i;
-                        break;
-                    }
-                }
-                if (fieldIndex == -1) {
-                    cg_error((*mapLit)->pos, "unknown field '" + fieldName + "' in struct " + qcType, "QC-S142");
-                    return nullptr;
-                }
-                llvm::Value* fieldValue = emitExpr(valueNode);
-                if (!fieldValue) return nullptr;
-                structVal = builder->CreateInsertValue(structVal, fieldValue, fieldIndex);
-            }
-            llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
-            if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
-            builder->CreateStore(structVal, structAlloc, isVolatile);
-            locals[fullName] = structAlloc;
-            varTypes[fullName] = buildMangledName(qcType, genericParams);
-            volatileVars[fullName] = isVolatile;
-            return nullptr;
+            rhs = emitMapLit(mapLit, resolveTypeName(buildMangledName(qcType, genericParams), false));
         } else {
-            llvm::StructType* structTy = genericiseOrFindStruct(buildMangledName(qcType, genericParams));
-            llvm::Value* rhs = emitExpr((*va)->value_node);
-            if (rhs) {
-                if (rhs->getType()->isPointerTy()) {
-                    if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(structTy)) {
-                        rhs = builder->CreateLoad(structTy, rhs, "strip_ref");
-                    }
-                }
-                if (rhs->getType() != structTy) {
-                    cg_error((*va)->var_name_tok.pos,
-                             "cannot initialize " + buildMangledName(qcType, genericParams) + " from struct of different type.", "QC-T028");
-                    return nullptr;
+            rhs = emitExpr((*va)->value_node);
+        }
+        if (!rhs) return nullptr;
+        if (rhs) {
+            if (rhs->getType()->isPointerTy()) {
+                if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(structTy)) {
+                    rhs = builder->CreateLoad(structTy, rhs, "strip_ref");
                 }
             }
-            llvm::Value* structAlloc = getVarAddress(name);
-            if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
-            if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
-
-            builder->CreateStore(rhs, structAlloc, isVolatile);
-            locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
-            varTypes[fullName] = buildMangledName(qcType, genericParams);
-            volatileVars[fullName] = isVolatile;
-            return nullptr;
+            if (rhs->getType() != structTy) {
+                cg_error((*va)->var_name_tok.pos, "cannot initialize " + buildMangledName(qcType, genericParams) + " from struct of different type.",
+                         "QC-T028");
+                return nullptr;
+            }
         }
+        llvm::Value* structAlloc = getVarAddress(name);
+        if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
+        if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
+
+        builder->CreateStore(rhs, structAlloc, isVolatile);
+        locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
+        varTypes[fullName] = buildMangledName(qcType, genericParams);
+        volatileVars[fullName] = isVolatile;
         return nullptr;
     }
     if (genericUnions.count(qcType) && genericUnions[qcType]) {
@@ -3805,152 +3710,36 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             volatileVars[fullName] = isVolatile;
             return nullptr;
         }
+        llvm::Value* rhs = nullptr;
         if (auto arrLit = std::get_if<ArrayLiteralNode*>(&(*va)->value_node)) {
-            llvm::StructType* structTy = genericiseOrFindStruct(qcType);
-            if (!(*arrLit)->type.empty()) {
-                if (qcType != fixMangling(resolveTypeName((*arrLit)->type, true))) {
-                    cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*arrLit), "got type " + fixMangling(resolveTypeName((*arrLit)->type, true)) + ", expected " + qcType, true);
-                    return nullptr;
-                }
-            }
-            llvm::Value* structVal = llvm::Constant::getNullValue(structTy);
-            auto& structInfo = userTypeIt->second;
-            for (size_t i = 0; i < (*arrLit)->elements.size(); i++) {
-                std::string fieldType = structInfo.fields[i].type;
-                auto fieldTypeIt = userTypes.find(fieldType);
-                llvm::Value* val;
-
-                if (fieldTypeIt != userTypes.end() && fieldTypeIt->second.kind == UserTypeKind::Struct) {
-                    if (auto nestedArrLit = std::get_if<ArrayLiteralNode*>(&(*arrLit)->elements[i])) {
-                        llvm::StructType* nestedStructTy = genericiseOrFindStruct(fieldType);
-                        llvm::Value* nestedStruct = llvm::Constant::getNullValue(nestedStructTy);
-                        for (size_t j = 0; j < (*nestedArrLit)->elements.size(); j++) {
-                            llvm::Value* fieldVal = emitExpr((*nestedArrLit)->elements[j]);
-                            if (!fieldVal) return nullptr;
-                            nestedStruct = builder->CreateInsertValue(nestedStruct, fieldVal, j);
-                        }
-
-                        val = nestedStruct;
-                    } else {
-                        val = emitExpr((*arrLit)->elements[i]);
-                        if (!val) return nullptr;
-                    }
-                } else {
-                    val = emitExpr((*arrLit)->elements[i]);
-                    if (!val) return nullptr;
-                }
-                structVal = builder->CreateInsertValue(structVal, val, i);
-            }
-            llvm::Value* structAlloc = getVarAddress(name);
-            if (auto* gv = llvm::dyn_cast_or_null<llvm::GlobalVariable>(structAlloc)) {
-                auto* constant = llvm::dyn_cast<llvm::Constant>(structVal);
-                if (!constant) {
-                    cg_error((*va)->var_name_tok.pos, "global struct initializer must be constant", "QC-S144");
-                    return nullptr;
-                }
-                gv->setInitializer(constant);
-                return nullptr;
-            } else {
-                if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
-
-                builder->CreateStore(structVal, structAlloc, isVolatile);
-            }
-            if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
-            locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
-            varTypes[fullName] = qcType;
-            volatileVars[fullName] = isVolatile;
-            return nullptr;
+            rhs = emitArrLit(arrLit, qcType);
         } else if (auto mapLit = std::get_if<MapLiteralNode*>(&(*va)->value_node)) {
-            llvm::StructType* structTy = genericiseOrFindStruct(qcType);
-            if (!(*mapLit)->struct_type.empty()) {
-                if (qcType != fixMangling(resolveTypeName((*mapLit)->struct_type, true))) {
-                    cg_error(get_pos(*va), "cannot initialize struct with literal of different struct type", "QC-T029");
-                    cg_note(get_pos(*mapLit), "got type " + fixMangling(resolveTypeName((*mapLit)->struct_type, true)) + ", expected " + qcType,
-                            true);
-                    return nullptr;
-                }
-            }
-            llvm::Value* structVal = llvm::ConstantAggregateZero::get(structTy);
-
-            auto& structInfo = userTypeIt->second;
-
-            for (auto& [keyNode, valueNode] : (*mapLit)->pairs) {
-                std::string fieldName;
-
-                if (auto key = std::get_if<VarAccessNode*>(&keyNode)) {
-                    fieldName = (*key)->var_name_tok.value;
-                } else if (auto key = std::get_if<StringNode>(&keyNode)) {
-                    fieldName = key->tok.value;
-                } else {
-                    cg_error((*mapLit)->pos, "struct field name must be an identifier", "QC-S141");
-                    return nullptr;
-                }
-
-                int fieldIndex = -1;
-
-                for (size_t i = 0; i < structInfo.fields.size(); i++) {
-                    if (structInfo.fields[i].name == fieldName) {
-                        fieldIndex = i;
-                        break;
-                    }
-                }
-
-                if (fieldIndex == -1) {
-                    cg_error((*mapLit)->pos, "unknown field '" + fieldName + "' in struct " + qcType, "QC-S142");
-                    return nullptr;
-                }
-
-                llvm::Value* fieldValue = emitExpr(valueNode);
-
-                if (!fieldValue) return nullptr;
-
-                structVal = builder->CreateInsertValue(structVal, fieldValue, fieldIndex);
-            }
-            llvm::Value* structAlloc = getVarAddress(name);
-
-            if (auto* gv = llvm::dyn_cast_or_null<llvm::GlobalVariable>(structAlloc)) {
-                auto* constant = llvm::dyn_cast<llvm::Constant>(structVal);
-                if (!constant) {
-                    cg_error((*va)->var_name_tok.pos, "global struct initializer must be constant", "QC-S144");
-                    return nullptr;
-                }
-                gv->setInitializer(constant);
-                return nullptr;
-            } else {
-                if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
-
-                builder->CreateStore(structVal, structAlloc, isVolatile);
-            }
-            if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
-            locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
-            varTypes[fullName] = qcType;
-            volatileVars[fullName] = isVolatile;
-            return nullptr;
+            rhs = emitMapLit(mapLit, qcType);
         } else {
-            llvm::StructType* structTy = genericiseOrFindStruct(qcType);
-            llvm::Value* rhs = emitExpr((*va)->value_node);
-            llvm::Value* structAlloc = getVarAddress(name);
-            if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
-            if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
-
-            if (rhs) {
-                if (rhs->getType()->isPointerTy()) {
-                    if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(structTy)) {
-                        rhs = builder->CreateLoad(structTy, rhs, "strip_ref");
-                    }
-                }
-                if (rhs->getType() != structTy) {
-                    cg_error((*va)->var_name_tok.pos, "cannot initialize " + qcType + " from struct of different type.", "QC-T028");
-                    return nullptr;
-                }
-                builder->CreateStore(rhs, structAlloc, isVolatile);
-            }
-            locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
-            varTypes[fullName] = qcType;
-            volatileVars[fullName] = isVolatile;
-            return nullptr;
+            rhs = emitExpr((*va)->value_node);
         }
+        if (!rhs) return nullptr;
+        llvm::StructType* structTy = genericiseOrFindStruct(qcType);
+        llvm::Value* structAlloc = getVarAddress(name);
+        if (!structAlloc) structAlloc = createEntryAlloca(name, structTy);
+        if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
+
+        if (rhs) {
+            if (rhs->getType()->isPointerTy()) {
+                if (llvmTypeFor(getExpressionType((*va)->value_node)) == llvm::dyn_cast_or_null<llvm::Type>(structTy)) {
+                    rhs = builder->CreateLoad(structTy, rhs, "strip_ref");
+                }
+            }
+            if (rhs->getType() != structTy) {
+                cg_error((*va)->var_name_tok.pos, "cannot initialize " + qcType + " from struct of different type.", "QC-T028");
+                return nullptr;
+            }
+            builder->CreateStore(rhs, structAlloc, isVolatile);
+        }
+        locals[fullName] = llvm::cast<llvm::AllocaInst>(structAlloc);
+        varTypes[fullName] = qcType;
+        volatileVars[fullName] = isVolatile;
+        return nullptr;
     }
     if (userTypeIt != userTypes.end() && userTypeIt->second.kind == UserTypeKind::Class) {
         llvm::StructType* classTy = genericiseOrFindClass(qcType);
@@ -4045,23 +3834,14 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         } else if (auto arrLit = std::get_if<ArrayLiteralNode*>(&(*va)->value_node)) {
             llvm::Value* rhsVal = emitExpr(*arrLit);
             llvm::Value* len = builder->getInt32((*arrLit)->elements.size());
-            rhsVal = decayArrayToPointer(rhsVal);
-            if (rhsVal == nullptr) { return nullptr; }
-            llvm::Function* opMethod = findMethodOverload(qcType, "operator[]=", {rhsVal, len});
-            if (opMethod) {
-                emitMethodCall(opMethod, instance, {rhsVal, len}, "operator[]=");
+            decayArrayToClass(rhsVal, qcType, len, instance);
+            if (instance) {
                 locals[fullName] = instance;
                 varTypes[fullName] = qcType;
                 volatileVars[fullName] = isVolatile;
             } else {
                 cg_error((*va)->var_name_tok.pos, "no valid operator[]= method found on class " + qcType, "QC-S140");
-                addMethodNotes(qcType, "operator[]=", {len}, (*va)->var_name_tok.pos);
                 return nullptr;
-            }
-            auto vtableIt = vtables.find(qcType);
-            if (vtableIt != vtables.end()) {
-                llvm::Value* vptrField = builder->CreateStructGEP(classTy, instance, 0, "vptr_field");
-                builder->CreateStore(vtableIt->second, vptrField);
             }
             return nullptr;
         } else {
@@ -4090,6 +3870,10 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         if (!unionAlloc) unionAlloc = createEntryAlloca(name, unionTy);
         if (config.debug_symbols) insertDebugVar(unionAlloc, debugVar, location);
         llvm::Value* rhs = emitExpr((*va)->value_node);
+        if (std::string ty = resolveTypeName(getExpressionType((*va)->value_node, false), false);
+            rhs->getType()->isPointerTy() && ty.ends_with("&")) {
+            rhs = builder->CreateLoad(llvmTypeFor(ty), rhs);
+        }
         if (rhs) {
             auto storeUnion = [&](llvm::Value* value) {
                 if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(unionAlloc)) {
@@ -4310,7 +4094,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             if (destLen > srcLen) {
                 llvm::Value* zeroStart = builder->CreateGEP(destArrTy, newArr, {builder->getInt32(0), builder->getInt32(srcLen)});
                 uint64_t zeroBytes = (destLen - srcLen) * srcArrTy->getElementType()->getPrimitiveSizeInBits() / 8;
-                if (config.use_runtime) builder->CreateMemSet(zeroStart, builder->getInt8(0), zeroBytes, llvm::MaybeAlign());
+                builder->CreateMemSetInline(zeroStart, llvm::MaybeAlign(), builder->getInt8(0), builder->getInt64(zeroBytes));
             }
             rhs = newArr;
         } else if (srcTy->isDoubleTy() && destTy->isFloatTy()) {
@@ -4334,9 +4118,14 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             return nullptr;
         }
     }
+    std::string rhsTy = getExpressionType((*va)->value_node, false);
+    if (rhsTy.ends_with("&") && rhs->getType()->isPointerTy()) { // i hate references. if only i didn't need operator[]
+        std::string stripped = rhsTy.substr(0, rhsTy.size() - 1);
+        if (!qcType.ends_with("&")) rhs = builder->CreateLoad(llvmTypeFor(stripped), rhs, "deref_ref");
+    }
     if (llvm::isa<llvm::ConstantAggregateZero>(rhs) && srcTy->isArrayTy()) {
         uint64_t bytes = module->getDataLayout().getTypeAllocSize(srcTy);
-        if (config.use_runtime) builder->CreateMemSet(alloc, builder->getInt8(0), bytes, llvm::MaybeAlign(), isVolatile);
+        builder->CreateMemSetInline(alloc, llvm::MaybeAlign(), builder->getInt8(0), builder->getInt64(bytes), isVolatile);
     } else {
         builder->CreateStore(rhs, alloc, isVolatile);
     }
@@ -4600,7 +4389,7 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                                 if (destLen > srcLen) {
                                     llvm::Value* zeroStart = builder->CreateGEP(destArrTy, newArr, {builder->getInt32(0), builder->getInt32(srcLen)});
                                     uint64_t zeroBytes = (destLen - srcLen) * srcArrTy->getElementType()->getPrimitiveSizeInBits() / 8;
-                                    if (config.use_runtime) builder->CreateMemSet(zeroStart, builder->getInt8(0), zeroBytes, llvm::MaybeAlign());
+                                    builder->CreateMemSetInline(zeroStart, llvm::MaybeAlign(), builder->getInt8(0), builder->getInt64(zeroBytes));
                                 }
                                 rhs = newArr;
                             } else if (srcTy->isDoubleTy() && destTy->isFloatTy()) {
@@ -5419,20 +5208,20 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
     }
     return nullptr;
 }
-llvm::Value* LLVMCompiler::emitMapLit(MapLiteralNode* const* mapLit) {
+llvm::Value* LLVMCompiler::emitMapLit(MapLiteralNode* const* mapLit, std::string type_override) {
     setDebugLocation((*mapLit)->getPos());
     if ((*mapLit)->struct_type.empty()) {
         cg_error(get_pos(*mapLit), "struct literals must have a struct type", "QC-T042");
         return nullptr;
     }
-    llvm::StructType* structTy = genericiseOrFindStruct(resolveTypeName((*mapLit)->struct_type, false));
+    llvm::StructType* structTy = genericiseOrFindStruct(resolveTypeName(type_override.empty() ? (*mapLit)->struct_type : type_override, false));
     if (!structTy) {
-        cg_error(get_pos(*mapLit), "unknown struct type '" + (*mapLit)->struct_type + "'", "QC-T043");
+        cg_error(get_pos(*mapLit), "unknown struct type '" + (type_override.empty() ? (*mapLit)->struct_type : type_override) + "'", "QC-T043");
         std::vector<std::pair<int, std::string>> matches;
         if ((*mapLit)->struct_type.size() >= 3) {
             for (auto& [vname, strct] : userTypes) {
                 if (strct.kind != UserTypeKind::Struct) continue;
-                int distance = levenshteinDistance((*mapLit)->struct_type, vname);
+                int distance = levenshteinDistance(type_override.empty() ? (*mapLit)->struct_type : type_override, vname);
                 if (distance <= 2) { matches.push_back({distance, vname}); }
             }
         }
@@ -5442,7 +5231,10 @@ llvm::Value* LLVMCompiler::emitMapLit(MapLiteralNode* const* mapLit) {
             size_t count = std::min<size_t>(3, matches.size());
             for (size_t i = 0; i < count; i++) {
                 if (i != 0) note += ", ";
-                note += "`" + buildMangledName(baseTypeName(matches[i].second), genericParamsFromName((*mapLit)->struct_type), true) + "`";
+                note += "`" +
+                        buildMangledName(baseTypeName(matches[i].second),
+                                         genericParamsFromName(type_override.empty() ? (*mapLit)->struct_type : type_override), true) +
+                        "`";
             }
             note += "?";
             cg_note(get_pos(*mapLit), note);
@@ -5450,7 +5242,7 @@ llvm::Value* LLVMCompiler::emitMapLit(MapLiteralNode* const* mapLit) {
         return nullptr;
     }
     llvm::Value* structVal = llvm::ConstantAggregateZero::get(structTy);
-    auto structInfo = userTypes.find(resolveTypeName((*mapLit)->struct_type))->second;
+    auto structInfo = userTypes.find(resolveTypeName(type_override.empty() ? (*mapLit)->struct_type : type_override))->second;
     for (auto& [keyNode, valueNode] : (*mapLit)->pairs) {
         std::string fieldName;
         if (auto key = std::get_if<VarAccessNode*>(&keyNode)) {
@@ -5462,33 +5254,51 @@ llvm::Value* LLVMCompiler::emitMapLit(MapLiteralNode* const* mapLit) {
             return nullptr;
         }
         int fieldIndex = -1;
+        std::string fieldType = "";
+        std::vector<std::string> newNsPath;
+        if (!structInfo.namespace_path.empty()) {
+            size_t start = 0;
+            size_t pos;
+            while ((pos = structInfo.namespace_path.find("::", start)) != std::string::npos) {
+                newNsPath.push_back(structInfo.namespace_path.substr(start, pos - start));
+                start = pos + 2;
+            }
+            newNsPath.push_back(structInfo.namespace_path.substr(start));
+        }
+        std::vector<std::string> oldNamespacePath = namespaceStack;
+        namespaceStack = newNsPath;
         for (size_t i = 0; i < structInfo.fields.size(); i++) {
             if (structInfo.fields[i].name == fieldName) {
                 fieldIndex = i;
+                fieldType = resolveTypeName(structInfo.fields[i].type, false);
                 break;
             }
         }
+        namespaceStack = oldNamespacePath;
         if (fieldIndex == -1) {
             cg_error((*mapLit)->pos, "unknown field '" + fieldName + "' in struct " + (*mapLit)->struct_type, "QC-S142");
             return nullptr;
         }
         llvm::Value* fieldValue = emitExpr(valueNode);
         if (!fieldValue) return nullptr;
+        fieldValue = castValue(fieldValue, llvm::cast<llvm::StructType>(structVal->getType())->getElementType(fieldIndex), fieldType,
+                               resolveTypeName(getExpressionType(valueNode, false), false), (*mapLit)->pos);
         structVal = builder->CreateInsertValue(structVal, fieldValue, fieldIndex);
     }
     return structVal;
 }
-llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit) {
+llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit, std::string type_override) {
     setDebugLocation((*arrLit)->getPos());
-    if (!(*arrLit)->type.empty() && std::holds_alternative<std::monostate>((*arrLit)->length)) {
-        llvm::StructType* structTy = genericiseOrFindStruct(resolveTypeName((*arrLit)->type, false));
+    if ((!(*arrLit)->type.empty() && std::holds_alternative<std::monostate>((*arrLit)->length)) || !type_override.empty()) {
+        if (!(*arrLit)->type.empty()) type_override = (*arrLit)->type;
+        llvm::StructType* structTy = genericiseOrFindStruct(resolveTypeName(type_override.empty() ? (*arrLit)->type : type_override, false));
         if (!structTy) {
-            cg_error(get_pos(*arrLit), "unknown struct type '" + (*arrLit)->type + "'", "QC-T043");
+            cg_error(get_pos(*arrLit), "unknown struct type '" + (type_override.empty() ? (*arrLit)->type : type_override) + "'", "QC-T043");
             std::vector<std::pair<int, std::string>> matches;
             if ((*arrLit)->type.size() >= 3) {
                 for (auto& [vname, strct] : userTypes) {
                     if (strct.kind != UserTypeKind::Struct) continue;
-                    int distance = levenshteinDistance((*arrLit)->type, vname);
+                    int distance = levenshteinDistance(type_override.empty() ? (*arrLit)->type : type_override, vname);
                     if (distance <= 2) { matches.push_back({distance, vname}); }
                 }
             }
@@ -5498,7 +5308,10 @@ llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit) {
                 size_t count = std::min<size_t>(3, matches.size());
                 for (size_t i = 0; i < count; i++) {
                     if (i != 0) note += ", ";
-                    note += "`" + buildMangledName(baseTypeName(matches[i].second), genericParamsFromName((*arrLit)->type), true) + "`";
+                    note += "`" +
+                            buildMangledName(baseTypeName(matches[i].second),
+                                             genericParamsFromName(type_override.empty() ? (*arrLit)->type : type_override), true) +
+                            "`";
                 }
                 note += "?";
                 cg_note(get_pos(*arrLit), note);
@@ -5506,21 +5319,27 @@ llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit) {
             return nullptr;
         }
         llvm::Value* structVal = llvm::ConstantAggregateZero::get(structTy);
-        auto structInfo = userTypes.find(resolveTypeName((*arrLit)->type))->second;
+        auto structInfo = userTypes.find(resolveTypeName(type_override.empty() ? (*arrLit)->type : type_override))->second;
+        std::vector<std::string> newNsPath;
+        if (!structInfo.namespace_path.empty()) {
+            size_t start = 0;
+            size_t pos;
+            while ((pos = structInfo.namespace_path.find("::", start)) != std::string::npos) {
+                newNsPath.push_back(structInfo.namespace_path.substr(start, pos - start));
+                start = pos + 2;
+            }
+            newNsPath.push_back(structInfo.namespace_path.substr(start));
+        }
+        std::vector<std::string> oldNamespacePath = namespaceStack;
         for (size_t i = 0; i < (*arrLit)->elements.size(); i++) {
-            std::string fieldType = structInfo.fields[i].type;
-            auto fieldTypeIt = userTypes.find(fieldType);
+            namespaceStack = newNsPath;
+            std::string fieldType = resolveTypeName(structInfo.fields[i].type, false);
+            namespaceStack = oldNamespacePath;
+            auto fieldTypeIt = userTypes.find(baseTypeName(fieldType));
             llvm::Value* val;
             if (fieldTypeIt != userTypes.end() && fieldTypeIt->second.kind == UserTypeKind::Struct) {
                 if (auto nestedArrLit = std::get_if<ArrayLiteralNode*>(&(*arrLit)->elements[i])) {
-                    llvm::StructType* nestedStructTy = genericiseOrFindStruct(fieldType);
-                    llvm::Value* nestedStruct = llvm::ConstantAggregateZero::get(nestedStructTy);
-                    for (size_t j = 0; j < (*nestedArrLit)->elements.size(); j++) {
-                        llvm::Value* fieldVal = emitExpr((*nestedArrLit)->elements[j]);
-                        if (!fieldVal) return nullptr;
-                        nestedStruct = builder->CreateInsertValue(nestedStruct, fieldVal, j);
-                    }
-                    val = nestedStruct;
+                    val = emitArrLit(nestedArrLit, fieldType);
                 } else {
                     val = emitExpr((*arrLit)->elements[i]);
                     if (!val) return nullptr;
@@ -5529,6 +5348,8 @@ llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit) {
                 val = emitExpr((*arrLit)->elements[i]);
                 if (!val) return nullptr;
             }
+            val = castValue(val, llvm::cast<llvm::StructType>(structVal->getType())->getElementType(i), fieldType,
+                            resolveTypeName(getExpressionType((*arrLit)->elements[i], false), false), (*arrLit)->pos);
             structVal = builder->CreateInsertValue(structVal, val, i);
         }
         return structVal;
@@ -5607,9 +5428,7 @@ llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit) {
         llvm::Value* elemPtr = builder->CreateInBoundsGEP(arrTy, alloc, indices, "arr_elem_ptr");
         builder->CreateStore(allElements[i], elemPtr);
     }
-
-    std::vector<llvm::Value*> indices = {builder->getInt32(0), builder->getInt32(0)};
-    return builder->CreateInBoundsGEP(arrTy, alloc, indices, "arr_ptr");
+    return builder->CreateLoad(arrTy, alloc, "arr_lit_val");
 }
 llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
     setDebugLocation((*callPtr)->getPos());
@@ -8590,6 +8409,8 @@ llvm::Value* LLVMCompiler::emitFieldAssign(FieldAssignNode* const* fieldAssign) 
             }
             llvm::StructType* classTy = genericiseOrFindClass(currentClassName);
             llvm::Value* fieldPtr = builder->CreateStructGEP(classTy, currentThis, fieldIdx);
+            llvm::Type* destTy = classTy->getElementType(fieldIdx);
+            valueVal = castValue(valueVal, destTy);
             builder->CreateStore(valueVal, fieldPtr);
             return builder->getInt32(0);
         }
@@ -8601,6 +8422,7 @@ llvm::Value* LLVMCompiler::emitFieldAssign(FieldAssignNode* const* fieldAssign) 
     if (auto propPtr = std::get_if<PropertyAccessNode*>(&tempVariant)) { (*fieldAssign)->base = *(*propPtr)->base; }
     if (!fieldPtr) return nullptr;
     llvm::Type* destTy = llvmTypeFor(fieldTypeStr);
+    valueVal = castValue(valueVal, destTy);
     builder->CreateStore(valueVal, fieldPtr);
     return valueVal;
 }
@@ -9222,6 +9044,7 @@ llvm::AllocaInst* LLVMCompiler::createEntryAlloca(const std::string& name, llvm:
     }
     llvm::IRBuilder<> tmp(&currentFunction->getEntryBlock(), currentFunction->getEntryBlock().begin());
     llvm::AllocaInst* alloc = tmp.CreateAlloca(ty, nullptr, name);
+    builder->CreateMemSetInline(alloc, llvm::MaybeAlign(), builder->getInt8(0), builder->getInt64(module->getDataLayout().getTypeAllocSize(ty)));
     return alloc;
 }
 llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
@@ -10386,7 +10209,7 @@ void LLVMCompiler::emitArrDecl(ArrayDeclNode* arrDecl) {
             llvm::AllocaInst* alloc = createEntryAlloca(name, arrTy);
             const llvm::DataLayout& dl = module->getDataLayout();
             uint64_t sizeBytes = dl.getTypeAllocSize(arrTy).getFixedValue();
-            if (config.use_runtime) builder->CreateMemSet(alloc, builder->getInt8(0), builder->getInt64(sizeBytes), llvm::MaybeAlign(1), isVolatile);
+            builder->CreateMemSetInline(alloc, llvm::MaybeAlign(), builder->getInt8(0), builder->getInt64(sizeBytes), isVolatile);
             locals[name] = alloc;
             arrayTypeStrings[name] = elemType;
             arrayLengths[name] = arraySize;
