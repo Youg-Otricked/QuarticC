@@ -263,10 +263,6 @@ class LLVMCompiler {
         uint64_t column = 0;
         builder->SetCurrentDebugLocation(llvm::DILocation::get(context, line, column, currentSubprogram));
     }
-    uint64_t getLineNoFromPos(const Position& pos) {
-        auto opt = get_original_line_no(SourceManager::instance().get_file_name(pos.file_id), pos.file_id, pos.line);
-        return opt.has_value() ? opt.value() + 1 : 0;
-    }
     void createUserTypes();
     static bool isIndirectType(const std::string& t) { return !t.empty() && (t.back() == '*' || t.back() == '&'); }
     void generateStruct(const std::string& mapKey, UserTypeInfo& info);

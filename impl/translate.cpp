@@ -784,15 +784,10 @@ void Translator::onVar(CXCursor c) {
     CXType type = clang_getCursorType(c);
     CXString name = clang_getCursorSpelling(c);
     result_file += translateType(type) + " " + clang_getCString(name);
-    std::vector<CXCursor> children;
-    getChildren(c, &children);
-    std::vector<CXCursor> initValues;
-    for (CXCursor child : children) {
-        if (clang_getCursorKind(child) != CXCursor_TypeRef) { initValues.push_back(child); }
-    }
-    if (!initValues.empty()) {
+    CXCursor init = clang_Cursor_getVarDeclInitializer(c);
+    if (!clang_Cursor_isNull(init)) {
         result_file += " = ";
-        visit_expr(initValues.back());
+        visit_expr(init);
     }
     result_file += ";\n";
     clang_disposeString(name);

@@ -464,7 +464,10 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
         if (file_asts.count(path)) return;
         if (error) return;
         auto& deps = file_included_namespaces[path];
-        for (auto const& [dep_path, ns_list] : deps) { process_file(dep_path); }
+        for (auto const& [dep_path, ns_list] : deps) {
+            process_file(dep_path);
+            if (error) return;
+        }
         std::unordered_map<std::string, UserTypeInfo> visible_types;
         for (auto const& [dep_path, ns_list] : deps) {
             for (auto const& [type_name, info] : type_registry[dep_path])
@@ -496,6 +499,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::cout << "[DONE LEXING] " << path << '\n';
                 std::cout.flush();
             }
+            if (file_resp.error) { resp = file_resp; error = file_resp.error; return; }
             if (config.dump_tokens && file == path && file_resp.error != nullptr) {
                 std::cout << "\n##DUMP##" << '\n'
                           << "ERROR: " << file_resp.error->pos.line << " " << file_resp.error->pos.column << " " << file_resp.error->pos.length << " "
@@ -553,8 +557,8 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
         std::cout << '\n' << e.as_string() << '\n';
         return Mer{Aer{nullptr, nullptr}, Ler{std::vector<Token>(), nullptr}, ""};
     }
+    if (error) return Mer{Aer{nullptr, error}, resp, ""};
     Aer ast = file_asts[file];
-    if (error) return Mer{ast, resp, ""};
     if (config.print_tokens) {
         std::cout << "=== TOKENS ===" << '\n';
         for (const auto& tok : resp.Tkns) { std::cout << "Type: " << get_token_name(tok.type) << " | Value: '" << tok.value << "'" << '\n'; }

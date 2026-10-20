@@ -1,10 +1,10 @@
 #ifndef TOKEN_H
 #define TOKEN_H
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <cstdint>
-#include <optional>
 struct SourceFile {
     std::string filename;
     std::string content;
@@ -18,7 +18,7 @@ class Position {
     size_t column;
     size_t length = 1;
     Position();
-    bool is_valid() const; 
+    bool is_valid() const;
     std::string string(size_t context = 2) const;
     std::string arrow_string(size_t context = 2) const;
     Position(uint32_t, size_t, size_t, size_t);
@@ -36,6 +36,7 @@ class SourceManager {
     std::unordered_map<uint32_t, uint64_t> line_counts;
     std::unordered_map<std::string, uint32_t> path_to_id;
     std::unordered_map<uint32_t, std::string> id_rev_map;
+
   public:
     std::string get_file_name(uint32_t id) const;
     static SourceManager& instance();
@@ -49,6 +50,10 @@ inline std::unordered_map<std::string, uint64_t> file_og_line_counts;
 static inline std::optional<uint64_t> get_original_line_no(std::string file_name, uint32_t file_id, uint64_t line) {
     uint64_t res = line - (SourceManager::instance().get_file_line_count(file_id) - file_og_line_counts[file_name]);
     return res > line ? std::nullopt : std::make_optional(res);
+}
+static inline uint64_t getLineNoFromPos(const Position& pos) {
+    auto opt = get_original_line_no(SourceManager::instance().get_file_name(pos.file_id), pos.file_id, pos.line);
+    return opt.has_value() ? opt.value() + 1 : 0;
 }
 enum class TokenType {
     INT,
