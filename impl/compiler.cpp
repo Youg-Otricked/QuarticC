@@ -577,7 +577,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                                                       : llvm::Constant::getNullValue(fieldTy);
 
                         if (!initVal) { initVal = llvm::Constant::getNullValue(fieldTy); }
-                        globals[mangledName] = new llvm::GlobalVariable(*module, fieldTy, false, llvm::GlobalValue::ExternalLinkage, initVal,
+                        globals[mangledName] = new llvm::GlobalVariable(*module, fieldTy, false, llvm::GlobalValue::WeakODRLinkage, initVal,
                                                                         mangledName);
                         varTypes[mangledName] = resolvedType;
                         volatileVars[mangledName] = false;
@@ -676,7 +676,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
     }
     for (size_t methodIdx = 0; methodIdx < classInfo.classMethods.size(); methodIdx++) {
         auto& method = classInfo.classMethods[methodIdx];
-        if (method.is_static) continue;
+        if (method.is_static || method.is_header) continue;
         if (std::find(genericMethodIndices[baseTypeName(className)].begin(), genericMethodIndices[baseTypeName(className)].end(), methodIdx) !=
             genericMethodIndices[baseTypeName(className)].end()) {
             continue;
@@ -714,6 +714,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             std::string implName = "_impl_" + methodName;
             currentTarget = llvm::Function::Create(fn->getFunctionType(), llvm::Function::InternalLinkage, implName, module);
         }
+        fn->setLinkage(llvm::GlobalValue::WeakODRLinkage);
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", currentTarget);
         builder->SetInsertPoint(entry);
         auto oldThis = currentThis;
@@ -821,7 +822,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                 ModifierInfo& modInfo = modifiers[modTok.value];
                 bool isOutermost = (i == 0);
                 std::string layerName = isOutermost ? methodName : ("_mod_" + std::to_string(i) + "_" + methodName);
-                auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                auto linkage = isOutermost ? llvm::Function::WeakODRLinkage : llvm::Function::InternalLinkage;
                 std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
                 llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn,
                                                                 *funcDefFromClassMethod(method, mangled_class_name, "_"));
@@ -1316,7 +1317,7 @@ void LLVMCompiler::generateClass(const std::string& mapKey, UserTypeInfo& info) 
                                                       : llvm::Constant::getNullValue(fieldTy);
                         if (!initVal) { initVal = llvm::Constant::getNullValue(fieldTy); }
 
-                        globals[mangledName] = new llvm::GlobalVariable(*module, fieldTy, false, llvm::GlobalValue::ExternalLinkage, initVal,
+                        globals[mangledName] = new llvm::GlobalVariable(*module, fieldTy, false, llvm::GlobalValue::WeakODRLinkage, initVal,
                                                                         mangledName);
                         varTypes[mangledName] = resolvedType;
                         volatileVars[mangledName] = false;
@@ -6127,84 +6128,84 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 llvm::Function* printString = module->getFunction("qc_print_string");
                 if (!printString) {
                     llvm::FunctionType* prStrFnTy = llvm::FunctionType::get(builder->getVoidTy(), {llvm::PointerType::get(context, 0)}, false);
-                    printString = llvm::Function::Create(prStrFnTy, llvm::Function::ExternalLinkage, "qc_print_string", module);
+                    printString = llvm::Function::Create(prStrFnTy, llvm::Function::WeakODRLinkage, "qc_print_string", module);
                 }
                 llvm::Function* fmtStr = module->getFunction("qc_fmt_string");
                 if (!fmtStr) {
                     llvm::FunctionType* prStrFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0), {llvm::PointerType::get(context, 0), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtStr = llvm::Function::Create(prStrFnTy, llvm::Function::ExternalLinkage, "qc_fmt_string", module);
+                    fmtStr = llvm::Function::Create(prStrFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_string", module);
                 }
                 llvm::Function* fmtInt = module->getFunction("qc_fmt_int");
                 if (!fmtInt) {
                     llvm::FunctionType* fmtIntFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0),
                         {builder->getIntNTy(getPtrSize()), builder->getInt32Ty(), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtInt = llvm::Function::Create(fmtIntFnTy, llvm::Function::ExternalLinkage, "qc_fmt_int", module);
+                    fmtInt = llvm::Function::Create(fmtIntFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_int", module);
                 }
                 llvm::Function* fmtUInt = module->getFunction("qc_fmt_unsigned_int");
                 if (!fmtUInt) {
                     llvm::FunctionType* fmtUIntFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0),
                         {builder->getIntNTy(getPtrSize()), builder->getInt32Ty(), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtUInt = llvm::Function::Create(fmtUIntFnTy, llvm::Function::ExternalLinkage, "qc_fmt_unsigned_int", module);
+                    fmtUInt = llvm::Function::Create(fmtUIntFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_unsigned_int", module);
                 }
                 llvm::Function* fmtFloat = module->getFunction("qc_fmt_float");
                 if (!fmtFloat) {
                     llvm::FunctionType* fmtFloatFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0),
                         {builder->getDoubleTy(), builder->getInt32Ty(), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtFloat = llvm::Function::Create(fmtFloatFnTy, llvm::Function::ExternalLinkage, "qc_fmt_float", module);
+                    fmtFloat = llvm::Function::Create(fmtFloatFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_float", module);
                 }
                 llvm::Function* fmtDouble = module->getFunction("qc_fmt_double");
                 if (!fmtDouble) {
                     llvm::FunctionType* fmtDoubleFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0),
                         {builder->getDoubleTy(), builder->getInt32Ty(), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtDouble = llvm::Function::Create(fmtDoubleFnTy, llvm::Function::ExternalLinkage, "qc_fmt_double", module);
+                    fmtDouble = llvm::Function::Create(fmtDoubleFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_double", module);
                 }
                 llvm::Function* fmtChar = module->getFunction("qc_fmt_char");
                 if (!fmtChar) {
                     llvm::FunctionType* fmtCharFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0), {builder->getInt8Ty(), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtChar = llvm::Function::Create(fmtCharFnTy, llvm::Function::ExternalLinkage, "qc_fmt_char", module);
+                    fmtChar = llvm::Function::Create(fmtCharFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_char", module);
                 }
                 llvm::Function* fmtQBool = module->getFunction("qc_fmt_qbool");
                 if (!fmtQBool) {
                     llvm::FunctionType* fmtQBoolFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0), {builder->getInt1Ty(), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtQBool = llvm::Function::Create(fmtQBoolFnTy, llvm::Function::ExternalLinkage, "qc_fmt_qbool", module);
+                    fmtQBool = llvm::Function::Create(fmtQBoolFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_qbool", module);
                 }
                 llvm::Function* fmtBool = module->getFunction("qc_fmt_bool");
                 if (!fmtBool) {
                     llvm::FunctionType* fmtBoolFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0), {builder->getInt8Ty(), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtBool = llvm::Function::Create(fmtBoolFnTy, llvm::Function::ExternalLinkage, "qc_fmt_bool", module);
+                    fmtBool = llvm::Function::Create(fmtBoolFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_bool", module);
                 }
                 llvm::Function* fmtPtr = module->getFunction("qc_fmt_ptr");
                 if (!fmtPtr) {
                     llvm::FunctionType* fmtPtrFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0), {llvm::PointerType::get(context, 0), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtPtr = llvm::Function::Create(fmtPtrFnTy, llvm::Function::ExternalLinkage, "qc_fmt_ptr", module);
+                    fmtPtr = llvm::Function::Create(fmtPtrFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_ptr", module);
                 }
                 llvm::Function* fmtOctal = module->getFunction("qc_fmt_octal");
                 if (!fmtOctal) {
                     llvm::FunctionType* fmtOctalFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0), {builder->getIntNTy(getPtrSize()), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtOctal = llvm::Function::Create(fmtOctalFnTy, llvm::Function::ExternalLinkage, "qc_fmt_octal", module);
+                    fmtOctal = llvm::Function::Create(fmtOctalFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_octal", module);
                 }
                 llvm::Function* fmtHex = module->getFunction("qc_fmt_hex");
                 if (!fmtHex) {
                     llvm::FunctionType* fmtHexFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0), {builder->getIntNTy(getPtrSize()), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtHex = llvm::Function::Create(fmtHexFnTy, llvm::Function::ExternalLinkage, "qc_fmt_hex", module);
+                    fmtHex = llvm::Function::Create(fmtHexFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_hex", module);
                 }
                 llvm::Function* fmtScientific = module->getFunction("qc_fmt_scientific");
                 if (!fmtScientific) {
                     llvm::FunctionType* fmtScientificFnTy = llvm::FunctionType::get(
                         llvm::PointerType::get(context, 0),
                         {builder->getDoubleTy(), builder->getInt32Ty(), builder->getInt32Ty(), builder->getInt1Ty()}, false);
-                    fmtScientific = llvm::Function::Create(fmtScientificFnTy, llvm::Function::ExternalLinkage, "qc_fmt_scientific", module);
+                    fmtScientific = llvm::Function::Create(fmtScientificFnTy, llvm::Function::WeakODRLinkage, "qc_fmt_scientific", module);
                 }
                 for (size_t i = 0; i < fmtString.length(); i++) {
                     c = fmtString[i];
@@ -8649,7 +8650,7 @@ llvm::Value* LLVMCompiler::callStringConcat(llvm::Value* a, llvm::Value* b) {
     if (!concatFn) {
         llvm::FunctionType* ty = llvm::FunctionType::get(llvm::PointerType::get(context, 0),
                                                          {llvm::PointerType::get(context, 0), llvm::PointerType::get(context, 0)}, false);
-        concatFn = llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "qc_string_concat", module);
+        concatFn = llvm::Function::Create(ty, llvm::Function::WeakODRLinkage, "qc_string_concat", module);
     }
     return builder->CreateCall(concatFn, {a, b});
 }
@@ -8662,7 +8663,7 @@ void LLVMCompiler::generateStructReprFunctions() {
         llvm::StructType* structTy = structTypes[name];
         llvm::FunctionType* reprFnTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {structTy}, false);
         llvm::Function* reprFn = module->getFunction(name + "_repr");
-        if (!reprFn) reprFn = llvm::Function::Create(reprFnTy, llvm::Function::ExternalLinkage, name + "_repr", module);
+        if (!reprFn) reprFn = llvm::Function::Create(reprFnTy, llvm::Function::WeakODRLinkage, name + "_repr", module);
         llvm::BasicBlock* entryBB = llvm::BasicBlock::Create(context, "entry", reprFn);
         builder->SetInsertPoint(entryBB);
         llvm::Value* structArg = reprFn->arg_begin();
@@ -8760,7 +8761,7 @@ llvm::Value* LLVMCompiler::convertToString(llvm::Value* val, AnyNode& expr, Posi
         llvm::Function* fn = module->getFunction(fnName);
         if (!fn) {
             llvm::FunctionType* fty = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {val->getType()}, false);
-            fn = llvm::Function::Create(fty, llvm::Function::ExternalLinkage, fnName, module);
+            fn = llvm::Function::Create(fty, llvm::Function::WeakODRLinkage, fnName, module);
         }
         return builder->CreateCall(fn, {val}, "to_str");
     }
@@ -9039,7 +9040,7 @@ llvm::AllocaInst* LLVMCompiler::createEntryAlloca(const std::string& name, llvm:
     if (!currentFunction) {
         llvm::Constant* initVal = llvm::Constant::getNullValue(ty);
 
-        llvm::GlobalVariable* gv = new llvm::GlobalVariable(*module, ty, false, llvm::GlobalValue::ExternalLinkage, initVal, name);
+        llvm::GlobalVariable* gv = new llvm::GlobalVariable(*module, ty, false, llvm::GlobalValue::WeakODRLinkage, initVal, name);
         return reinterpret_cast<llvm::AllocaInst*>(gv);
     }
     llvm::IRBuilder<> tmp(&currentFunction->getEntryBlock(), currentFunction->getEntryBlock().begin());
@@ -9077,7 +9078,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
 
             bool isOutermost = (i == 0);
             std::string layerName = isOutermost ? name : ("_mod_" + std::to_string(i) + "_" + name);
-            auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+            auto linkage = isOutermost ? llvm::Function::WeakODRLinkage : llvm::Function::InternalLinkage;
             std::string proceedName = "_proceed_" + std::to_string(i) + "_" + name;
             llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn, fn);
             llvm::Function* layerFunc = module->getFunction(layerName);
@@ -9182,6 +9183,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
         if (it->type.value.ends_with("restrict")) { func->addParamAttr(i, llvm::Attribute::NoAlias); }
     }
     if (fn.is_foreign || fn.is_header) return func;
+    func->setLinkage(llvm::Function::WeakODRLinkage);
     auto savedDefers = defersStack;
     defersStack.clear();
     enterScope();
@@ -10866,7 +10868,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
         llvm::GlobalVariable* gv = module->getGlobalVariable(name);
         if (!gv) {
             llvm::Constant* initializer = foreign ? nullptr : llvm::Constant::getNullValue(ty);
-            gv = new llvm::GlobalVariable(*module, ty, false, llvm::GlobalValue::ExternalLinkage, initializer, name);
+            gv = new llvm::GlobalVariable(*module, ty, false, foreign ? llvm::GlobalValue::ExternalLinkage : llvm::GlobalValue::WeakODRLinkage, initializer, name);
         }
         globals[name] = gv;
         varTypes[name] = resolveTypeName(va->type_tok.value, false);
@@ -10956,7 +10958,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
     for (auto& [className, info] : userTypes) {
         if (info.kind != UserTypeKind::Class || !info.generics.empty()) continue;
         for (auto& method : info.classMethods) {
-            if (!method.is_static || !method.generics.empty()) continue;
+            if (!method.is_static || !method.generics.empty() || method.is_header) continue;
             std::string mangledName = className + "::" + method.name_tok.value;
             if (functionDefs.count(mangledName)) { emitFuncDef(*functionDefs[mangledName]); }
         }
@@ -10980,7 +10982,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                 genericMethodIndices[className].end()) {
                 continue;
             }
-            if (!method.generics.empty()) continue;
+            if (!method.generics.empty() || method.is_header) continue;
             llvm::Function* fn = nullptr;
             auto& overloads = classMethods[className][method.name_tok.value];
             bool isStatic = method.is_static;
@@ -11016,6 +11018,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                 std::string implName = "_impl_" + methodName;
                 currentTarget = llvm::Function::Create(fn->getFunctionType(), llvm::Function::InternalLinkage, implName, module);
             }
+            fn->setLinkage(llvm::GlobalValue::WeakODRLinkage);
             llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", currentTarget);
             builder->SetInsertPoint(entry);
             auto oldThis = currentThis;
@@ -11127,7 +11130,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                     ModifierInfo& modInfo = modifiers[modTok.value];
                     bool isOutermost = (i == 0);
                     std::string layerName = isOutermost ? methodName : ("_mod_" + std::to_string(i) + "_" + methodName);
-                    auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                    auto linkage = isOutermost ? llvm::Function::WeakODRLinkage : llvm::Function::InternalLinkage;
                     std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
                     llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn,
                                                                     *funcDefFromClassMethod(method, className, "_"));

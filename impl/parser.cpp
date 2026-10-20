@@ -3887,6 +3887,23 @@ Prs Parser::statement() {
                         if (res.error) return res.to_prs();
                         mi.parentConstructorCall = *std::get_if<CallNode*>(&node);
                     }
+                    if (this->current_tok.type == TokenType::SEMICOLON) {
+                        this->advance();
+                        this->current_generics = old_generics;
+                        mi.name_tok = ctor_name;
+                        mi.params.clear();
+                        mi.params = params;
+                        mi.return_types = {};
+                        mi.body = nullptr;
+                        mi.is_constructor = true;
+                        mi.access = access;
+                        mi.modifiers = modifiers;
+                        mi.is_volatile = is_volatile_method;
+                        mi.generics = genericsM;
+                        mi.is_header = true;
+                        info.classMethods.push_back(mi);
+                        continue;
+                    }
                     if (this->current_tok.type != TokenType::LBRACE) {
                         res.failure(new InvalidSyntaxError("QC-S003: Expected '{' to start constructor body", this->current_tok.pos));
                         return res.to_prs();
@@ -4173,6 +4190,7 @@ Prs Parser::statement() {
                 mi.generics = genericsM;
                 mi.is_static = is_static;
                 mi.is_virtual = is_virtual;
+                mi.is_header = fn->is_header;
                 mi.is_override = fn->is_override;
                 info.classMethods.push_back(mi);
                 continue;

@@ -2343,7 +2343,7 @@ class LLVMCompiler {
         llvm::Function* fn = module->getFunction(fnName);
         if (!fn) {
             llvm::FunctionType* fty = llvm::FunctionType::get(retTy, {ty}, false);
-            fn = llvm::Function::Create(fty, llvm::Function::ExternalLinkage, fnName, module);
+            fn = llvm::Function::Create(fty, llvm::Function::WeakODRLinkage, fnName, module);
         }
 
         return builder->CreateCall(fn, {arg}, "to_" + target);
@@ -3424,7 +3424,7 @@ class LLVMCompiler {
         for (auto* paramTy : baseFuncTy->params()) { paramTypes.push_back(paramTy); }
         llvm::FunctionType* fnTy = llvm::FunctionType::get(baseFuncTy->getReturnType(), paramTypes, false);
         llvm::Function* fn = module->getFunction(specializedName);
-        if (!fn) fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, specializedName, module);
+        if (!fn) fn = llvm::Function::Create(fnTy, llvm::Function::WeakODRLinkage, specializedName, module);
         size_t paramIdx = 0;
         if (method.is_volatile) {
             fn->addFnAttr(llvm::Attribute::NoInline);
@@ -3515,7 +3515,7 @@ class LLVMCompiler {
                 ModifierInfo& modInfo = modifiers[modTok.value];
                 bool isOutermost = (i == 0);
                 std::string layerName = isOutermost ? specializedName : ("_mod_" + std::to_string(i) + "_" + specializedName);
-                auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                auto linkage = isOutermost ? llvm::Function::WeakODRLinkage : llvm::Function::InternalLinkage;
                 std::string proceedName = "_proceed_" + std::to_string(i) + "_" + specializedName;
                 llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn,
                                                                 *funcDefFromClassMethod(method, className, "_"));
@@ -3667,7 +3667,7 @@ class LLVMCompiler {
         enterScope();
         llvm::FunctionType* fnTy = llvmFuncTypeFor(funcDef->return_types, funcDef->params);
         llvm::Function* fn = module->getFunction(specializedName);
-        if (!fn) fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, specializedName, module);
+        if (!fn) fn = llvm::Function::Create(fnTy, llvm::Function::WeakODRLinkage, specializedName, module);
         if (funcDef->is_volatile) {
             fn->addFnAttr("noipa");
             fn->addFnAttr(llvm::Attribute::NoInline);
@@ -3780,7 +3780,7 @@ class LLVMCompiler {
     }
     llvm::GlobalVariable* getOrCreateVtable(const std::string& name, llvm::ArrayType* type, llvm::Constant* initializer) {
         if (auto* existing = module->getNamedGlobal(name)) { return existing; }
-        return new llvm::GlobalVariable(*module, type, true, llvm::GlobalValue::ExternalLinkage, initializer, name);
+        return new llvm::GlobalVariable(*module, type, true, llvm::GlobalValue::WeakODRLinkage, initializer, name);
     }
     llvm::Value* packVariadicArgs(const std::vector<llvm::Value*>& var_vals) {
         llvm::Value* args_cnt = builder->getInt32(var_vals.size());
@@ -3853,7 +3853,7 @@ class LLVMCompiler {
         llvm::StructType* structTy = genericiseOrFindStruct(name);
         llvm::FunctionType* reprFnTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {structTy}, false);
         llvm::Function* reprFn = module->getFunction(name + "_repr");
-        if (!reprFn) reprFn = llvm::Function::Create(reprFnTy, llvm::Function::ExternalLinkage, name + "_repr", module);
+        if (!reprFn) reprFn = llvm::Function::Create(reprFnTy, llvm::Function::WeakODRLinkage, name + "_repr", module);
         llvm::BasicBlock* entryBB = llvm::BasicBlock::Create(context, "entry", reprFn);
         builder->SetInsertPoint(entryBB);
         llvm::Value* structArg = reprFn->arg_begin();
@@ -4110,7 +4110,7 @@ class LLVMCompiler {
                                 for (auto* paramTy : baseFuncTy->params()) { paramTypes.push_back(paramTy); }
                                 llvm::FunctionType* fnTy = llvm::FunctionType::get(baseFuncTy->getReturnType(), paramTypes, false);
                                 llvm::Function* fn = module->getFunction(methodName);
-                                if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, methodName, module); }
+                                if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::WeakODRLinkage, methodName, module); }
                                 functionDefs[methodName] = funcDefFromClassMethod(proofMethod, mapKey, "_");
                                 classMethods[mapKey][proofMethod.name_tok.value].push_back(fn);
                                 llvm::Function* currentTarget = fn;
@@ -4198,7 +4198,7 @@ class LLVMCompiler {
                                         ModifierInfo& modInfo = modifiers[modTok.value];
                                         bool isOutermost = (i == 0);
                                         std::string layerName = isOutermost ? methodName : ("_mod_" + std::to_string(i) + "_" + methodName);
-                                        auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                                        auto linkage = isOutermost ? llvm::Function::WeakODRLinkage : llvm::Function::InternalLinkage;
                                         std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
                                         llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn,
                                                                                         *funcDefFromClassMethod(proofMethod, mapKey, "_"));
@@ -4346,7 +4346,7 @@ class LLVMCompiler {
                                         for (auto* paramTy : baseFuncTy->params()) { paramTypes.push_back(paramTy); }
                                         llvm::FunctionType* fnTy = llvm::FunctionType::get(baseFuncTy->getReturnType(), paramTypes, false);
                                         llvm::Function* fn = module->getFunction(mangledName);
-                                        if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, mangledName, module); }
+                                        if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::WeakODRLinkage, mangledName, module); }
                                         classMethods[mapKey][concreteMethod.name_tok.value].push_back(fn);
                                         functionDefs[mangledName] = funcDefFromClassMethod(concreteMethod, mapKey, "_");
                                         llvm::Function* currentTarget = fn;
@@ -4436,7 +4436,7 @@ class LLVMCompiler {
                                                 ModifierInfo& modInfo = modifiers[modTok.value];
                                                 bool isOutermost = (i == 0);
                                                 std::string layerName = isOutermost ? methodName : ("_mod_" + std::to_string(i) + "_" + methodName);
-                                                auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                                                auto linkage = isOutermost ? llvm::Function::WeakODRLinkage : llvm::Function::InternalLinkage;
                                                 std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
                                                 llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn,
                                                                                                 *funcDefFromClassMethod(concreteMethod, mapKey, "_"));
@@ -4724,7 +4724,7 @@ class LLVMCompiler {
                                 for (auto* paramTy : baseFuncTy->params()) { paramTypes.push_back(paramTy); }
                                 llvm::FunctionType* fnTy = llvm::FunctionType::get(baseFuncTy->getReturnType(), paramTypes, false);
                                 llvm::Function* fn = module->getFunction(methodName);
-                                if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, methodName, module); }
+                                if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::WeakODRLinkage, methodName, module); }
                                 functionDefs[methodName] = funcDefFromClassMethod(proofMethod, mapKey, "_");
                                 classMethods[mapKey][proofMethod.name_tok.value].push_back(fn);
                                 llvm::Function* currentTarget = fn;
@@ -4812,7 +4812,7 @@ class LLVMCompiler {
                                         ModifierInfo& modInfo = modifiers[modTok.value];
                                         bool isOutermost = (i == 0);
                                         std::string layerName = isOutermost ? methodName : ("_mod_" + std::to_string(i) + "_" + methodName);
-                                        auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                                        auto linkage = isOutermost ? llvm::Function::WeakODRLinkage : llvm::Function::InternalLinkage;
                                         std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
                                         llvm::Function* proceedFunc = synthesizeProceed(proceedName, currentTarget, modInfo.onReturn,
                                                                                         *funcDefFromClassMethod(proofMethod, mapKey, "_"));
@@ -4954,7 +4954,7 @@ class LLVMCompiler {
                                             for (auto* paramTy : baseFuncTy->params()) { paramTypes.push_back(paramTy); }
                                             llvm::FunctionType* fnTy = llvm::FunctionType::get(baseFuncTy->getReturnType(), paramTypes, false);
                                             llvm::Function* fn = module->getFunction(mangledName);
-                                            if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage, mangledName, module); }
+                                            if (!fn) { fn = llvm::Function::Create(fnTy, llvm::Function::WeakODRLinkage, mangledName, module); }
                                             classMethods[mapKey][concreteMethod.name_tok.value].push_back(fn);
                                             functionDefs[mangledName] = funcDefFromClassMethod(concreteMethod, mapKey, "_");
                                             llvm::Function* currentTarget = fn;
@@ -5045,7 +5045,7 @@ class LLVMCompiler {
                                                     bool isOutermost = (i == 0);
                                                     std::string layerName = isOutermost ? methodName
                                                                                         : ("_mod_" + std::to_string(i) + "_" + methodName);
-                                                    auto linkage = isOutermost ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
+                                                    auto linkage = isOutermost ? llvm::Function::WeakODRLinkage : llvm::Function::InternalLinkage;
                                                     std::string proceedName = "_proceed_" + std::to_string(i) + "_" + methodName;
                                                     llvm::Function* proceedFunc = synthesizeProceed(
                                                         proceedName, currentTarget, modInfo.onReturn,

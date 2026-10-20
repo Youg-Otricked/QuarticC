@@ -246,6 +246,7 @@ class ClassMethodInfo {
     bool is_static = false;
     bool is_override = false;
     bool is_virtual = false;
+    bool is_header = false;
     std::vector<Token> modifiers;
     std::vector<GenericType> generics;
     std::string print() {
