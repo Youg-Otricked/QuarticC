@@ -6,6 +6,9 @@
 int x = returning for (int i = 0; i < 10; i++) {
     ...
 } int (x); // fallback expression for missing break
+or maybe 
+for (...) returning int {
+}(x);
 - const methods fore const obhects
 - const references
 - static & inline functions
@@ -14,7 +17,6 @@ int x = returning for (int i = 0; i < 10; i++) {
 - Operator.
 - Private/Protected inheritance
 - Constexpr
-- Cqb lib in stl. Ci and build.
 - qcheck (QC Lint(qc linter. duh)
 - qconform (QC Formatter)
 - `__attributes__((...))`
@@ -46,10 +48,11 @@ int x = returning for (int i = 0; i < 10; i++) {
 - _ unsued variable
 - comptime-trycatch (catches compiel verrors)
 TOP PRIORITY:
-1. CQB
-2. Formatter
-2. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
-3. Metadata
+1. Formatter
+1. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
+1. Remove strings, make them STL
+1. Remove try catch maybe. I'm not sure.
+2. Metadata
 ?likely? - likely marked
 ?unlikely? - marked unlikely
 ?inline? - pls inline >-<
@@ -71,12 +74,12 @@ TOP PRIORITY:
 ?experimental? - states that this tool is janky, subject to change, or flaky/expremintal
 ?unstable? - states this tool is janky, flaky, or unstable, but api won't change
 ?sentinel(value, msg, value, msg....)? - states this tool returns sentinel values with special meaning
-4. Preproccessers
+3. Preproccessers
 #line - somthing idk
-5. User-Defined metadata
-6. User-Defined macro _functions_ (the only good thing in rust)
-7. User defined literals
-8. co_await
-9. rest of featuers im forgetting
-10. self host
-11. Direct _C++_ header includes (and thus, the rest of const stuff), but not all features (obviously, i don't hate myself).
+4. User-Defined metadata
+5. User-Defined macro _functions_ (the only good thing in rust)
+6. User defined literals
+7. co_await
+8. rest of featuers im forgetting
+9. self host
+10. Direct _C++_ header includes (and thus, the rest of const stuff), but not all features (obviously, i don't hate myself).

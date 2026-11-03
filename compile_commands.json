@@ -1,6 +1,12 @@
 [
 {
   "directory": "/home/luca/C^4",
+  "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/fmt.cpp.o -c \"/home/luca/C^4/impl/fmt.cpp\"",
+  "file": "/home/luca/C^4/impl/fmt.cpp",
+  "output": "CMakeFiles/qc.dir/impl/fmt.cpp.o"
+},
+{
+  "directory": "/home/luca/C^4",
   "command": "/home/luca/llvm-project/build/bin/clang++ -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I\"/home/luca/C^4/intf\" -I/home/luca/llvm-project/llvm/include -I/home/luca/llvm-project/build/include -I/home/luca/llvm-project/clang/include -I/home/luca/llvm-project/build/tools/clang/include -I\"/home/luca/C^4\" -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug -o CMakeFiles/qc.dir/impl/translate.cpp.o -c \"/home/luca/C^4/impl/translate.cpp\"",
   "file": "/home/luca/C^4/impl/translate.cpp",
   "output": "CMakeFiles/qc.dir/impl/translate.cpp.o"

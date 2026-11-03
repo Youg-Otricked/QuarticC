@@ -82,6 +82,7 @@ add_custom_command(
     VERBATIM
 )
 set(SOURCES
+    impl/fmt.cpp
     impl/translate.cpp
     impl/parser.cpp
     impl/main.cpp

@@ -249,6 +249,10 @@ class Parser {
             type += this->current_tok.value;
             this->advance();
         } else {
+            if (this->current_tok.type == TokenType::VARADIC) {
+                this->advance();
+                return "...";
+            }
             return "";
         }
         while (this->current_tok.type == TokenType::SCOPE) {
@@ -422,6 +426,10 @@ class Parser {
             type += this->current_tok.value;
             this->advance();
         } else {
+            if (this->current_tok.type == TokenType::VARADIC) {
+                this->advance();
+                return "...";
+            }
             return "";
         }
         while (this->current_tok.type == TokenType::SCOPE) {

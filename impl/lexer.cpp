@@ -3,7 +3,8 @@
 bool isCharInSet(char c, const std::string& charSet) {
     return charSet.find(c) != std::string::npos;
 }
-Lexer::Lexer(std::string text, std::string filename) {
+Lexer::Lexer(std::string text, std::string filename, bool fmt) {
+    this->fmt = fmt;
     this->Filename = filename;
     this->pos = Position(SourceManager::instance().add_file(filename, text), -1, 0, -1);
     this->text = text;
@@ -237,7 +238,8 @@ Token Lexer::make_identifier() {
         /* modifiers */ id == "modifier" || id == "on_call" || id == "on_return" || id == "on_use" ||
         /* comptime */ id == "comptime" ||
         /* raw unions */ id == "union" ||
-        /* goto */ id == "goto" || id == "jmp") {
+        /* goto */ id == "goto" || id == "jmp" ||
+        /* patterns */ id == "pattern" || id == "fits") {
         return Token(TokenType::KEYWORD, id, start_pos);
     }
     if (id == "true" || id == "false") { return Token(TokenType::BOOL, id, start_pos); }
@@ -536,7 +538,16 @@ Ler Lexer::make_tokens() {
     while (this->current_char != '\0') {
         Position start_pos = this->pos.copy();
         if (isCharInSet(this->current_char, bad_chars)) {
-            this->advance();
+            if (fmt) {
+                std::string ws = "";
+                while (isCharInSet(this->current_char, bad_chars)) {
+                    ws += std::string(1, this->current_char);
+                    this->advance();
+                }
+                tokens.push_back(Token(TokenType::WHITESPACE, ws, start_pos));
+            } else {
+                this->advance();
+            }
             continue;
         } else if (isCharInSet(this->current_char, DIGITS)) {
             tokens.push_back(this->make_number());
@@ -599,21 +610,32 @@ Ler Lexer::make_tokens() {
             case '/':
                 this->advance();
                 if (this->current_char == '/') {
-                    while (this->current_char != '\0' && this->current_char != '\n') { this->advance(); }
+                    std::string comment_val = "//";
+                    this->advance();
+                    while (this->current_char != '\0' && this->current_char != '\n') {
+                        comment_val += this->current_char;
+                        this->advance();
+                    }
+                    if (fmt) tokens.push_back(Token(TokenType::COMMENT, comment_val, start_pos));
                     continue;
                 } else if (this->current_char == '*') {
+                    std::string comment_val = "/*";
                     this->advance();
                     while (this->current_char != '\0') {
                         if (this->current_char == '*') {
+                            comment_val += "*";
                             this->advance();
                             if (this->current_char == '/') {
+                                comment_val += "/";
                                 this->advance();
                                 break;
                             }
                         } else {
+                            comment_val += this->current_char;
                             this->advance();
                         }
                     }
+                    if (fmt) tokens.push_back(Token(TokenType::COMMENT, comment_val, start_pos));
                     continue;
                 } else if (current_char == '=') {
                     this->advance();

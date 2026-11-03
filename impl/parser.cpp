@@ -980,6 +980,7 @@ Prs Parser::try_catch_expr() {
         }
         Token type_tok = this->current_tok;
         type_tok.value = this->parseTypeString();
+        if (type_tok.type == TokenType::VARADIC) type_tok.value = "...";
         std::string catch_type = type_tok.value;
         if (this->current_tok.type != TokenType::IDENTIFIER && catch_type != "...") {
             res.failure(new InvalidSyntaxError("QC-S034: Expected variable name in catch declaration", this->current_tok.pos));
@@ -1063,8 +1064,52 @@ Prs Parser::match_stmt() {
                         return res.to_prs();
                     }
                     this->advance();
+                } else if (this->current_tok.type == TokenType::LBRACE) {
+                    std::vector<std::pair<std::string, std::string>> things;
+                    Position start_pos = this->current_tok.pos;
+                    this->advance();
+                    std::pair<std::string, std::string> first;
+                    if (this->current_tok.type == TokenType::IDENTIFIER) {
+                        first.first = this->current_tok.value;
+                        this->advance();
+                    }
+                    if (this->current_tok.type == TokenType::COLON) {
+                        this->advance();
+                        if (this->current_tok.type == TokenType::IDENTIFIER) {
+                            first.second = this->current_tok.value;
+                            this->advance();
+                            things.push_back(first);
+                        }
+                        while (this->current_tok.type == TokenType::COMMA) {
+                            this->advance();
+
+                            if (this->current_tok.type == TokenType::IDENTIFIER) {
+                                first.first = this->current_tok.value;
+                                this->advance();
+                            }
+                            if (this->current_tok.type != TokenType::COLON) {
+                                res.failure(new InvalidSyntaxError("QC-S046: Expected ':' in map literal", this->current_tok.pos));
+                                return res.to_prs();
+                            }
+                            this->advance();
+                            if (this->current_tok.type == TokenType::IDENTIFIER) {
+                                first.second = this->current_tok.value;
+                                this->advance();
+                            }
+                            if (res.error) return res.to_prs();
+                            things.push_back(first);
+                        }
+                        if (this->current_tok.type != TokenType::RBRACE) {
+                            res.failure(new InvalidSyntaxError("QC-S047: Expected '}' at end of map literal", this->current_tok.pos));
+                            return res.to_prs();
+                        }
+                        this->advance();
+                    }
+                    section.struct_case = std::make_pair(data.first, things);
+                } else {
+                    data.second = {};
+                    section.enum_case = data;
                 }
-                section.enum_case = data;
             } else {
                 AnyNode case_expr = res.reg(this->text_unops());
                 if (res.error) return res.to_prs();
@@ -4833,6 +4878,116 @@ Prs Parser::statement() {
         user_types[base_type_name(full_key)] = info;
         return res.success(std::monostate{});
     }
+    if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "pattern") {
+        PatternInfo patternInfo;
+        this->advance();
+        if (this->current_tok.type != TokenType::IDENTIFIER) {
+            res.failure(new InvalidSyntaxError("QC-S080: Expected pattern name", this->current_tok.pos));
+            return res.to_prs();
+        }
+        Token pattern_name = this->current_tok;
+        this->advance();
+        if (this->current_tok.type == TokenType::SEMICOLON) {
+            this->advance();
+            UserTypeInfo info;
+            info.kind = UserTypeKind::Pattern;
+            std::string full_key = currentNamespace.empty() ? pattern_name.value : currentNamespace + "::" + pattern_name.value;
+            info.pos = pattern_name.pos;
+            info.baseFile = SourceManager::instance().get(this->current_tok.pos.file_id).filename;
+            info.namespace_path = currentNamespace;
+            user_types[base_type_name(full_key)] = info;
+            return res.success(std::monostate{});
+        }
+        if (this->current_tok.type != TokenType::LBRACE) {
+            res.failure(new InvalidSyntaxError("QC-S003: Expected '{' after pattern name", this->current_tok.pos));
+            return res.to_prs();
+        }
+        this->advance();
+        while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
+            if (this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.type != TokenType::KEYWORD) {
+                res.failure(new InvalidSyntaxError("QC-S099: Expected pattern descriminant", this->current_tok.pos));
+                return res.to_prs();
+            }
+            PatternValue v;
+            v.name = this->current_tok.value;
+            this->advance();
+            std::vector<std::string> tags;
+            if (this->current_tok.type == TokenType::LPAREN) {
+                while (this->current_tok.type != TokenType::RPAREN && this->current_tok.type != TokenType::EOFT) {
+                    this->advance();
+                    tags.push_back(this->parseTypeString());
+                }
+                if (this->current_tok.type == TokenType::EOFT) {
+                    res.failure(new InvalidSyntaxError("QC-EM02: Unexpected EOF", this->current_tok.pos));
+                    return res.to_prs();
+                }
+                this->advance();
+            }
+            v.tags = tags;
+            if (this->current_tok.type == TokenType::LBRACE) {
+                this->advance();
+                std::vector<StructField> fields;
+                while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
+                    std::string field_type;
+                    bool is_user_type = false;
+                    if (this->current_tok.type == TokenType::IDENTIFIER) {
+                        field_type = parseTypeString();
+                    } else if (this->current_tok.type == TokenType::KEYWORD) {
+                        field_type = parseTypeString();
+                    } else {
+                        res.failure(new InvalidSyntaxError("QC-S071: Expected field type in struct", this->current_tok.pos));
+                        return res.to_prs();
+                    }
+                    if (this->current_tok.type != TokenType::IDENTIFIER) {
+                        res.failure(new InvalidSyntaxError("QC-S072: Expected field name in struct", this->current_tok.pos));
+                        return res.to_prs();
+                    }
+                    Token field_name = this->current_tok;
+                    this->advance();
+                    int array_dims = 0;
+                    while (this->current_tok.type == TokenType::LBRACKET) {
+                        this->advance();
+                        if (this->current_tok.type == TokenType::INT) { this->advance(); }
+                        if (this->current_tok.type != TokenType::RBRACKET) {
+                            res.failure(new InvalidSyntaxError("QC-S061: Expected ']' after '[' in array", this->current_tok.pos));
+                            return res.to_prs();
+                        }
+                        this->advance();
+                        array_dims++;
+                    }
+                    for (int i = 0; i < array_dims; ++i) field_type += "[]";
+                    if (this->current_tok.type != TokenType::SEMICOLON) {
+                        res.failure(new MissingSemicolonError(this->current_tok.pos));
+                        return res.to_prs();
+                    }
+                    this->advance();
+                    if (std::ranges::any_of(fields, [&](const StructField& thing) { return thing.name == field_name.value; })) {
+                        res.failure(new InvalidSyntaxError("QC-ST01: Duplicate field in struct", this->current_tok.pos));
+                        return res.to_prs();
+                    }
+                    fields.push_back({field_name.value, field_type});
+                }
+                if (this->current_tok.type == TokenType::RBRACE) this->advance();
+                v.structFields = fields;
+            }
+            patternInfo.patterns.push_back(v);
+            if (this->current_tok.type != TokenType::SEMICOLON) {
+                res.failure(new InvalidSyntaxError("QC-S083: Expected ';' after pattern member", this->current_tok.pos));
+                return res.to_prs();
+            }
+            this->advance();
+        }
+        this->advance();
+        std::string full_key = currentNamespace.empty() ? pattern_name.value : currentNamespace + "::" + pattern_name.value;
+        UserTypeInfo info;
+        info.pos = pattern_name.pos;
+        info.baseFile = SourceManager::instance().get(this->current_tok.pos.file_id).filename;
+        info.namespace_path = currentNamespace;
+        info.kind = UserTypeKind::Modifier;
+        info.patternInfo = patternInfo;
+        user_types[base_type_name(full_key)] = info;
+        return res.success(std::monostate{});
+    }
     if (this->current_tok.type == TokenType::LBRACE) {
         StatementsNode* block;
         if (!parse_block_into(block, res)) return res.to_prs();
@@ -4930,6 +5085,130 @@ Prs Parser::statement() {
         std::string type_str = parseTypeString();
         if (type_str.empty()) return res.to_prs();
         Token type_tok(TokenType::KEYWORD, type_str, type_pos);
+        if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "fits") {
+            FitsNode result = {};
+            this->advance();
+            result.type = type_tok;
+            result.pattern = parseTypeString();
+            if (this->current_tok.type != TokenType::LPAREN) {
+                res.failure(new InvalidSyntaxError("QC-S016: Expected '(' after pattern in fits", this->current_tok.pos));
+                return res.to_prs();
+            }
+            this->advance();
+            if (this->current_tok.type != TokenType::IDENTIFIER) {
+                res.failure(new InvalidSyntaxError("QC-S019: Expected parameter name in fits", this->current_tok.pos));
+                return res.to_prs();
+            }
+            result.name = this->current_tok;
+            this->advance();
+            if (this->current_tok.type != TokenType::RPAREN) {
+                res.failure(new InvalidSyntaxError("QC-S017: Expected ')' after parameter in fits", this->current_tok.pos));
+                return res.to_prs();
+            }
+            this->advance();
+            if (this->current_tok.type != TokenType::LBRACE) {
+                res.failure(new InvalidSyntaxError("QC-S018: Expected '{' after parameter in fits", this->current_tok.pos));
+                return res.to_prs();
+            }
+            this->advance();
+            while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
+                bool is_default = false;
+                if (this->current_tok.value == "default" && this->current_tok.type == TokenType::KEYWORD) {
+                    is_default = true;
+                    this->advance();
+                }
+                FitsNode::Case cse = {};
+                if (this->current_tok.type != TokenType::IDENTIFIER) {
+                    res.failure(new InvalidSyntaxError("QC-S020: Expected case name in fits", this->current_tok.pos));
+                    return res.to_prs();
+                }
+                cse.name = this->current_tok.value;
+                this->advance();
+                if (this->current_tok.type == TokenType::LPAREN) {
+                    this->advance();
+                    while (this->current_tok.type != TokenType::RPAREN && this->current_tok.type != TokenType::EOFT) {
+                        cse.tag_exprs.push_back(res.reg(this->text_unops()));
+                        if (res.error) return res.to_prs();
+                        if (this->current_tok.type == TokenType::COMMA) {
+                            this->advance();
+                        } else if (this->current_tok.type != TokenType::RPAREN) {
+                            res.failure(new InvalidSyntaxError("QC-S021: Expected ',' or ')' in pattern tags", this->current_tok.pos));
+                            return res.to_prs();
+                        }
+                    }
+                    if (this->current_tok.type != TokenType::RPAREN) {
+                        res.failure(new InvalidSyntaxError("QC-S302: Expected ')' after pattern tags", this->current_tok.pos));
+                        return res.to_prs();
+                    }
+                    this->advance();
+                } else if (this->current_tok.type == TokenType::LBRACE) {
+                    this->advance();
+                    std::vector<std::pair<std::string, AnyNode>> fields;
+                    while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
+                        if (this->current_tok.type != TokenType::IDENTIFIER) {
+                            res.failure(new InvalidSyntaxError("QC-S022: Expected field name in struct pattern", this->current_tok.pos));
+                            return res.to_prs();
+                        }
+                        std::string field_name = this->current_tok.value;
+                        this->advance();
+                        if (this->current_tok.type != TokenType::COLON) {
+                            res.failure(new InvalidSyntaxError("QC-S046: Expected ':' after field name in struct pattern", this->current_tok.pos));
+                            return res.to_prs();
+                        }
+                        this->advance();
+                        AnyNode val_expr = res.reg(this->text_unops());
+                        if (res.error) return res.to_prs();
+                        fields.emplace_back(field_name, val_expr);
+                        if (this->current_tok.type == TokenType::COMMA) {
+                            this->advance();
+                        } else if (this->current_tok.type != TokenType::RBRACE) {
+                            res.failure(new InvalidSyntaxError("QC-S023: Expected ',' or '}' in struct pattern", this->current_tok.pos));
+                            return res.to_prs();
+                        }
+                    }
+                    if (this->current_tok.type != TokenType::RBRACE) {
+                        res.failure(new InvalidSyntaxError("QC-S047: Expected '}' at end of struct pattern", this->current_tok.pos));
+                        return res.to_prs();
+                    }
+                    this->advance();
+                    cse.struct_fields = fields;
+                }
+                if (!is_default) {
+                    if (!(this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "if")) {
+                        res.failure(new InvalidSyntaxError("QC-S009: Expected 'if'", this->current_tok.pos));
+                        return res.to_prs();
+                    }
+                    this->advance();
+                    if (this->current_tok.type != TokenType::LPAREN) {
+                        res.failure(new InvalidSyntaxError("QC-S010: Expected '(' after 'if'", this->current_tok.pos));
+                        return res.to_prs();
+                    }
+                    this->advance();
+                    AnyNode cond_expr = res.reg(this->text_unops());
+                    if (res.error) return res.to_prs();
+                    cse.condition = new AnyNode(cond_expr);
+                    if (this->current_tok.type != TokenType::RPAREN) {
+                        res.failure(new InvalidSyntaxError("QC-S024: Expected ')' after condition", this->current_tok.pos));
+                        return res.to_prs();
+                    }
+                    this->advance();
+                } else
+                    cse.condition = nullptr;
+                if (this->current_tok.type != TokenType::SEMICOLON) {
+                    res.failure(new MissingSemicolonError(this->current_tok.pos));
+                    return res.to_prs();
+                }
+                this->advance();
+                result.cases.push_back(cse);
+            }
+            if (this->current_tok.type != TokenType::RBRACE) {
+                res.failure(new InvalidSyntaxError("QC-S025: Expected '}' at end of fits block", this->current_tok.pos));
+                return res.to_prs();
+            }
+            this->advance();
+            if (this->current_tok.type == TokenType::SEMICOLON) this->advance();
+            return res.success(result);
+        }
         if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "proves") {
             Position& proved_pos = this->current_tok.pos;
             this->advance();
@@ -5479,9 +5758,9 @@ Aer Parser::parse() {
                         if (!arg->params.empty() && (arg->params.front().type.value != "string[]" &&
                                                      ((((arg->params.size())) == 2 &&
                                                        (arg->params.front().type.value != "int" || arg->params.back().type.value != "char**"))))) {
-                            throw InvalidSyntaxError(
-                                "QC-S105: the entrypoint must have no parameters, take a integer argc and a char** argv, or take a array of strings.",
-                                get_pos(arg));
+                            throw InvalidSyntaxError("QC-S105: the entrypoint must have no parameters, take a integer argc and a char** argv, or "
+                                                     "take a array of strings.",
+                                                     get_pos(arg));
                         }
                         if (!arg->params.empty()) {
                             if (arg->params.front().type.value == "string[]") {

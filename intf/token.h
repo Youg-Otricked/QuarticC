@@ -85,7 +85,6 @@ enum class TokenType {
     LSH_EQ,
     RSH_EQ,
     SEMICOLON,
-    DEF,
     INCREMENT,
     DECREMENT,
     IDENTIFIER,
@@ -122,18 +121,11 @@ enum class TokenType {
     NOT,
     EQ,
     FSTRING,
-    SWITCH,
-    CASE,
-    DEFAULT,
-    IF,
-    ELSE,
     LBRACE,
     RBRACE,
     LBRACKET,
     RBRACKET,
     COLON,
-    BREAK,
-    FUNC,
     COMMA,
     DOT,
     AT,
@@ -150,7 +142,9 @@ enum class TokenType {
     AS,
     TYPEOF,
     BIG_ARROW,
-    EOFT
+    EOFT,
+    WHITESPACE,
+    COMMENT
 };
 std::string get_token_name(TokenType tok);
 TokenType stringToTokenType(const std::string& str);

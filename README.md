@@ -113,8 +113,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.3.495 = "DebugSymbols"
-Next Version: x1.3.5 = "Formatter, More STL, Debug Symbols,Other QOL"
+Current Version: x1.4.0 = "Patterns"
+Next Version: x1.5.0 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
 
@@ -123,13 +123,13 @@ Critical
 └─ Added Compiler
 
 Major
-└─ N/A
+└─ 1.0
 
 Moderate
-└─ QOL
+└─ Patterns
 
 Minor
-└─ Include upgrade
+└─ QOL
 
 Patch
 └─ N/A
@@ -145,6 +145,9 @@ Random Intrisics
 # Upcoming Deprecations:
 
 Large amounts of intrinsic functions. Assume no intrinsics that are c-backed other than conversions printing files and heap will be available.
+Try Catch.
+Builtin strings.
+
 
 ## Feature Roadmap
 
@@ -312,7 +315,7 @@ QuarticC has unusual naming conventions:
 | **Compiler Reserved**                  | `_qc_, __qc_ and qc_`  | Unique, hard to use accidently                                                                                                |
 | **Compiler Intrinsics**                | \` + `snake_case`      | Unique, impossible to use accidently                                                                                          |
 
-Max line size is around 120 _relative to your starting indentation_, tabs or spaces, lf newlines, comments are `//`, doc comments are `///`, and top-level doc comments are `//!`. File paths are unquoted, everything other than main should go in a namespace when applicable, and namespaces should fit the following rules:
+Max line size is around 120 _relative to your starting indentation_, tabs or spaces, lf newlines, comments are `//`, doc comments are `///`, top-level doc comments are `//!`, eof faq/impl comments are `//?`. File paths are unquoted, everything other than main should go in a namespace when applicable, and namespaces should fit the following rules:
 
 1. Namespaces should do one thing well, similar to the UNIX philosophy,
 2. Namespaces should have either:

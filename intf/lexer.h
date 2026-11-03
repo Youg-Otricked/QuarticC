@@ -3,7 +3,6 @@
 #include <string>
 #include "errors.h"
 #include "token.h"
-enum class Keywords { INT, STRING, FLOAT, DOUBLE, CHAR, MAP, LIST, ARRAY, VOID, ENUM, CLASS, STRUCT, BOOL, QBOOL };
 inline std::string bad_chars = " \t\n\r";
 inline std::string DIGITS = "0123456789";
 inline std::string LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -15,7 +14,8 @@ class Lexer {
     std::string text;
     Position pos;
     char current_char;
-    Lexer(std::string text, std::string filename);
+    bool fmt = false;
+    Lexer(std::string text, std::string filename, bool fmt = false);
     void advance();
     Token make_char();
     Token make_string();

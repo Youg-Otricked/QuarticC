@@ -1511,7 +1511,7 @@ namespace Filesystem {
             FileStatus status = this->status();
             return status.modified;
         }
-        DateTime lastAccess_Time() {
+        DateTime lastAccessTime() {
             FileStatus status = this->status();
             return status.accessed;
         }
@@ -1996,7 +1996,7 @@ namespace Filesystem {
             this->close();
         }
     }
-    bool createDirectory(Path path, int mode = 755) {
+    bool createDirectory(Path path, int mode = 0o755) {
         if (path.empty()) {
             throw "Cannot create an empty directory";
         }

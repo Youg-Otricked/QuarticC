@@ -159,6 +159,7 @@ llvm::Type* LLVMCompiler::llvmTypeFor(std::string qcType) {
         genericiseOrFindUnion(type);
         return unionTypes[type];
     }
+    if (patternTypes.find(type) != patternTypes.end()) return patternTypes[type];
     if (type == "function" || type == "fn" || type.starts_with("fn (") || type.starts_with("fn(")) { return builder->getPtrTy(); }
     if (type == "void") return builder->getVoidTy();
     return nullptr;
@@ -472,7 +473,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
     llvm::StructType* classTy = getOrCreateStructType(mangled_class_name);
     classTypes[mangled_class_name] = classTy;
     inProgressGenerics.insert(mangled_class_name);
-    llvm::BasicBlock* savedBlock = builder->GetInsertBlock();
+    llvm::IRBuilderBase::InsertPointGuard guard(*builder);
     llvm::BasicBlock::iterator savedPoint = builder->GetInsertPoint();
     auto oldGenericTypes = this->currentGenericTypes;
     auto oldGenericTypeStrings = currentGenericTypeStrings;
@@ -837,7 +838,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                 }
                 defersStack.clear();
                 enterScope();
-                llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                 auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
                 builder->SetInsertPoint(entryBB);
                 auto* prevFunction = currentFunction;
@@ -894,7 +895,6 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                         builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
                     }
                 }
-                if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
                 currentFunction = prevFunction;
                 currentThis = prevThis;
                 functions.erase("proceed");
@@ -911,7 +911,6 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
     this->currentGenericTypes = oldGenericTypes;
     this->currentGenericTypeStrings = oldGenericTypeStrings;
     currentNonTypeGenericValues = oldNonTypeGenerics;
-    if (savedBlock) { builder->SetInsertPoint(savedBlock, savedPoint); }
     inProgressGenerics.erase(mangled_class_name);
     return classTy;
 }
@@ -1376,6 +1375,14 @@ void LLVMCompiler::createUserTypes() {
                 genericEnums[mapKey] = true;
                 continue;
             }
+            std::vector<std::string> savedNamespaceStack = namespaceStack;
+            namespaceStack.clear();
+            size_t pos = 0;
+            size_t last_pos = 0;
+            while ((pos = mapKey.find("::", last_pos)) != std::string::npos) {
+                namespaceStack.push_back(mapKey.substr(last_pos, pos - last_pos));
+                last_pos = pos + 2;
+            }
             genericEnums[mapKey] = false;
             enumTypes[mapKey] = getOrCreateStructType(mapKey);
             for (size_t i = 0; i < info.enumEntries.size(); i++) {
@@ -1384,6 +1391,7 @@ void LLVMCompiler::createUserTypes() {
                 std::string fullName = mapKey + "." + entry.memberName;
                 enumMemberInfo[fullName] = std::make_pair(entry.value, entry.tags);
             }
+            namespaceStack = savedNamespaceStack;
         }
     }
     for (auto& [mapKey, info] : userTypes) {
@@ -1567,6 +1575,26 @@ void LLVMCompiler::createUserTypes() {
             }
         }
         modifiers[mapKey] = res;
+    }
+    for (auto& [mapKey, info] : userTypes) {
+        std::vector<std::string> savedNamespaceStack = namespaceStack;
+        namespaceStack.clear();
+        size_t pos = 0;
+        size_t last_pos = 0;
+        while ((pos = mapKey.find("::", last_pos)) != std::string::npos) {
+            namespaceStack.push_back(mapKey.substr(last_pos, pos - last_pos));
+            last_pos = pos + 2;
+        }
+        patternTypes[mapKey] = getOrCreateStructType(mapKey);
+        for (size_t i = 0; i < info.patternInfo.patterns.size(); i++) {
+            auto entry = info.patternInfo.patterns[i];
+            for (std::string& tag : entry.tags) { tag = resolveTypeName(substituteGenerics(tag), false); }
+            for (StructField& structField : entry.structFields) { structField.type = resolveTypeName(substituteGenerics(structField.type), false); }
+            std::string fullName = mapKey + "." + entry.name;
+            patternValues[fullName] = std::make_pair(i, entry);
+        }
+        namespaceStack = savedNamespaceStack;
+        generatePattern(mapKey, info);
     }
     if (this->config.use_runtime) { generateStructReprFunctions(); }
 }
@@ -3968,6 +3996,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 builder->CreateStore(rhs, enumAlloc, isVolatile);
             }
         }
+        if (!llvm::isa<llvm::AllocaInst>(enumAlloc)) return nullptr;
         locals[fullName] = llvm::cast<llvm::AllocaInst>(enumAlloc);
         varTypes[fullName] = fixMangling(resolveTypeName(saved_qc_type, false));
         volatileVars[fullName] = isVolatile;
@@ -8655,7 +8684,7 @@ llvm::Value* LLVMCompiler::callStringConcat(llvm::Value* a, llvm::Value* b) {
     return builder->CreateCall(concatFn, {a, b});
 }
 void LLVMCompiler::generateStructReprFunctions() {
-    llvm::BasicBlock* savedBB = builder->GetInsertBlock();
+    llvm::IRBuilderBase::InsertPointGuard guard(*builder);
 
     for (auto& [name, info] : userTypes) {
         if (info.kind != UserTypeKind::Struct) continue;
@@ -8714,7 +8743,6 @@ void LLVMCompiler::generateStructReprFunctions() {
 
         builder->CreateRet(result);
     }
-    if (savedBB) { builder->SetInsertPoint(savedBB); }
 }
 llvm::Value* LLVMCompiler::convertToString(llvm::Value* val, AnyNode& expr, Position pos) {
     val = derefIfReference(val, expr);
@@ -9089,7 +9117,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
             auto savedDefers = defersStack;
             defersStack.clear();
             enterScope();
-            llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+            llvm::IRBuilderBase::InsertPointGuard guard(*builder);
             auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
             builder->SetInsertPoint(entryBB);
             auto* oldFunction = currentFunction;
@@ -9136,7 +9164,6 @@ llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
                     builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
                 }
             }
-            if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
             currentFunction = oldFunction;
             functions.erase("proceed");
             exitScope();
@@ -9188,7 +9215,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
     defersStack.clear();
     enterScope();
     auto savedLambdaTypes = lambdaTypes;
-    llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+    llvm::IRBuilderBase::InsertPointGuard guard(*builder);
     auto* entryBB = llvm::BasicBlock::Create(context, "entry", func);
     builder->SetInsertPoint(entryBB);
     auto* oldFunction = currentFunction;
@@ -9255,8 +9282,6 @@ llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
             }
         }
     }
-
-    if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
 
     currentFunction = oldFunction;
     functions[name] = func;
@@ -10604,22 +10629,135 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
         exitScope();
         return;
     }
+    std::string match_value_type = resolveTypeName(getExpressionType(match_node->value, false), false);
     llvm::Type* matchTy = matchVal->getType();
+    if (matchTy->isPointerTy() && match_value_type.ends_with("&")) {
+        match_value_type.pop_back();
+        matchTy = llvmTypeFor(match_value_type);
+        if (matchTy) matchVal = builder->CreateLoad(matchTy, matchVal);
+    }
     std::string enumName = "";
     bool canUseMatch = matchTy->isIntegerTy() || ((match_node->is_enum || match_node->sections.empty() ||
                                                    (match_node->sections.size() == 1 && match_node->sections[0].is_default)) &&
                                                   isEnumType(matchTy, &enumName));
+    bool isFits = !canUseMatch;
+    llvm::Value* fitsRes = nullptr;
+    std::string pattern;
+    llvm::Function* fitsFn = nullptr;
+    llvm::StructType* resTy = nullptr;
+    std::vector<int> fieldIdxs(match_node->sections.size(), -1);
+    std::vector<std::vector<std::string>> bindNames(match_node->sections.size());
     if (!enumName.empty()) {
         if (std::ranges::none_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; }) &&
             match_node->sections.size() != userTypes.at(baseTypeName(resolveTypeName(enumName))).enumEntries.size()) {
             cg_error(get_pos(match_node), "match must have a case for every enum member, or have a default branch", "QC-MCH1");
+            exitScope();
             return;
         }
-    } else {
-        if (!(std::ranges::any_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; }))) {
-            cg_error(get_pos(match_node), "match must have a default branch for non-enum values.", "QC-MCH1");
-            cg_help(get_pos(match_node), "if you know it is impossible for any other value to be here, use `default => unreachable;`");
+    } else if (!std::ranges::any_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; })) {
+        cg_error(get_pos(match_node), "match must have a default branch for non-enum values.", "QC-MCH1");
+        cg_help(get_pos(match_node), "if you know it is impossible for any other value to be here, use `default => unreachable;`");
+        exitScope();
+        return;
+    }
+    if (std::ranges::count_if(match_node->sections, [](const MatchNode::Section& s) { return s.is_default; }) > 1) {
+        cg_error(get_pos(match_node), "match has more than one default branch", "QC-MCH7");
+        exitScope();
+        return;
+    }
+    if (isFits) {
+        std::vector<std::string> candidates;
+        bool first = true;
+        for (auto& s : match_node->sections) {
+            if (s.is_default) continue;
+            const std::string& cname = !s.struct_case.first.empty() ? s.struct_case.first : s.enum_case.first;
+            if (cname.empty()) {
+                cg_error(get_pos(match_node), "cannot use a integer case on a pattern type", "QC-MCH9");
+                exitScope();
+                return;
+            }
+            if (!patternValues.count(cname)) {
+                cg_error(get_pos(match_node), "no such case " + cname, "QC-MCH8");
+                exitScope();
+                return;
+            }
+            std::vector<std::string> found;
+            size_t pos = cname.find(".");
+            if (candidates.empty() || candidates.back() != resolveTypeName(cname.substr(0, pos), false))
+                candidates.push_back(resolveTypeName(cname.substr(0, pos), false));
+            first = false;
+        }
+        if (candidates.size() != 1) {
+            cg_error(get_pos(match_node),
+                     candidates.empty() ? "cannot use match on non enum non integer types: no pattern has all of these cases"
+                                        : "ambiguous pattern for these cases",
+                     "QC-MCH2");
+            exitScope();
             return;
+        }
+        pattern = candidates[0];
+        auto ptIt = patternTypes.find(pattern);
+        if (ptIt == patternTypes.end()) {
+            cg_error(get_pos(match_node), "no pattern type for '" + pattern + "'", "QC-MCH3");
+            exitScope();
+            return;
+        }
+        resTy = ptIt->second;
+        fitsFn = module->getFunction("__user_qc_fits_" + match_value_type + "_" + pattern);
+        if (!fitsFn) {
+            cg_error(get_pos(match_node), "no such fits for pattern '" + pattern + "' and type '" + match_value_type + "'", "QC-MCH5");
+            exitScope();
+            return;
+        }
+        if (!fitsFn) {
+            cg_error(get_pos(match_node), "no `fits " + pattern + "` found (is it declared before this match?)", "QC-MCH5");
+            exitScope();
+            return;
+        }
+        if (fitsFn->getReturnType() != resTy) {
+            cg_error(get_pos(match_node), "fits function return type doesn't match pattern '" + pattern + "'", "QC-MCH5");
+            exitScope();
+            return;
+        }
+        std::unordered_set<int> seen;
+        for (size_t i = 0; i < match_node->sections.size(); i++) {
+            auto& s = match_node->sections[i];
+            if (s.is_default) continue;
+            const bool isStruct = !s.struct_case.first.empty();
+            const std::string& cname = isStruct ? s.struct_case.first : s.enum_case.first;
+            auto it = patternValues.find(cname);
+            if (it == patternValues.end()) {
+                cg_error(get_pos(match_node), "pattern '" + pattern + "' has no field '" + cname + "'", "QC-MCH3");
+                exitScope();
+                return;
+            }
+            fieldIdxs[i] = it->second.first;
+            if (!seen.insert(fieldIdxs[i]).second) {
+                cg_error(get_pos(match_node), "duplicate case '" + cname + "'", "QC-MCH7");
+                exitScope();
+                return;
+            }
+            if (!s.enum_case.second.empty() && !s.struct_case.second.empty()) {
+                cg_error(get_pos(match_node), "cannot bind tags and struct fields in the same case", "QC-MCH6");
+                exitScope();
+                return;
+            }
+            bindNames[i] = s.enum_case.second;
+            for (auto& [member, bindName] : s.struct_case.second) bindNames[i].push_back(bindName);
+            std::unordered_set<std::string> names;
+            for (auto& nme : bindNames[i]) {
+                if (!names.insert(nme).second) {
+                    cg_error(get_pos(match_node), "'" + nme + "' is bound more than once in case '" + cname + "'", "QC-MCH6");
+                    exitScope();
+                    return;
+                }
+            }
+            if (bindNames[i].size() + 1 >= resTy->getNumElements() + (bindNames[i].empty() ? 1 : 0) &&
+                bindNames[i].size() + 1 > resTy->getNumElements() - 0) {
+                cg_error(get_pos(match_node), "case '" + cname + "' binds more values than pattern '" + pattern + "' can hold", "QC-MCH6");
+                exitScope();
+                return;
+            }
         }
     }
     llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "match.end", currentFunction);
@@ -10631,60 +10769,83 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
         if (section.is_default) { defaultBB = bb; }
     }
     if (!defaultBB) { defaultBB = endBB; }
-    if (canUseMatch) {
-        if (!match_node->is_enum) {
-            llvm::SwitchInst* matchInst = builder->CreateSwitch(matchVal, defaultBB, match_node->sections.size());
-            for (size_t i = 0; i < match_node->sections.size(); i++) {
-                auto& section = match_node->sections[i];
-                if (section.is_default) continue;
-                llvm::Value* caseVal = emitExpr(section.normal_case.expr);
-                if (!caseVal) {
-                    cg_error(get_pos(section.normal_case.expr), "Failed to emit case value", "QC-S278");
-                    return;
-                }
-                if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(caseVal)) { matchInst->addCase(constInt, sectionBlocks[i]); }
+    if (isFits) {
+        llvm::Value* selfPtr = matchVal;
+        if (!matchTy->isPointerTy()) {
+            llvm::AllocaInst* tmp = createEntryAlloca("match_self", matchTy);
+            builder->CreateStore(matchVal, tmp);
+            selfPtr = tmp;
+        }
+        fitsRes = builder->CreateCall(fitsFn, {selfPtr}, "fits.res");
+        llvm::SwitchInst* sw = builder->CreateSwitch(builder->CreateExtractValue(fitsRes, {0}), defaultBB, match_node->sections.size());
+        for (size_t i = 0; i < match_node->sections.size(); i++) {
+            if (match_node->sections[i].is_default) continue;
+            sw->addCase(builder->getInt32((uint32_t)fieldIdxs[i]), sectionBlocks[i]);
+        }
+    } else if (!match_node->is_enum) {
+        llvm::SwitchInst* matchInst = builder->CreateSwitch(matchVal, defaultBB, match_node->sections.size());
+        for (size_t i = 0; i < match_node->sections.size(); i++) {
+            auto& section = match_node->sections[i];
+            if (section.is_default) continue;
+            llvm::Value* caseVal = emitExpr(section.normal_case.expr);
+            if (!caseVal) {
+                cg_error(get_pos(section.normal_case.expr), "Failed to emit case value", "QC-S278");
+                exitScope();
+                return;
             }
-        } else {
-            llvm::SwitchInst* matchInst = builder->CreateSwitch(builder->CreateExtractValue(matchVal, {0}), defaultBB, match_node->sections.size());
-            for (size_t i = 0; i < match_node->sections.size(); i++) {
-                auto& section = match_node->sections[i];
-                if (section.is_default) continue;
-                std::string member_name = section.enum_case.first;
-                if (enumMemberInfo.find(member_name) == enumMemberInfo.end()) {
-                    cg_error(get_pos(match_node), "unknown enum member: " + member_name, "QC-MCH3");
-                    return;
-                }
-                llvm::Value* caseVal = llvm::ConstantInt::get(llvm::dyn_cast<llvm::StructType>(matchTy)->getElementType(0),
-                                                              std::stoull(enumMemberInfo[member_name].first));
-                if (!caseVal) {
-                    cg_error(get_pos(section.normal_case.expr), "Failed to emit case value", "QC-S278");
-                    return;
-                }
-                if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(caseVal)) { matchInst->addCase(constInt, sectionBlocks[i]); }
-            }
+            if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(caseVal)) { matchInst->addCase(constInt, sectionBlocks[i]); }
         }
     } else {
-        cg_error(get_pos(match_node), "cannot use match on non enum non integer types", "QC-MCH2");
-        return;
+        llvm::SwitchInst* matchInst = builder->CreateSwitch(builder->CreateExtractValue(matchVal, {0}), defaultBB, match_node->sections.size());
+        for (size_t i = 0; i < match_node->sections.size(); i++) {
+            auto& section = match_node->sections[i];
+            if (section.is_default) continue;
+            std::string member_name = section.enum_case.first;
+            if (enumMemberInfo.find(member_name) == enumMemberInfo.end()) {
+                cg_error(get_pos(match_node), "unknown enum member: " + member_name, "QC-MCH3");
+                exitScope();
+                return;
+            }
+            llvm::ConstantInt* caseVal = llvm::cast<llvm::ConstantInt>(
+                llvm::ConstantInt::get(llvm::dyn_cast<llvm::StructType>(matchTy)->getElementType(0), std::stoull(enumMemberInfo[member_name].first)));
+            matchInst->addCase(caseVal, sectionBlocks[i]);
+        }
     }
     llvm::BasicBlock* oldBreakBB = currentBreakBB;
     currentBreakBB = endBB;
     for (size_t i = 0; i < match_node->sections.size(); i++) {
         builder->SetInsertPoint(sectionBlocks[i]);
         enterScope();
-        if (match_node->is_enum) {
-            auto& section = match_node->sections[i].enum_case;
-            for (unsigned int i = 0; i < section.second.size(); i++) {
-                std::string fullName = getCurrentNamespace().empty() ? section.second[i] : getCurrentNamespace() + "::" + section.second[i];
-                std::vector<std::string> types = enumMemberInfo[section.first].second;
-                varTypes[fullName] = resolveTypeName(types[i], false);
-                llvm::Value* raw = builder->CreateExtractValue(matchVal, {i + 1});
-                llvm::AllocaInst* rawAlloc = builder->CreateAlloca(raw->getType(), nullptr, "match_raw");
+        if ((match_node->is_enum || isFits) && !match_node->sections[i].is_default) {
+            llvm::Value* agg = isFits ? fitsRes : matchVal;
+            auto& sec = match_node->sections[i];
+            const std::vector<std::string>& names = isFits ? bindNames[i] : sec.enum_case.second;
+            const std::vector<std::string>* types = isFits ? nullptr : &enumMemberInfo[sec.enum_case.first].second;
+            for (unsigned k = 0; k < names.size(); k++) {
+                std::string typeName;
+                if (isFits) {
+                    const std::string& cname = !sec.struct_case.first.empty() ? sec.struct_case.first : sec.enum_case.first;
+                    PatternValue pv = patternValues.at(cname).second;
+                    if (!pv.structFields.empty()) {
+                        typeName = pv.structFields[k].type;
+                    } else if (!pv.tags.empty()) {
+                        typeName = pv.tags[k];
+                    } else {
+                        typeName = "";
+                    }
+                } else {
+                    typeName = (*types)[k];
+                }
+                if (typeName.empty()) return;
+                std::string fullName = getCurrentNamespace().empty() ? names[k] : getCurrentNamespace() + "::" + names[k];
+                varTypes[fullName] = resolveTypeName(typeName, false);
+                llvm::Type* ty = llvmTypeFor(resolveTypeName(typeName));
+                llvm::Value* raw = builder->CreateExtractValue(agg, {k + 1});
+                llvm::AllocaInst* rawAlloc = createEntryAlloca("match_raw", raw->getType());
                 builder->CreateStore(raw, rawAlloc);
-                llvm::AllocaInst* alloc = createEntryAlloca(fullName, llvmTypeFor(resolveTypeName(types[i])));
-                uint64_t size = module->getDataLayout().getTypeStoreSize(llvmTypeFor(resolveTypeName(types[i])));
+                llvm::AllocaInst* alloc = createEntryAlloca(fullName, ty);
                 builder->CreateMemCpyInline(alloc, llvm::MaybeAlign(), rawAlloc, llvm::MaybeAlign(),
-                                            llvm::ConstantInt::get(builder->getInt64Ty(), size));
+                                            llvm::ConstantInt::get(builder->getInt64Ty(), module->getDataLayout().getTypeStoreSize(ty)));
                 locals[fullName] = alloc;
                 volatileVars[fullName] = false;
             }
@@ -10692,20 +10853,153 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
         emitStmt(match_node->sections[i].body);
         exitScope();
         if (!builder->GetInsertBlock()->getTerminator()) {
-            if (i + 1 < sectionBlocks.size()) {
-                builder->CreateBr(endBB);
-            } else {
-                emitDefersDownTo(outerDepth + 1);
-                builder->CreateBr(endBB);
-            }
+            if (i + 1 == sectionBlocks.size()) emitDefersDownTo(outerDepth + 1);
+            builder->CreateBr(endBB);
         }
     }
     currentBreakBB = oldBreakBB;
     exitScope();
     builder->SetInsertPoint(endBB);
 }
+void LLVMCompiler::emitFits(FitsNode* fits) {
+    std::string mangled_name = "__user_qc_fits_" + fits->type.value + "_" + fits->pattern;
+    llvm::Type* retTy = llvmTypeFor(resolveTypeName(fits->pattern, false));
+    if (!retTy) {
+        cg_error(fits->type.pos, "Failed to get return-type", "QC-FTS2");
+        return;
+    }
+    llvm::FunctionType* fTy = llvm::FunctionType::get(retTy, builder->getPtrTy(), false);
+    llvm::GlobalValue::LinkageTypes linkage = llvm::Function::ExternalLinkage;
+    auto* func = module->getFunction(mangled_name);
+    if (func) {
+        func->setLinkage(linkage);
+    } else {
+        func = llvm::Function::Create(fTy, linkage, mangled_name, module);
+    }
+    llvm::DISubprogram* oldSubprogram = currentSubprogram;
+    llvm::DILocation* oldDebugLoc = builder->getCurrentDebugLocation();
+    llvm::SmallVector<llvm::Metadata*, 4> retTypes;
+    retTypes.push_back(llvm::MDString::get(context, resolveTypeName(fits->type.value + "*", false)));
+    func->setMetadata("qc.return_types", llvm::MDNode::get(context, retTypes));
+    func->setLinkage(llvm::Function::WeakODRLinkage);
+    auto savedDefers = defersStack;
+    defersStack.clear();
+    enterScope();
+    auto savedLambdaTypes = lambdaTypes;
+    llvm::IRBuilderBase::InsertPointGuard guard(*builder);
+    auto* entryBB = llvm::BasicBlock::Create(context, "entry", func);
+    builder->SetInsertPoint(entryBB);
+    auto* oldFunction = currentFunction;
+    llvm::Argument* selfArg = func->getArg(0);
+    selfArg->setName(fits->name.value);
+    std::string fullName = getCurrentNamespace().empty() ? fits->name.value : getCurrentNamespace() + "::" + fits->name.value;
+    varTypes[fullName] = resolveTypeName(fits->type.value + "*", false);
+    llvm::AllocaInst* alloc = createEntryAlloca(fullName, builder->getPtrTy());
+    builder->CreateStore(selfArg, alloc);
+    locals[fullName] = alloc;
+    const size_t n = fits->cases.size();
+    llvm::BasicBlock* noMatchBB = llvm::BasicBlock::Create(context, "fits.nomatch", func);
+    for (size_t i = 0; i < n; ++i) {
+        const auto& c = fits->cases[i];
+        auto pvIt = patternValues.find(fits->pattern + "." + c.name);
+        if (pvIt == patternValues.end()) {
+            cg_error(fits->type.pos, "Unknown pattern field '" + fits->pattern + "." + c.name + "'");
+            return;
+        }
+        int fieldIdx = pvIt->second.first;
+        llvm::BasicBlock* matchBB = llvm::BasicBlock::Create(context, "fits.case." + c.name, func);
+        llvm::BasicBlock* nextBB = (i + 1 < n) ? llvm::BasicBlock::Create(context, "fits.next", func) : noMatchBB;
+        if (c.condition) {
+            llvm::Value* cond = emitExpr(*c.condition);
+            if (!cond) {
+                currentFunction = oldFunction;
+                lambdaTypes = savedLambdaTypes;
+                exitScope();
+                defersStack = savedDefers;
+                currentSubprogram = oldSubprogram;
+                builder->SetCurrentDebugLocation(oldDebugLoc);
+                cg_error(get_pos(*c.condition), "failed to emit condition in fits", "QC-FTS1");
+                return;
+            }
+            if (!cond->getType()->isIntegerTy(1)) cond = toTruthiness(cond, get_pos(*c.condition));
+            builder->CreateCondBr(cond, matchBB, nextBB);
+        } else {
+            builder->CreateBr(matchBB);
+        }
+        builder->SetInsertPoint(matchBB);
+        auto ptIt = patternTypes.find(fits->pattern);
+        if (ptIt == patternTypes.end()) {
+            cg_error(fits->type.pos, "No pattern type for '" + fits->pattern + "'");
+            currentFunction = oldFunction;
+            lambdaTypes = savedLambdaTypes;
+            exitScope();
+            defersStack = savedDefers;
+            currentSubprogram = oldSubprogram;
+            builder->SetCurrentDebugLocation(oldDebugLoc);
+            return;
+        }
+        llvm::StructType* resTy = ptIt->second;
+        builder->SetInsertPoint(matchBB);
+        llvm::AllocaInst* res = createEntryAlloca("fits.res", resTy);
+        builder->CreateStore(llvm::Constant::getNullValue(resTy), res);
+        builder->CreateStore(builder->getInt32(fieldIdx), builder->CreateStructGEP(resTy, res, 0));
+        const auto& dl = module->getDataLayout();
+        auto storeSlot = [&](size_t slot, llvm::Value* v, const std::string& what) -> bool {
+            unsigned elem = (unsigned)slot + 1;
+            if (elem >= resTy->getNumElements()) {
+                cg_error(fits->type.pos, "Too many values for pattern '" + fits->pattern + "' (" + what + ")");
+                return false;
+            }
+            if (dl.getTypeStoreSize(v->getType()) > dl.getTypeAllocSize(resTy->getElementType(elem))) {
+                cg_error(fits->type.pos, "Value for " + what + " doesn't fit its slot");
+                return false;
+            }
+            llvm::Value* p = builder->CreateStructGEP(resTy, res, elem);
+            builder->CreateAlignedStore(v, p, llvm::Align(1));
+            return true;
+        };
+        size_t slot = 0;
+        for (size_t t = 0; t < c.tag_exprs.size(); ++t) {
+            llvm::Value* v = emitExpr(c.tag_exprs[t]);
+            if (!v || !storeSlot(slot++, v, "tag " + std::to_string(t))) {
+                currentFunction = oldFunction;
+                lambdaTypes = savedLambdaTypes;
+                exitScope();
+                defersStack = savedDefers;
+                currentSubprogram = oldSubprogram;
+                builder->SetCurrentDebugLocation(oldDebugLoc);
+
+                return;
+            }
+        }
+        for (const auto& [fname, expr] : c.struct_fields) {
+            llvm::Value* v = emitExpr(expr);
+            if (!v || !storeSlot(slot++, v, "field '" + fname + "'")) {
+                currentFunction = oldFunction;
+                lambdaTypes = savedLambdaTypes;
+                exitScope();
+                defersStack = savedDefers;
+                currentSubprogram = oldSubprogram;
+                builder->SetCurrentDebugLocation(oldDebugLoc);
+                return;
+            }
+        }
+        builder->CreateRet(builder->CreateLoad(resTy, res));
+        if (!c.condition) break;
+        if (nextBB != noMatchBB) builder->SetInsertPoint(nextBB);
+    }
+    if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(noMatchBB);
+    builder->SetInsertPoint(noMatchBB);
+    builder->CreateRet(builder->CreateInsertValue(llvm::Constant::getNullValue(retTy), builder->getInt32(-1), {0}));
+    currentFunction = oldFunction;
+    lambdaTypes = savedLambdaTypes;
+    exitScope();
+    defersStack = savedDefers;
+    currentSubprogram = oldSubprogram;
+    builder->SetCurrentDebugLocation(oldDebugLoc);
+}
 void LLVMCompiler::emitStmt(AnyNode node) {
-    if (builder->GetInsertBlock()->getTerminator()) {
+    if (builder->GetInsertBlock() && builder->GetInsertBlock()->getTerminator()) {
         warn("unreachable-code", get_pos(node), "attempted to emit into terminated basic block (unreachable code)", "QC-W001");
         return;
     }
@@ -10783,7 +11077,7 @@ void LLVMCompiler::emitStmt(AnyNode node) {
     } else if (auto match_node = safe_get<MatchNode>(node)) {
         emitMatch(match_node);
     } else if (LabelNode* label = std::get_if<LabelNode>(&node)) {
-        setDebugLocation(arrAssign->getPos());
+        setDebugLocation(label->getPos());
         llvm::BasicBlock* block = resolveLabel(label->name.value).second.first;
         if (!block) {
             cg_error(get_pos(*label), "could not create label", "QC-LBL1");
@@ -10803,6 +11097,8 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         else
             emitDefersDownTo(info.second.second);
         builder->CreateBr(info.second.first);
+    } else if (FitsNode* fits = std::get_if<FitsNode>(&node)) {
+        emitFits(fits);
     } else {
         emitExpr(node);
         return;
@@ -10868,7 +11164,8 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
         llvm::GlobalVariable* gv = module->getGlobalVariable(name);
         if (!gv) {
             llvm::Constant* initializer = foreign ? nullptr : llvm::Constant::getNullValue(ty);
-            gv = new llvm::GlobalVariable(*module, ty, false, foreign ? llvm::GlobalValue::ExternalLinkage : llvm::GlobalValue::WeakODRLinkage, initializer, name);
+            gv = new llvm::GlobalVariable(*module, ty, false, foreign ? llvm::GlobalValue::ExternalLinkage : llvm::GlobalValue::WeakODRLinkage,
+                                          initializer, name);
         }
         globals[name] = gv;
         varTypes[name] = resolveTypeName(va->type_tok.value, false);
@@ -10926,35 +11223,45 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
         namespaceStack.push_back(ns.name);
 
         for (auto& decl : ns.body) {
+            if (!std::holds_alternative<FuncDefNode*>(decl)) {
+                if (auto ns = std::get_if<NamespaceNode*>(&decl)) {
+                    compileNamespaceFunctions(**ns);
+                } else {
+                    emitStmt(decl);
+                }
+            }
+        }
+        for (auto& decl : ns.body) {
             if (auto fn = safe_get<FuncDefNode>(decl)) {
                 if (fn->name_tok.has_value()) {
                     if (fn->name_tok.value().value == entrypointName && !this->is_main) { continue; }
 
                     if (fn->generics.empty()) { emitFuncDef(*fn); }
                 }
-            } else if (auto va = std::get_if<VarAssignNode*>(&decl)) {
-                emitExpr(decl);
-            } else if (auto nested = std::get_if<NamespaceNode*>(&decl)) {
-                compileNamespaceFunctions(**nested);
             }
         }
-
         namespaceStack.pop_back();
     };
 
-    if (root)
+    if (root) {
         for (auto& stmt : root->statements) {
-            if (auto ns = std::get_if<NamespaceNode*>(&stmt)) {
-                compileNamespaceFunctions(**ns);
-            } else if (auto va = std::get_if<VarAssignNode*>(&stmt)) {
-                emitExpr(stmt);
-            } else if (std::holds_alternative<FuncDefNode*>(stmt)) {
+            if (!std::holds_alternative<FuncDefNode*>(stmt)) {
+                if (auto ns = std::get_if<NamespaceNode*>(&stmt)) {
+                    compileNamespaceFunctions(**ns);
+                } else {
+                    emitStmt(stmt);
+                }
+            }
+        }
+        for (auto& stmt : root->statements) {
+            if (std::holds_alternative<FuncDefNode*>(stmt)) {
                 auto fnPtr = std::get<FuncDefNode*>(stmt);
                 if (!fnPtr->name_tok.has_value()) continue;
                 if (fnPtr->name_tok.value().value == entrypointName && !this->is_main) { continue; }
                 if (fnPtr->generics.empty()) { emitFuncDef(*fnPtr); }
             }
         }
+    }
     for (auto& [className, info] : userTypes) {
         if (info.kind != UserTypeKind::Class || !info.generics.empty()) continue;
         for (auto& method : info.classMethods) {
@@ -11145,7 +11452,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                         setDebugLocation(method.name_tok.pos);
                     }
                     enterScope();
-                    llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                    llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                     auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
                     builder->SetInsertPoint(entryBB);
                     auto* prevFunction = currentFunction;
@@ -11206,7 +11513,6 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                             builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
                         }
                     }
-                    if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
                     currentFunction = prevFunction;
                     currentThis = prevThis;
                     functions.erase("proceed");

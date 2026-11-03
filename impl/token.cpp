@@ -157,7 +157,6 @@ TokenType stringToTokenType(const std::string& str) {
                                                                             {"LPAREN", TokenType::LPAREN},
                                                                             {"RPAREN", TokenType::RPAREN},
                                                                             {"SEMICOLON", TokenType::SEMICOLON},
-                                                                            {"DEF", TokenType::DEF},
                                                                             {"INCREMENT", TokenType::INCREMENT},
                                                                             {"DECREMENT", TokenType::DECREMENT},
                                                                             {"IDENTIFIER", TokenType::IDENTIFIER},
@@ -191,12 +190,6 @@ std::string get_token_name(TokenType tok) {
     case TokenType::CHAR: return "char";
     case TokenType::BOOL: return "bool";
     case TokenType::QBOOL: return "qbool";
-    case TokenType::IF: return "if";
-    case TokenType::ELSE: return "else";
-    case TokenType::SWITCH: return "switch";
-    case TokenType::CASE: return "case";
-    case TokenType::DEFAULT: return "default";
-    case TokenType::BREAK: return "break";
 
     case TokenType::IDENTIFIER: return "identifier";
     case TokenType::KEYWORD: return "keyword";
@@ -284,6 +277,7 @@ Position Position::copy() {
     return Position(this->file_id, this->index, this->line, this->column);
 }
 Token::Token() {
+    this->type = TokenType::EOFT;
 }
 Token::Token(TokenType t, std::string val, Position p) : type(t), value(val), pos(p) {
     this->pos.length = val.size();

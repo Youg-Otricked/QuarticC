@@ -52,12 +52,13 @@ class ModifierNode;
 class TupleValueNode;
 class LabelNode;
 class GotoNode;
+class FitsNode;
 using AnyNode = std::variant<std::monostate, NumberNode, StringNode, CharNode, BoolNode, QInNode, QBoolNode, RefVarDeclNode*, NullptrNode, BinOpNode*,
                              UnaryOpNode*, VarAccessNode*, VarAssignNode*, AssignExprNode*, IfNode*, QIfNode*, StatementsNode*, SwitchNode*,
                              QSwitchNode*, BreakNode*, UnreachableNode*, WhileNode*, ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*,
                              MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*,
                              PropertyAccessNode*, SpreadNode*, ForeachNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*,
-                             TryCatchNode*, TypeValueNode, DeferNode*, ModifierNode*, MatchNode*, TupleValueNode*, LabelNode, GotoNode>;
+                             TryCatchNode*, TypeValueNode, DeferNode*, ModifierNode*, MatchNode*, TupleValueNode*, LabelNode, GotoNode, FitsNode>;
 struct GenericType {
     std::string name;
     bool isVariadic = false;
@@ -141,7 +142,23 @@ class GotoNode {
     Position getPos() { return this->togo.pos; }
     std::string print() const { return "goto " + togo.value; }
 };
-
+class FitsNode {
+  public:
+    Token type;
+    std::string pattern;
+    Token name;
+    struct Case {
+        std::string name;
+        std::vector<AnyNode> tag_exprs;
+        std::vector<std::pair<std::string, AnyNode>> struct_fields;
+        AnyNode *condition;
+    };
+    std::vector<Case> cases;
+    FitsNode(Token type, std::string pattern, Token name, std::vector<Case> cases) : type(type), pattern(pattern), name(name), cases(cases) {};
+    Position getPos() { return this->type.pos; }
+    FitsNode() {}
+    std::string print() const { return type.value + " fits " + pattern; }
+};
 class TupleValueNode {
   public:
     std::vector<AnyNode> members;
@@ -308,7 +325,7 @@ class ConceptInfo {
 struct ModifierInfo {
     std::vector<std::pair<Token, StatementsNode*>> handlers;
 };
-enum class UserTypeKind { Struct, Alias, Union, Enum, Class, Concept, Modifier, RawUnion };
+enum class UserTypeKind { Struct, Alias, Union, Enum, Class, Concept, Modifier, RawUnion, Pattern };
 
 struct UnionMember {
     std::string type;
@@ -320,7 +337,14 @@ class ConceptProvee {
     std::vector<ClassMethodInfo> additionalProof;
     std::vector<std::string> namespacePath;
 };
-
+struct PatternValue {
+    std::string name;
+    std::vector<StructField> structFields;
+    std::vector<std::string> tags;
+};
+struct PatternInfo {
+    std::vector<PatternValue> patterns;
+};
 struct UserTypeInfo {
     Position pos;
     bool has_vptr;
@@ -331,6 +355,7 @@ struct UserTypeInfo {
     std::vector<StructField> fields;
     std::string aliasTarget;
     ConceptInfo conceptInfo;
+    PatternInfo patternInfo;
     std::vector<UnionMember> members;
     std::vector<EnumEntry> enumEntries;
     std::vector<ClassField> classFields;
@@ -481,6 +506,7 @@ class MatchNode {
     AnyNode value;
     struct Section {
         std::pair<std::string, std::vector<std::string>> enum_case;
+        std::pair<std::string, std::vector<std::pair<std::string, std::string>>> struct_case;
         CaseLabel normal_case;
         bool is_default = false;
         StatementsNode* body;
@@ -812,7 +838,7 @@ using Prs = std::variant<std::monostate, ParseResult, NumberNode, StringNode, Ch
                          ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*,
                          ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, SpreadNode*, ForeachNode*, QBoolNode, QInNode,
                          QIfNode*, QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, TryCatchNode*, RefVarDeclNode*,
-                         NullptrNode, TypeValueNode, DeferNode*, ModifierNode*, TupleValueNode*, LabelNode, GotoNode>;
+                         NullptrNode, TypeValueNode, DeferNode*, ModifierNode*, TupleValueNode*, LabelNode, GotoNode, FitsNode>;
 class ParseResult {
   public:
     AnyNode node;

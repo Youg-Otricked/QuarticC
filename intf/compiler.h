@@ -4,6 +4,7 @@
 #include "main.h"
 #include "nodes.h"
 #include "token.h"
+#include <bit>
 #include <functional>
 #include <list>
 #include <map>
@@ -210,6 +211,39 @@ class LLVMCompiler {
         }
         return llvm::ArrayType::get(builder->getIntNTy(8), size);
     }
+    std::vector<llvm::Type*> getLargestPatternType(UserTypeInfo& info) {
+        std::vector<size_t> sizes;
+        auto& DL = module->getDataLayout();
+        for (PatternValue& value : info.patternInfo.patterns) {
+            for (int i = 0; i < value.tags.size(); i++) {
+                if (i >= sizes.size()) { sizes.push_back(0); }
+                value.tags[i] = resolveTypeName(value.tags[i]);
+                llvm::Type* ty = llvmTypeFor(value.tags[i]);
+                if (!ty) {
+                    cg_error(info.pos, "unknow type: " + value.tags[i], "QC-PT05");
+                    sizes.back() = 1;
+                    continue;
+                }
+                size_t sz = DL.getTypeAllocSize(ty);
+                if (sz > sizes.back()) sizes.back() = sz;
+            }
+            for (int i = 0; i < value.structFields.size(); i++) {
+                if (i >= sizes.size()) { sizes.push_back(0); }
+                value.structFields[i].type = resolveTypeName(value.structFields[i].type);
+                llvm::Type* ty = llvmTypeFor(value.structFields[i].type);
+                if (!ty) {
+                    cg_error(info.pos, "unknow type: " + value.structFields[i].type, "QC-PT05");
+                    sizes.back() = 1;
+                    continue;
+                }
+                size_t sz = DL.getTypeAllocSize(ty);
+                if (sz > sizes.back()) sizes.back() = sz;
+            }
+        }
+        std::vector<llvm::Type*> res = {builder->getInt32Ty()};
+        for (size_t size : sizes) { res.push_back(llvm::ArrayType::get(builder->getIntNTy(8), size)); }
+        return res;
+    }
     std::vector<llvm::Type*> getLargestDiscriminantType(UserTypeInfo& info) {
         std::vector<size_t> sizes;
         auto& DL = module->getDataLayout();
@@ -233,18 +267,61 @@ class LLVMCompiler {
     }
     llvm::Type* generateRawUnion(const std::string& name, UserTypeInfo& info) {
         if (!info.generics.empty()) return nullptr;
+        std::vector<std::string> savedNamespaceStack = namespaceStack;
+        namespaceStack.clear();
+        size_t pos = 0;
+        size_t last_pos = 0;
+        while ((pos = name.find("::", last_pos)) != std::string::npos) {
+            namespaceStack.push_back(name.substr(last_pos, pos - last_pos));
+            last_pos = pos + 2;
+        }
         auto it = rawUnionTypes.find(resolveTypeName(name));
-        if (it == rawUnionTypes.end()) return nullptr;
+        if (it == rawUnionTypes.end()) {
+            namespaceStack = savedNamespaceStack;
+            return nullptr;
+        }
         llvm::StructType* ty = it->second;
-        if (ty->isOpaque()) ty->setBody({getLargestRUType(info)});
+        if (ty->isOpaque()) ty->setBody(getLargestRUType(info));
+        namespaceStack = savedNamespaceStack;
+        return ty;
+    }
+    llvm::Type* generatePattern(const std::string& name, UserTypeInfo& info) {
+        std::vector<std::string> savedNamespaceStack = namespaceStack;
+        namespaceStack.clear();
+        size_t pos = 0;
+        size_t last_pos = 0;
+        while ((pos = name.find("::", last_pos)) != std::string::npos) {
+            namespaceStack.push_back(name.substr(last_pos, pos - last_pos));
+            last_pos = pos + 2;
+        }
+        auto it = patternTypes.find(resolveTypeName(name));
+        if (it == patternTypes.end()) {
+            namespaceStack = savedNamespaceStack;
+            return nullptr;
+        }
+        llvm::StructType* ty = it->second;
+        if (ty->isOpaque()) ty->setBody(getLargestPatternType(info));
+        namespaceStack = savedNamespaceStack;
         return ty;
     }
     llvm::Type* generateEnum(const std::string& name, UserTypeInfo& info) {
         if (!info.generics.empty()) return nullptr;
+        std::vector<std::string> savedNamespaceStack = namespaceStack;
+        namespaceStack.clear();
+        size_t pos = 0;
+        size_t last_pos = 0;
+        while ((pos = name.find("::", last_pos)) != std::string::npos) {
+            namespaceStack.push_back(name.substr(last_pos, pos - last_pos));
+            last_pos = pos + 2;
+        }
         auto it = enumTypes.find(resolveTypeName(name));
-        if (it == enumTypes.end()) return nullptr;
+        if (it == enumTypes.end()) {
+            namespaceStack = savedNamespaceStack;
+            return nullptr;
+        }
         llvm::StructType* ty = it->second;
         if (ty->isOpaque()) ty->setBody(getLargestDiscriminantType(info));
+        namespaceStack = savedNamespaceStack;
         return ty;
     }
     void setupDebugFunction(llvm::Function* function, const std::string& name, const Position& pos) {
@@ -440,8 +517,10 @@ class LLVMCompiler {
         vtables[mapKey] = getOrCreateVtable(mapKey + "_vtable", arr, llvm::ConstantArray::get(arr, fs));
         for (size_t i = 0; i < keys.size(); i++) vtableSlotIndex[mapKey][keys[i]] = i;
     }
+    std::unordered_map<std::string, std::pair<int, PatternValue>> patternValues;
     std::unordered_map<std::string, std::pair<std::string, std::vector<std::string>>> enumMemberInfo;
     std::unordered_map<std::string, llvm::StructType*> rawUnionTypes;
+    std::unordered_map<std::string, llvm::StructType*> patternTypes;
     std::unordered_map<std::string, llvm::StructType*> enumTypes;
     std::unordered_map<std::string, std::string> typeAliases;
     std::unordered_map<std::string, llvm::StructType*> structTypes;
@@ -808,7 +887,7 @@ class LLVMCompiler {
         if (elements.size() <= idx) return "unknown";
         return elements[idx];
     }
-    std::string getExpressionType(AnyNode& node, bool strip = true) {
+    std::string getExpressionType(const AnyNode& node, bool strip = true) {
         if (auto mapLit = std::get_if<MapLiteralNode*>(&node)) {
             if (!(*mapLit)->struct_type.empty()) { return (*mapLit)->struct_type; }
         } else if (auto arrLit = std::get_if<ArrayLiteralNode*>(&node)) {
@@ -1254,7 +1333,7 @@ class LLVMCompiler {
             currentGenericTypeStrings = std::move(originalGenericMap);
 
             return foundReturnType;
-        } else if (TypeValueNode* typeValue = std::get_if<TypeValueNode>(&node)) {
+        } else if (const TypeValueNode* typeValue = std::get_if<TypeValueNode>(&node)) {
             return "string";
         } else if (ModifierNode* modNode = safe_get<ModifierNode>(node)) {
             if (!modNode || modNode->modifiers.empty()) { return getExpressionType(modNode->node, strip); }
@@ -1285,6 +1364,29 @@ class LLVMCompiler {
                 res += getExpressionType(node);
             }
             return res + ")";
+        } else if (FuncDefNode* funcDef = safe_get<FuncDefNode>(node)) {
+            std::string type_string = "fn(";
+            int i = 0;
+            for (Parameter& param : funcDef->params) {
+                if (i != 0) type_string += ", ";
+                if (param.signature.has_value()) {
+                    type_string += param.signature.value().print();
+                } else {
+                    type_string += param.type.value;
+                }
+                type_string += " ";
+                type_string += param.name.value;
+                i++;
+            }
+            type_string += ") -> ";
+            if (funcDef->return_types.empty())
+                type_string += "void";
+            else
+                for (size_t i = 0; i < funcDef->return_types.size(); i++) {
+                    type_string += funcDef->return_types[i].value;
+                    if (i + 1 != funcDef->return_types.size()) type_string += ", ";
+                }
+            return type_string;
         }
         return "unknown";
     }
@@ -1534,7 +1636,8 @@ class LLVMCompiler {
         result.push_back(text.substr(start));
         return result;
     }
-    llvm::Value* castValue(llvm::Value* rhs, llvm::Type* destTy, std::string lhsTypeString = "", std::string rhsTypeString = "", Position pos = Position()) {
+    llvm::Value* castValue(llvm::Value* rhs, llvm::Type* destTy, std::string lhsTypeString = "", std::string rhsTypeString = "",
+                           Position pos = Position()) {
         if (classTypes.count(lhsTypeString) || genericClasses.count(baseTypeName(lhsTypeString))) {
             if (rhs->getType()->isArrayTy()) {
                 llvm::Value* res = decayArrayToClass(rhs, lhsTypeString,
@@ -1547,7 +1650,7 @@ class LLVMCompiler {
                 }
             }
         }
-        llvm::Type *srcTy = rhs->getType();
+        llvm::Type* srcTy = rhs->getType();
         if (isUnionType(srcTy) && !isUnionType(destTy)) {
             llvm::Value* dataPtr = builder->CreateExtractValue(rhs, 1, "union_data");
             if (destTy->isPointerTy()) {
@@ -1634,8 +1737,7 @@ class LLVMCompiler {
         array = decayArrayToPointer(array);
         if (array == nullptr) { return nullptr; }
         bool no_out = out == nullptr;
-        if (!out) { 
-            out = createEntryAlloca("type_decay", llvmTypeFor(mangledName)); }
+        if (!out) { out = createEntryAlloca("type_decay", llvmTypeFor(mangledName)); }
         llvm::Function* opMethod = findMethodOverload(mangledName, "operator[]=", {array, len});
         if (opMethod) {
             emitVirtualOrDirectCall(mangledName, "operator[]=", out, {array, len});
@@ -2827,7 +2929,9 @@ class LLVMCompiler {
             size_t count = std::min(argCount, paramCount);
             for (size_t i = 0; i < count; i++) {
                 llvm::Type* argTy = llvmTypeFor(args[i]);
+                if (!argTy) return;
                 llvm::Type* paramTy = llvmTypeFor(method.params[i].type.value);
+                if (!paramTy) return;
                 if (argTy == paramTy) {
                     score += 3;
                 } else if ((argTy->isIntegerTy() || argTy->isFloatTy() || argTy->isDoubleTy()) &&
@@ -3394,7 +3498,7 @@ class LLVMCompiler {
     }
     llvm::Function* generateSpecializedMethod(const std::string& className, size_t methodIdx, const std::string& specializedName) {
         llvm::Function* savedFunction = currentFunction;
-        llvm::BasicBlock* savedBlock = builder->GetInsertBlock();
+llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         auto savedGlobals = globals;
         auto savedThis = currentThis;
         auto savedClassName = currentClassName;
@@ -3530,7 +3634,7 @@ class LLVMCompiler {
                     setDebugLocation(method.name_tok.pos);
                 }
                 enterScope();
-                llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                 auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
                 builder->SetInsertPoint(entryBB);
                 auto* prevFunction = currentFunction;
@@ -3587,7 +3691,6 @@ class LLVMCompiler {
                         builder->CreateRet(llvm::ConstantAggregateZero::get(fnTy->getReturnType()));
                     }
                 }
-                if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
                 currentFunction = prevFunction;
                 currentThis = prevThis;
                 functions.erase("proceed");
@@ -3606,7 +3709,6 @@ class LLVMCompiler {
         this->currentGenericTypes = oldGenericTypes;
         currentGenericTypeStrings = oldGenericTypeStrings;
         currentNonTypeGenericValues = oldNonTypeGenerics;
-        if (savedBlock) { builder->SetInsertPoint(savedBlock); }
         return fn;
     }
     std::string strip_decorations(std::string old) {
@@ -3626,7 +3728,7 @@ class LLVMCompiler {
     }
     llvm::Function* generateSpecializedFunction(FuncDefNode* funcDef, std::string specializedName) {
         llvm::Function* savedFunction = currentFunction;
-        llvm::BasicBlock* savedBlock = builder->GetInsertBlock();
+        llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         auto savedGlobals = globals;
         auto savedNamespaceStack = namespaceStack;
         auto oldGenericTypes = this->currentGenericTypes;
@@ -3658,7 +3760,6 @@ class LLVMCompiler {
             namespaceStack = savedNamespaceStack;
             currentFunction = savedFunction;
             globals = savedGlobals;
-            if (savedBlock) { builder->SetInsertPoint(savedBlock); }
             return specializedResult;
         }
         namespaceStack.clear();
@@ -3775,7 +3876,6 @@ class LLVMCompiler {
         this->currentGenericTypes = oldGenericTypes;
         currentGenericTypeStrings = oldGenericTypeStrings;
         currentNonTypeGenericValues = oldNonTypeGenerics;
-        if (savedBlock) { builder->SetInsertPoint(savedBlock); }
         return fn;
     }
     llvm::GlobalVariable* getOrCreateVtable(const std::string& name, llvm::ArrayType* type, llvm::Constant* initializer) {
@@ -3848,7 +3948,7 @@ class LLVMCompiler {
         return result + ">";
     }
     void generateStructReprFunction(std::string name, UserTypeInfo info) {
-        llvm::BasicBlock* savedBB = builder->GetInsertBlock();
+        llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         if (info.kind != UserTypeKind::Struct) return;
         llvm::StructType* structTy = genericiseOrFindStruct(name);
         llvm::FunctionType* reprFnTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {structTy}, false);
@@ -3903,9 +4003,9 @@ class LLVMCompiler {
         result = callStringConcat(result, closeParen);
 
         builder->CreateRet(result);
-        if (savedBB) { builder->SetInsertPoint(savedBB); }
     }
     bool testExpression(AnyNode expr) {
+        llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         auto saved_ip = builder->saveIP();
         llvm::FunctionType* fnType = llvm::FunctionType::get(builder->getVoidTy(), false);
         llvm::Function* dummy_fn = llvm::Function::Create(fnType, llvm::Function::InternalLinkage, "__qc_concept_probe", *module);
@@ -4213,7 +4313,7 @@ class LLVMCompiler {
                                         }
                                         defersStack.clear();
                                         enterScope();
-                                        llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                                        llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                         auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
                                         builder->SetInsertPoint(entryBB);
                                         auto* prevFunction = currentFunction;
@@ -4273,7 +4373,6 @@ class LLVMCompiler {
                                                 builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
                                             }
                                         }
-                                        if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
                                         currentFunction = prevFunction;
                                         currentThis = prevThis;
                                         functions.erase("proceed");
@@ -4451,7 +4550,7 @@ class LLVMCompiler {
                                                 }
                                                 defersStack.clear();
                                                 enterScope();
-                                                llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                                                llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                                 auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
                                                 builder->SetInsertPoint(entryBB);
                                                 auto* prevFunction = currentFunction;
@@ -4515,7 +4614,6 @@ class LLVMCompiler {
                                                         builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
                                                     }
                                                 }
-                                                if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
                                                 currentFunction = prevFunction;
                                                 currentThis = prevThis;
                                                 functions.erase("proceed");
@@ -4827,7 +4925,7 @@ class LLVMCompiler {
                                         }
                                         defersStack.clear();
                                         enterScope();
-                                        llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                                        llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                         auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
                                         builder->SetInsertPoint(entryBB);
                                         auto* prevFunction = currentFunction;
@@ -4887,7 +4985,6 @@ class LLVMCompiler {
                                                 builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
                                             }
                                         }
-                                        if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
                                         currentFunction = prevFunction;
                                         currentThis = prevThis;
                                         functions.erase("proceed");
@@ -5061,7 +5158,7 @@ class LLVMCompiler {
                                                     }
                                                     defersStack.clear();
                                                     enterScope();
-                                                    llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+                                                    llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                                     auto* entryBB = llvm::BasicBlock::Create(context, "entry", layerFunc);
                                                     builder->SetInsertPoint(entryBB);
                                                     auto* prevFunction = currentFunction;
@@ -5126,7 +5223,6 @@ class LLVMCompiler {
                                                             builder->CreateRet(llvm::ConstantAggregateZero::get(fTy->getReturnType()));
                                                         }
                                                     }
-                                                    if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
                                                     currentFunction = prevFunction;
                                                     currentThis = prevThis;
                                                     functions.erase("proceed");
@@ -5294,6 +5390,7 @@ class LLVMCompiler {
             if (genericStructs.count(fullName)) return finish(result);
             if (genericUnions.count(fullName)) return finish(result);
             if (structTypes.count(fullSavedName)) return finish(result);
+            if (patternTypes.count(fullSavedName)) return finish(result);
             if (enumTypes.count(fullSavedName)) return finish(result);
             if (genericEnums.count(fullName)) return finish(result);
             if (unionTypes.count(fullSavedName)) return finish(result);
@@ -5315,6 +5412,7 @@ class LLVMCompiler {
             if (rawUnionTypes.find(savedName) != rawUnionTypes.end()) return finish(strip ? name : savedName);
             if (unionTypes.find(savedName) != unionTypes.end()) return finish(strip ? name : savedName);
             if (typeAliases.find(savedName) != typeAliases.end()) return finish(strip ? name : savedName);
+            if (patternTypes.find(savedName) != patternTypes.end()) return finish(strip ? name : savedName);
             if (concepts.find(savedName) != concepts.end()) return finish(strip ? name : savedName);
             if (genericConcepts.find(savedName) != genericConcepts.end()) return finish(strip ? name : savedName);
         }
@@ -5724,7 +5822,7 @@ class LLVMCompiler {
         llvm::Function* proceedFunc = llvm::Function::Create(fTy, llvm::Function::InternalLinkage, proceedName, module);
         enterScope();
         llvm::BasicBlock* entryBB = llvm::BasicBlock::Create(context, "entry", proceedFunc);
-        llvm::BasicBlock* savedInsertBlock = builder->GetInsertBlock();
+        llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         builder->SetInsertPoint(entryBB);
         llvm::Function* oldFunction = currentFunction;
         currentFunction = proceedFunc;
@@ -5775,7 +5873,6 @@ class LLVMCompiler {
         } else {
             builder->CreateRet(retVal);
         }
-        if (savedInsertBlock) { builder->SetInsertPoint(savedInsertBlock); }
         currentFunction = oldFunction;
         exitScope();
         return proceedFunc;
@@ -5919,6 +6016,8 @@ class LLVMCompiler {
     void emitForeach(ForeachNode* foreach);
     [[gnu::noinline]]
     void emitMatch(MatchNode* match_node);
+    [[gnu::noinline]]
+    void emitFits(FitsNode* fits);
     void emitStmt(AnyNode node);
 };
 #endif

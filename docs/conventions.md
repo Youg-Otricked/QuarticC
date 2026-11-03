@@ -33,6 +33,7 @@ General formatting recommendations:
 - `//!` for file-level documentation.
 - File paths are written without quotes.
 - Place everything except `main` inside a namespace when practical.
+- `//?` for end-of-file faq/implementation notes
 
 A namespace should generally contain one of the following:
 1. Namespaces should do one thing well, similar to the UNIX philosophy, 

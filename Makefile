@@ -279,6 +279,30 @@ impl/errors.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/qc.dir/build.make CMakeFiles/qc.dir/impl/errors.cpp.s
 .PHONY : impl/errors.cpp.s
 
+impl/fmt.o: impl/fmt.cpp.o
+.PHONY : impl/fmt.o
+
+# target to build an object file
+impl/fmt.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/qc.dir/build.make CMakeFiles/qc.dir/impl/fmt.cpp.o
+.PHONY : impl/fmt.cpp.o
+
+impl/fmt.i: impl/fmt.cpp.i
+.PHONY : impl/fmt.i
+
+# target to preprocess a source file
+impl/fmt.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/qc.dir/build.make CMakeFiles/qc.dir/impl/fmt.cpp.i
+.PHONY : impl/fmt.cpp.i
+
+impl/fmt.s: impl/fmt.cpp.s
+.PHONY : impl/fmt.s
+
+# target to generate assembly for a file
+impl/fmt.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/qc.dir/build.make CMakeFiles/qc.dir/impl/fmt.cpp.s
+.PHONY : impl/fmt.cpp.s
+
 impl/lexer.o: impl/lexer.cpp.o
 .PHONY : impl/lexer.o
 
@@ -495,6 +519,9 @@ help:
 	@echo "... impl/errors.o"
 	@echo "... impl/errors.i"
 	@echo "... impl/errors.s"
+	@echo "... impl/fmt.o"
+	@echo "... impl/fmt.i"
+	@echo "... impl/fmt.s"
 	@echo "... impl/lexer.o"
 	@echo "... impl/lexer.i"
 	@echo "... impl/lexer.s"
