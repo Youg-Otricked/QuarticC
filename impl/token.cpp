@@ -1,4 +1,6 @@
 #include "token.h"
+#include <cctype>
+#include <algorithm>
 #include <sstream>
 SourceManager& SourceManager::instance() {
     static SourceManager sm;
