@@ -190,11 +190,17 @@ category(thing): message
 Available categories:
 
 ```text
-improve   Improvements to existing functionality
-feat      New functionality or language features
-clean     Code cleanup, refactoring, or technical debt
-errors    Changes to diagnostics, warnings, or error handling / adding more errors, warnings, notes, help, suggestions, etc
-fix       Bug fixes
+improve       Improvements to existing functionality
+feat          New functionality or language features
+clean         Code cleanup, refactoring, or technical debt
+errors        Changes to diagnostics, warnings, or error handling / adding more errors, warnings, notes, help, suggestions, etc
+fix           Bug fixes
+todo          Something to do before this PR is merged. (Must be part of another commit)
+finish        Finished a todo.
+feat::partial Partiallly finished, similar to todo, but active work/50% done. Finish should also be used on this.
+remove        Delete a feature. More narrow clean
+rev           Revision on previous commit/todo/partial, not done yet
+oops          Forgot to add to previous commit
 ```
 
 For example:
@@ -205,12 +211,22 @@ errors(warnings, diagnostics, help, suggestions): add help suggestions to warnin
 clean(compiler): simplify type checking
 fix(codegen): handle missing returns in main
 improve(lexer): reduce tokenization overhead
+feat::partial(install): mostly finished install script
 ```
 
 If your commit is about multiple catagorys, comma-seperate.
 
 ```text
 errors(warnings),feat(cli-flags): added warnings & -W flags
+```
+
+Finish syntax is:
+```text
+finish(catagory(commit)::named)
+```
+if the catagory is todo, parens can be ommited, commit can be ommited. For example:
+```text
+finish(feat::partial(HEAD~1)::install)
 ```
 
 But at least make your commits sensical. Unlike mine
@@ -220,11 +236,6 @@ FINALLY IM DONE WHY DID THAT TAKE 5 DAYS AAGHAGAHGAH IT WORKS
 ```
 
 Please don't.
-If you forgot something in a previous commit, i like to use
-
-```text
-oops(README): forgot to re-add readme.md
-```
 
 ---
 
