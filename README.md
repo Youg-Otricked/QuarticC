@@ -43,27 +43,15 @@ Install the binaries from GitHub, use the [Package & Version Manager](https://gi
 
 ### Installation
 
-#### Dependencies
+#### Install Script:
 
-You must have `clang` installed. (Obviously, it's a clang project)
-
----
-
-After cloning the repo to your machine, run.
+Run:
 
 ```bash
-cd QuarticC
-chmod +x install.sh
-./install.sh
-# Now, you can type
-qc [flags] (filepath)
-# to run a file
-# or
-qc [flags]
-# to enter the REPL
+curl -fsSL https://raw.githubusercontent.com/Youg-Otricked/QuarticC/master/scripts/install.sh | sh
 ```
 
----
+It installs everything for you.
 
 # Sections
 
@@ -113,8 +101,8 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.4.0 = "Patterns"
-Next Version: x1.5.0 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
+Current Version: x1.5.0 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
+Next Version: x1.5.1 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
 
@@ -126,10 +114,10 @@ Major
 └─ 1.0
 
 Moderate
-└─ Patterns
+└─ Deprecations 
 
 Minor
-└─ QOL
+└─ Deprecated and fully rebuilt error handling.
 
 Patch
 └─ N/A
@@ -137,15 +125,15 @@ Patch
 
 # Recent Deprecations / Breaking Changes
 
-These are deprecations in the past 3 moderate versions (`x1.1.* -> x1.3.*`)
+These are deprecations in the past 3 moderate versions (`x1.3.* -> x1.5.*`)
 
-Jagged Arrays
+Old way of using Unions.
+Try Catch.
 Random Intrisics
 
 # Upcoming Deprecations:
 
 Large amounts of intrinsic functions. Assume no intrinsics that are c-backed other than conversions printing files and heap will be available.
-Try Catch.
 Builtin strings.
 
 
@@ -162,7 +150,6 @@ Builtin strings.
 |                     | Lambdas & Higher-Order Functions                                       | Done    |
 |                     | **Native Multi-Return Values**                                         | Done    |
 | **Data Structures** | Arrays                                                                 | Done    |
-|                     | Spread Syntax for Arrays (`@`)                                         | Done    |
 |                     | Enums                                                                  | Done    |
 | **Advanced**        | Structs, Classes, & Namespaces                                         | Done    |
 |                     | Union Types (TypeScript-style)                                         | Done    |
@@ -415,9 +402,19 @@ int main() {
     UserID myId = 5;
 }
 ```
+Use of unions values requires conversion.
 
-Unions require exactly 0 narrowing.
+```cpp
+    string idVal = id as string;
+```
 
+Or you can match and the compiler will take the right branch for you.
+```cpp
+    match (id) {
+        int(i) => `qout("Integer id: %i", i);;
+        default => ...
+    }
+```
 ### Tagged Enums
 
 Enums can have tags.
@@ -820,21 +817,13 @@ namespace Array
 
 ## Try/Catch and Error Returns
 
-C^4 supports both `try`/`catch` exception handling and multireturn/unions for error handling. You are encouraged to use both, or combine them where appropriate. Just document if you throw or not.
-Example:
+C^4 uses error-as-value error handling. 
 
-```qc
-int main() {
-    try {
-        throw 123;
-    } catch (int e) {
-        ...
-    }
-}
-```
-
-Or for union-based:
-
+Errors are either:
+Unions (first variant = happy path)
+Enums (first variant = happy path)
+Structs (integer at first field, ==0 is happy path)
+Comming soon (hint: `_isOk`)
 ```qc
 struct myerror {
     ...
@@ -844,15 +833,35 @@ MyResult myThing() {
     return myerror{...};
 }
 ```
+Try falls errors through if the value is not a happy path, and unwraps non-error unions:
 
-Nested try/catch blocks are not allowed becuase they just obfuscate what your code is doing without adding any new functionality.
+```qc
+type MyError1 = int | Err;
+type MyError2 = double | Err; // Unwrap
+type MyError3 = string | MyError1; // No Unwrap
+MyError2 err2() {
+    try err1(); // returns Err if fails, otherwise produces the int.
+    ...
+}
+MyError3 err3() {
+    try err1(); // returns MyError1 if fails, otherwise produces the int.
+    ...
+}
+```
+Catch handles error values.
+```qc
+int main() {
+    double d = err2() catch {
+        0.0;
+    };
+}
+```
+Braces may be ommitted if it is only one stmt long, and it must either terminate(return, panic, continue, unreachable, etc) or produce a value. The final stmt is the value produced.
+You can capture the error by after catch wrapping it in parens, e.g: `catch (e) {...}`
 
 ## Defer
 
 C^4 has `defer`, like Go and Zig.
-Unlike Go's `defer`, C^4 `defer` does **not** participate in stack unwinding. Deferred code is not automatically executed when an exception propagates out of a scope.
-This behavior is intentional: making `defer` participate in stack unwinding would introduce additional runtime overhead.
-`defer` should not be considered a destructor mechanism. It is a scope-exit convenience feature, not RAII.
 
 ## Concepts
 
@@ -1016,6 +1025,8 @@ Volatile does not exist on structs or class fields, and does not work on propert
 ## Standard Library Namespaces:
 
 ```
+Errors
+CoreConcepts
 Vector
 List
 Array

@@ -775,14 +775,13 @@ class LLVMCompiler {
         return builder->CreateLoad(dst, dstSlot);
     }
     std::optional<std::vector<unsigned>> unionTagMap(const std::vector<UnionMember>& srcMembers, const std::vector<UnionMember>& dstMembers) {
-        std::vector<unsigned> map;
-        map.reserve(srcMembers.size());
-        for (const UnionMember& member : srcMembers) {
+        std::vector<unsigned> map(srcMembers.size(), 0);
+        for (size_t i = 1; i < srcMembers.size(); ++i) {
             bool found = false;
-            for (int j = 0; j < dstMembers.size(); j++) {
-                if (resolveTypeName(member.type) == resolveTypeName(dstMembers[j].type)) {
+            for (size_t j = 0; j < dstMembers.size(); ++j) {
+                if (resolveTypeName(srcMembers[i].type) == resolveTypeName(dstMembers[j].type)) {
+                    map[i] = static_cast<unsigned>(j);
                     found = true;
-                    map.push_back(j);
                     break;
                 }
             }

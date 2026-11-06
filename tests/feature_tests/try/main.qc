@@ -3,7 +3,7 @@ struct Err {
     int ok;
     string msg;
 }
-type Error2 = double | int | Err;
+type Error2 = float | int | Err;
 Err custom_error() {
     return Err{1, "hello"};
 }
@@ -13,21 +13,21 @@ Error error_union() {
 Error2 returns_errors(bool test) {
     if (test) try custom_error();
     try error_union();
-    return 0.0;
+    return 0.0f;
 }
 int main() {
     Error2 e = returns_errors(false);
     `qout("Error 1: %i\n", e as int);
     e = returns_errors(true);
     `qout("Error 2: %s\n", (e as Err).msg);
-    double result = returns_errors(false) catch (e) {
-        double res = 0.0;
+    float result = returns_errors(false) catch (e) {
+        float res = 0.0f;
         match (e) {
-            int(i) => res = `to_double(i);
+            int(i) => res = `to_float(i);
             default => return -1;
         }
         res;
     };
-    `qout("Collected result: %d\n", result);
+    `qout("Collected result: %f\n", result);
     return 0;
 }

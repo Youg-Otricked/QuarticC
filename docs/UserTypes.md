@@ -39,7 +39,7 @@ type union-name = type1 | type2.....
 
 For Example
 ```cpp
-type Number = int | double | float | "1";
+type Number = int | double | float;
 ```
 
 Alias syntax is
@@ -90,3 +90,19 @@ match (s) {
     None => unreachable;
 }
 ```
+
+To use unions, you have two options.
+
+To extract their values you can:
+1. Cast the value.
+    `myunion as int`
+    The compiler will `#trustyoubro`.
+2. Match.
+    ```qc
+    match (myunion) {
+        int(i) => ...
+        double(d) => ...
+        ...
+    }
+    ```
+    it will take the path of the correct type, or default.

@@ -1,8 +1,8 @@
 #!/bin/sh
 TEST=$1
 FORK=$2
-LLVM_VER=22
-LLVM_FULL=${LLVM_FULL:-22.1.8}
+LLVM_VER=23
+LLVM_FULL=${LLVM_FULL:-23.1.5}
 MIN_GLIBCXX=3.4.32
 MIN_MACOS=14.0
 QC_HOME="${QC_HOME:-$HOME/.qc}"
@@ -259,7 +259,9 @@ compile_source() {
     if ! clang_ok; then
         case "$os-$family" in
         Linux-*debian* | Linux-*ubuntu*) need_pkg "libclang-$LLVM_VER-dev" ;;
-        Linux-*fedora* | Linux-*rhel*) need_pkg "clang$LLVM_VER-devel" ;;
+        Linux-*fedora* | Linux-*rhel*)
+            install_pkg clang-devel || die "failed to install clang-devel (log: $LOG)"
+            ;;
         *) need_pkg clang ;;
         esac
     fi
@@ -280,12 +282,16 @@ compile_source() {
     if [ ! -f "$llvm_lib/libclangBasic.a" ] && [ -z "${LLVM_FROM_TARBALL:-}" ]; then
         case "$os-$family" in
         Linux-*debian* | Linux-*ubuntu*) need_pkg "libclang-$LLVM_VER-dev" ;;
-        Linux-*fedora* | Linux-*rhel*) need_pkg "clang$LLVM_VER-devel" ;;
+        Linux-*fedora* | Linux-*rhel*) need_pkg "clang-devel" ;;
         *) need_pkg clang ;;
         esac
     fi
-    [ -f "$llvm_lib/libclangBasic.a" ] ||
-        die "Clang development libraries for LLVM $LLVM_VER are missing (no libclangBasic.a in $llvm_lib)"
+    case "$family" in
+    *debian* | *ubuntu*)
+        [ -f "$llvm_lib/libclangBasic.a" ] ||
+            die "Clang development libraries for LLVM $LLVM_VER are missing (no libclangBasic.a in $llvm_lib)"
+        ;;
+    esac
     case "$os-$family" in
     Linux-*debian* | Linux-*ubuntu*)
         for p in zlib1g-dev libzstd-dev libedit-dev libffi-dev libxml2-dev libcurl4-openssl-dev; do
@@ -401,6 +407,7 @@ else
             need_pkg "llvm-$LLVM_VER-dev"
             ;;
         *fedora* | *rhel*) install_pkg "llvm$LLVM_VER-devel" || install_pkg llvm-devel ;;
+        *arch*) install_pkg "llvm" ;;
         *) install_llvm_tarball ;;
         esac
         ;;
@@ -453,4 +460,25 @@ else
         printf '%s  This platform lacks access to prebuilt C^4. Compiling from source.%s\n' "$RED" "$NC"
     fi
     compile_source
+fi
+echo "Installation complete! Installation locations:"
+echo " ~/.qc/bin/qc"
+echo " ~/.qc/lib/stdlib.qc"
+echo " ~/.qc/docs"
+ask "Create demo program?" y
+if [ "$ANSWER" = 'y' ]; then
+    printf '
+int main() {
+    `qout("Hello, World!\\n");
+    return 0;
+}
+' | tee demo.qc
+    info "sourcing env"
+    . "$QC_HOME/env"
+    info "compiling: qc demo.qc"
+    qc demo.qc
+    ./a.out
+    rm a.out
+    info "removing test program"
+    rm demo.qc
 fi
