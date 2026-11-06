@@ -20,6 +20,10 @@ namespace CoreConcepts {
         }
     }
 }
+namespace Errors {
+    enum Codes { OK; Unknown; NotFound; InvalidArgument; OutOfBounds; Unsupported; }
+    type Error<T> = T|Codes;
+}
 namespace Array {
     namespace Iterator {
         class It<T> {
@@ -36,7 +40,7 @@ namespace Array {
             }
             T _next() {
                 if (this->size == 0) {
-                    throw "Cannot iterate an empty";
+                    panic "attempted to iterate a empty array";
                 }
                 if (!this->_atEnd()) {
                     return this->data[this->current_index++];
@@ -48,7 +52,7 @@ namespace Array {
             }
             T _prev() {
                 if (this->size == 0) {
-                    throw "Cannot iterate an empty";
+                    panic "attempted to iterate a empty array";
                 }
                 if (!this->_atStart()) {
                     return this->data[--this->current_index];
@@ -126,7 +130,7 @@ namespace Vector {
             }
             T _next() {
                 if (this->size == 0) {
-                    throw "Cannot iterate an empty";
+                    panic "attempted to iterate a empty vector";
                 }
                 if (!this->_atEnd()) {
                     return this->data[this->current_index++];
@@ -138,7 +142,7 @@ namespace Vector {
             }
             T _prev() {
                 if (this->size == 0) {
-                    throw "Cannot iterate an empty";
+                    panic "attempted to iterate a empty vector";
                 }
                 if (!this->_atStart()) {
                     return this->data[--this->current_index];
@@ -269,7 +273,7 @@ namespace List {
 
             T _next() {
                 if (!this->current) {
-                    throw "cannot iterate an empty";
+                    panic "attempted to iterate a empty list";
                 }
                 T value = this->current->data;
                 this->current = this->current->next;
@@ -282,7 +286,7 @@ namespace List {
 
             T _prev() {
                 if (!this->current) {
-                    throw "cannot iterate an empty";
+                    panic "attempted to iterate a empty list";
                 }
                 T value = this->current->data;
                 this->current = this->current->prev;
@@ -499,30 +503,31 @@ namespace Math {
     double pi() {
         return 3.14159265358979323846;
     }
-    type Number = int | float | double | long int | short int | long double | addr_t | byte | nibble;
-    Number max(Number a, Number b) {
+    T max<T(numeric:)>(T a, T b) {
         if (a > b) {
             return a;
         }
         return b;
     }
-    Number min(Number a, Number b) {
+    T min<T(numeric:)>(T a, T b) {
         if (a > b) {
             return b;
         }
         return a;
     }
-    Number sqrt(Number val) {
+    T sqrt<T(numeric:)>(T a, T b) {
         return `to_double(val) #^ 0.5;
     }
-    Number root(Number val, Number power) {
+    T root<T(numeric:)>(T a, T b) {
         double base = `to_double(val);
         double exp  = 1.0 / `to_double(power);
         return base #^ exp;
     }
     type Floating = float | double;
     int ceil(Floating a) {
-        double d = `to_double(a);
+        double d;
+        if (typeof a == double) d = (a as double);
+        else d = `to_double(a as float);
         int i = `to_int(d);
         if (d == `to_double(i)) {
             return i;
@@ -533,7 +538,9 @@ namespace Math {
         }
     }
     int floor(Floating a) {
-        double d = `to_double(a);
+        double d;
+        if (typeof a == double) d = (a as double);
+        else d = `to_double(a as float);
         int i = `to_int(d);
         if (d >= 0) {
             return i;
@@ -544,12 +551,6 @@ namespace Math {
                 return i - 1;
             }
         }
-    }
-    Number abs(Number a) {
-        if (a < 0) {
-            return a * -1;
-        }
-        return a;
     }
     double sin(double x) {
         double pi = 3.14159265358979323846;
@@ -588,9 +589,9 @@ namespace Math {
     double tan(double x) {
         return `ternary(sin(x) == 0.0 || cos(x) == 0.0, 0.0, sin(x) / cos(x));
     }
-    double log(double x) {
+    Errors::Error<double> log(double x) {
         if (x <= 0) {
-            throw "log: x must be positive";
+            return Errors::Codes.InvalidArgument;
         }
         double log2 = 0.693147180559945309417;
         int n = 0;
@@ -645,7 +646,7 @@ namespace Optional {
             this->has_value = true;
         }
         T& value() {
-            if (!this->has_value) throw "No value";
+            if (!this->has_value) panic "no value in option";
             return this->data;
         }
         bool safeGet(T& output) {
@@ -678,7 +679,7 @@ namespace Span {
             }
             T _next() {
                 if (this->size == 0) {
-                    throw "cannot iterate an empty";
+                    panic "cannot iterate an empty";
                 }
                 if (!this->_atEnd()) {
                     return this->data[this->current_index++];
@@ -690,7 +691,7 @@ namespace Span {
             }
             T _prev() {
                 if (this->size == 0) {
-                    throw "cannot iterate an empty";
+                    panic "cannot iterate an empty";
                 }
                 if (!this->_atStart()) {
                     return this->data[--this->current_index];
@@ -711,7 +712,7 @@ namespace Span {
         T* data;
         int length;
         T& operator[](addr_t index) {
-            if (index >= this->length) throw "Cannot index past end of a Span";
+            if (index >= this->length) panic "Cannot index past end of a Span";
             return this->data[index];
         }
         Span() {
@@ -897,7 +898,7 @@ namespace Unordered {
             }
             Pair::Pair<K, V>& _next() {
                 if (!this->current) {
-                    throw "cannot iterate an empty";
+                    panic "cannot iterate an empty";
                 }
                 Pair::Pair<K, V>& val = this->current->data;
                 this->current = this->current->next;
@@ -937,7 +938,7 @@ namespace Unordered {
             }
             T _next() {
                 if (!this->current) {
-                    throw "cannot iterate an empty";
+                    panic "cannot iterate an empty";
                 }
                 T val = this->current->value;
                 this->current = this->current->next;
@@ -1144,7 +1145,7 @@ namespace Unordered {
                 if (node->data.first.equals(key)) return node->data.second;
                 node = node->next;
             }
-            throw "Key not found";
+            panic "Key not found";
         }
         Iterators::MapIt<K, V> _begin() {
             return Iterators::MapIt<K, V>(this->buckets, this->num_buckets, false);
@@ -1713,7 +1714,7 @@ namespace Filesystem {
         }
         void open(Path path) {
             if (path.empty()) {
-                throw "Cannot read a empty file";
+                panic "Cannot read a empty file";
             }
             if (this->isOpen()) {
                 this->close();
@@ -1726,7 +1727,7 @@ namespace Filesystem {
         }
         char get() {
             char c;
-            if (!this->isOpen()) throw "Cannot get a uninitialized InputStream";
+            if (!this->isOpen()) panic "Cannot get a uninitialized InputStream";
             int bytesRead = `read(this->fd, &c, 1);
             this->most_recent = bytesRead;
             if (bytesRead != 1) return '\0';
@@ -1734,7 +1735,7 @@ namespace Filesystem {
         }
         void getline(string dest, char till = '\n') {
             if (!this->isOpen()) {
-                throw "Cannot get a uninitializd InputStream";
+                panic "Cannot get a uninitializd InputStream";
             }
             addr_t byteReadCount = 0;
             while (true) {
@@ -1750,7 +1751,7 @@ namespace Filesystem {
         }
         void read(string dest, addr_t count) {
             if (!this->isOpen()) {
-                throw "Cannot get a uninitializd InputStream";
+                panic "Cannot get a uninitializd InputStream";
             }
             int bytesRead = `read(this->fd, dest, count);
             this->most_recent = bytesRead;
@@ -1782,14 +1783,14 @@ namespace Filesystem {
         }
         void open(Path path) {
             if (path.empty()) {
-                throw "Cannot write to an empty file";
+                panic "Cannot write to an empty file";
             }
             if (this->isOpen()) {
                 this->close();
             }
             this->fd = `open(path.absolute().toString(), "r+");
             if (this->fd == -1) {
-                throw "Cannot open file for writing";
+                panic "Cannot open file for writing";
             }
         }
         // OutputStream now owns fd
@@ -1801,13 +1802,13 @@ namespace Filesystem {
         }
         void put(char c) {
             if (!this->isOpen()) {
-                throw "Cannot put to an uninitialized OutputStream";
+                panic "Cannot put to an uninitialized OutputStream";
             }
             `write(this->fd, &c);
         }
         void write(string data) {
             if (!this->isOpen()) {
-                throw "Cannot write to an uninitialized OutputStream";
+                panic "Cannot write to an uninitialized OutputStream";
             }
             `write(this->fd, data);
         }
@@ -1839,14 +1840,14 @@ namespace Filesystem {
         }
         void open(Path path) {
             if (path.empty()) {
-                throw "Cannot read/write to an empty file";
+                panic "Cannot read/write to an empty file";
             }
             if (this->isOpen()) {
                 this->close();
             }
             this->fd = `open(path.absolute().toString(), "r+");
             if (this->fd == -1) {
-                throw "Cannot open file for reading/writing";
+                panic "Cannot open file for reading/writing";
             }
         }
         // RWStream now owns
@@ -1858,19 +1859,19 @@ namespace Filesystem {
         }
         void put(char c) {
             if (!this->isOpen()) {
-                throw "Cannot put to an uninitialized RWStream";
+                panic "Cannot put to an uninitialized RWStream";
             }
             `write(this->fd, &c);
         }
         void write(string data) {
             if (!this->isOpen()) {
-                throw "Cannot write to an uninitialized RWStream";
+                panic "Cannot write to an uninitialized RWStream";
             }
             `write(this->fd, data);
         }
         char get() {
             char c;
-            if (!this->isOpen()) throw "Cannot get a uninitialized RWStream";
+            if (!this->isOpen()) panic "Cannot get a uninitialized RWStream";
             int bytesRead = `read(this->fd, &c, 1);
             this->most_recent_read = bytesRead;
             if (bytesRead != 1) return '\0';
@@ -1878,7 +1879,7 @@ namespace Filesystem {
         }
         void getline(string dest, char till = '\n') {
             if (!this->isOpen()) {
-                throw "Cannot get a uninitializd RWStream";
+                panic "Cannot get a uninitializd RWStream";
             }
             addr_t byteReadCount = 0;
             while (true) {
@@ -1894,7 +1895,7 @@ namespace Filesystem {
         }
         void read(string dest, addr_t count) {
             if (!this->isOpen()) {
-                throw "Cannot get a uninitializd RWStream";
+                panic "Cannot get a uninitializd RWStream";
             }
             int bytesRead = `read(this->fd, dest, count);
             this->most_recent_read = bytesRead;
@@ -1935,14 +1936,14 @@ namespace Filesystem {
             this->cached = false;
             this->finished = false;
             if (path.empty()) {
-                throw "Cannot iterate an empty directory";
+                panic "Cannot iterate an empty directory";
             }
             if (!path.isDirectory()) {
-                throw "Cannot iterate a non-directory";
+                panic "Cannot iterate a non-directory";
             }
             this->dir = `opendir(path.absolute().toString());
             if (!this->dir) {
-                throw "Cannot open directory";
+                panic "Cannot open directory";
             }
         }
         private bool read_Next() {
@@ -1972,7 +1973,7 @@ namespace Filesystem {
         }
         Path next() {
             if (!this->read_Next()) {
-                throw "DirectoryIterator has no next entry";
+                panic "DirectoryIterator has no next entry";
             }
             Path result = this->directory / this->next_name;
             this->cached = false;
@@ -1998,7 +1999,7 @@ namespace Filesystem {
     }
     bool createDirectory(Path path, int mode = 0o755) {
         if (path.empty()) {
-            throw "Cannot create an empty directory";
+            panic "Cannot create an empty directory";
         }
         if (path.exists()) {
             return false;
@@ -2024,17 +2025,17 @@ namespace Filesystem {
             );
         #endif
         if (result < 0) {
-            throw "Failed to create directory";
+            panic "Failed to create directory";
         }
         return true;
     }
     bool createDirectories(Path path) {
         if (path.empty()) {
-            throw "Cannot create an empty directory";
+            panic "Cannot create an empty directory";
         }
         if (path.exists()) {
             if (!path.isDirectory()) {
-                throw "Path exists and is not a directory";
+                panic "Path exists and is not a directory";
             }
             return false;
         }
@@ -2046,7 +2047,7 @@ namespace Filesystem {
     }
     bool remove(Path path) {
         if (path.empty()) {
-            throw "Cannot remove an empty path";
+            panic "Cannot remove an empty path";
         }
         if (!path.exists()) {
             return false;
@@ -2088,13 +2089,13 @@ namespace Filesystem {
             #endif
         }
         if (result < 0) {
-            throw "Failed to remove path";
+            panic "Failed to remove path";
         }
         return true;
     }
     bool removeAll(Path path) {
         if (path.empty()) {
-            throw "Cannot remove an empty path";
+            panic "Cannot remove an empty path";
         }
         if (!path.exists()) {
             return false;
@@ -2111,7 +2112,7 @@ namespace Filesystem {
     }
     bool rename(Path from, Path to) {
         if (from.empty() || to.empty()) {
-            throw "Cannot rename using an empty path";
+            panic "Cannot rename using an empty path";
         }
         long int result;
         #ifdef __linux
@@ -2133,21 +2134,21 @@ namespace Filesystem {
             )", result, from.absolute().toString(), to.absolute().toString(), "~{rax,rdi,rsi,memory}");
         #endif
         if (result < 0) {
-            throw "Failed to rename path";
+            panic "Failed to rename path";
         }
         return true;
     }
     void copy(Path source, Path destination) {
         if (source.empty() || destination.empty()) {
-            throw "Cannot copy using an empty path";
+            panic "Cannot copy using an empty path";
         }
         if (!source.exists()) {
-            throw "Source does not exist";
+            panic "Source does not exist";
         }
         if (source.isDirectory() && !source.isSymlink()) {
             if (destination.exists()) {
                 if (!destination.isDirectory()) {
-                    throw "Destination exists and is not a directory";
+                    panic "Destination exists and is not a directory";
                 }
             } else {
                 createDirectory(destination);

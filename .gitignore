@@ -1,5 +1,6 @@
 # Ignore build output
 qc/
+logs/
 *.deb
 *.ddeb
 *.changes
@@ -38,3 +39,4 @@ core.*
 .*.dot
 *.dot
 *.txt
+logs/*

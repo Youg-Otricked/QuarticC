@@ -658,7 +658,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             std::unordered_map<std::string, std::unordered_map<std::string, std::string>> db_typeStrings;
             std::unordered_map<std::string, std::unordered_map<std::string, int>> db_lengths;
             std::unordered_map<std::string, std::unordered_map<std::string, std::string>> db_vars;
-            std::unordered_map<std::string, std::unordered_map<std::string, llvm::AllocaInst*>> db_allocas;
             std::unordered_map<std::string, std::unordered_map<std::string, llvm::FunctionType*>> db_lambdas;
             std::unordered_map<std::string, std::unordered_map<std::string, llvm::GlobalVariable*>> db_globals;
             std::unordered_map<std::string, std::map<std::string, llvm::Function*>> db_specialized;
@@ -684,7 +683,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::unordered_map<std::string, std::string> visTypeStr;
                 std::unordered_map<std::string, int> visLen;
                 std::unordered_map<std::string, std::string> visVars;
-                std::unordered_map<std::string, llvm::AllocaInst*> visAlloc;
                 std::unordered_map<std::string, llvm::GlobalVariable*> visGlobals;
                 std::unordered_map<std::string, llvm::FunctionType*> visLamb;
                 std::map<std::string, llvm::Function*> visSpec;
@@ -709,8 +707,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                         if (want(k)) visLen[k] = v;
                     for (auto const& [k, v] : db_vars.at(dep_p))
                         if (want(k)) visVars[k] = v;
-                    for (auto const& [k, v] : db_allocas.at(dep_p))
-                        if (want(k)) visAlloc[k] = v;
                     for (auto const& [k, v] : db_lambdas.at(dep_p))
                         if (want(k)) visLamb[k] = v;
                     for (auto const& [k, v] : db_globals.at(dep_p))
@@ -735,7 +731,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 for (const auto& dep : reach[filepath]) types.insert(type_registry[dep].begin(), type_registry[dep].end());
                 LLVMCompiler comp(types, master_module, context, diBuilder, compileUnit, filepath == file);
                 comp.config = config;
-                std::vector<CTError> errs = comp.compile(file_asts[filepath].statements, visSigs, visFDefs, visTypeStr, visLen, visVars, visAlloc,
+                std::vector<CTError> errs = comp.compile(file_asts[filepath].statements, visSigs, visFDefs, visTypeStr, visLen, visVars,
                                                          visLamb, visSpec, visGlobals);
                 if (config.progress) {
                     std::cout << "[DONE COMPILING] " << filepath << '\n';
@@ -752,7 +748,6 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 db_typeStrings[filepath] = comp.arrayTypeStringsStack[0];
                 db_lengths[filepath] = comp.arrayLengthsStack[0];
                 db_vars[filepath] = comp.varTypesStack[0];
-                db_allocas[filepath] = comp.runtimeArraySizes;
                 db_lambdas[filepath] = comp.lambdaTypes;
                 db_specialized[filepath] = comp.specializedFunctions;
                 db_globals[filepath] = comp.globals;
@@ -833,7 +828,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 case '1': optimization_level = llvm::OptimizationLevel::O1; break;
                 case '2': optimization_level = llvm::OptimizationLevel::O2; break;
                 case '3': optimization_level = llvm::OptimizationLevel::O3; break;
-                case 'z': optimization_level = llvm::OptimizationLevel::Oz; break;
+                case 'z': optimization_level = llvm::OptimizationLevel::O3; break;
                 default: optimization_level = llvm::OptimizationLevel::O2; break;
                 }
                 std::string errStr;

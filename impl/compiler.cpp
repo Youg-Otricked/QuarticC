@@ -453,6 +453,8 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             generateEnum(resolved, userTypes.at(resolved));
         } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
             generateRawUnion(resolved, userTypes.at(resolved));
+        } else if (unionTypes.count(resolved) && unionTypes.at(resolved)->isOpaque()) {
+            generateUnion(resolved, userTypes.at(resolved));
         }
     }
     std::string mangled_class_name = className + "<";
@@ -566,6 +568,8 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                             generateEnum(resolvedType, userTypes.at(resolvedType));
                         } else if (rawUnionTypes.count(resolvedType) && rawUnionTypes.at(resolvedType)->isOpaque()) {
                             generateRawUnion(resolvedType, userTypes.at(resolvedType));
+                        } else if (unionTypes.count(resolvedType) && unionTypes.at(resolvedType)->isOpaque()) {
+                            generateUnion(resolvedType, userTypes.at(resolvedType));
                         }
                     }
                 }
@@ -781,13 +785,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                         llvm::Function* parentCtor = findMethodOverload(classInfo.baseClassName, classInfo.baseClassName, parentArgs);
                         if (parentCtor) {
                             std::vector<llvm::Value*> allArgs = reconcileArgs(parentCtor, currentThis, parentArgs);
-                            if (insideTry()) {
-                                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                                builder->CreateInvoke(parentCtor, contBB, currentLandingPad(), allArgs);
-                                builder->SetInsertPoint(contBB);
-                            } else {
-                                builder->CreateCall(parentCtor, allArgs);
-                            }
+                            builder->CreateCall(parentCtor, allArgs);
                         } else {
                             Position pos = get_pos(method.parentConstructorCall);
                             cg_error(pos, "parent class `" + classInfo.baseClassName + "` has no matching constructor", "QC-S111");
@@ -798,7 +796,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
             }
         }
         if (method.body) { emitStmt(method.body); }
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             if (currentTarget->getReturnType()->isVoidTy()) {
                 builder->CreateRetVoid();
             } else {
@@ -888,7 +886,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
                         builder->CreateRet(retVal);
                     }
                 }
-                if (!builder->GetInsertBlock()->getTerminator()) {
+                if (!builder->GetInsertBlock()->hasTerminator()) {
                     if (fTy->getReturnType()->isVoidTy()) {
                         builder->CreateRetVoid();
                     } else {
@@ -926,6 +924,8 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
             generateEnum(resolved, userTypes.at(resolved));
         } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
             generateRawUnion(resolved, userTypes.at(resolved));
+        } else if (unionTypes.count(resolved) && unionTypes.at(resolved)->isOpaque()) {
+            generateUnion(resolved, userTypes.at(resolved));
         }
     }
     std::string mangled_struct_name = structName + "<";
@@ -979,6 +979,8 @@ llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, Us
                     generateEnum(resolved, userTypes.at(resolved));
                 } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
                     generateRawUnion(resolved, userTypes.at(resolved));
+                } else if (unionTypes.count(resolved) && unionTypes.at(resolved)->isOpaque()) {
+                    generateUnion(resolved, userTypes.at(resolved));
                 }
             }
         }
@@ -1101,7 +1103,7 @@ UserTypeInfo LLVMCompiler::generateGenericUnion(std::string unionName, UserTypeI
     if (inProgressGenerics.count(mangled_union_name)) return {};
     if (unionTypes.find(mangled_union_name) != unionTypes.end()) { return genericiseOrFindUnion(mangled_union_name); }
     std::vector<llvm::Type*> fields = {builder->getInt32Ty(), llvm::PointerType::get(context, 0)};
-    llvm::StructType* unionTy = getOrCreateStructType(fields, mangled_union_name);
+    llvm::StructType* unionTy = getOrCreateStructType(mangled_union_name);
     unionTypes[mangled_union_name] = unionTy;
     inProgressGenerics.insert(mangled_union_name);
     auto oldGenericTypes = this->currentGenericTypes;
@@ -1129,6 +1131,7 @@ UserTypeInfo LLVMCompiler::generateGenericUnion(std::string unionName, UserTypeI
         }
         genericisedInfo.members.push_back({substituteGenerics(resolveTypeName(substituteGenerics(member.type)))});
     }
+    unionTy->setBody({builder->getInt32Ty(), getLargestUType(genericisedInfo)});
     proveConceptsForTypeInfo(mangled_union_name, unionInfo);
     substitutedUnions[mangled_union_name] = genericisedInfo;
     namespaceStack = oldNamespaceStack;
@@ -1199,6 +1202,8 @@ void LLVMCompiler::generateStruct(const std::string& mapKey, UserTypeInfo& info)
                 generateEnum(resolved, userTypes.at(resolved));
             } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
                 generateRawUnion(resolved, userTypes.at(resolved));
+            } else if (unionTypes.count(resolved) && unionTypes.at(resolved)->isOpaque()) {
+                generateUnion(resolved, userTypes.at(resolved));
             }
         }
         llvm::Type* ty = llvmTypeFor(field.type);
@@ -1305,6 +1310,8 @@ void LLVMCompiler::generateClass(const std::string& mapKey, UserTypeInfo& info) 
                         generateEnum(resolved, userTypes.at(resolved));
                     } else if (rawUnionTypes.count(resolved) && rawUnionTypes.at(resolved)->isOpaque()) {
                         generateRawUnion(resolved, userTypes.at(resolved));
+                    } else if (unionTypes.count(resolved) && unionTypes.at(resolved)->isOpaque()) {
+                        generateUnion(resolved, userTypes.at(resolved));
                     }
                 }
                 if (field.isStatic) {
@@ -1357,6 +1364,16 @@ void LLVMCompiler::createUserTypes() {
             }
             genericConcepts[mapKey] = false;
             concepts[mapKey] = info.conceptInfo;
+        }
+    }
+    for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::Union) {
+            if (!info.generics.empty()) {
+                genericUnions[mapKey] = true;
+                continue;
+            }
+            genericUnions[mapKey] = false;
+            unionTypes[mapKey] = getOrCreateStructType(mapKey);
         }
     }
     for (auto& [mapKey, info] : userTypes) {
@@ -1430,18 +1447,6 @@ void LLVMCompiler::createUserTypes() {
         }
     }
     for (auto& [mapKey, info] : userTypes) {
-        if (info.kind == UserTypeKind::Union) {
-            if (!info.generics.empty()) {
-                genericUnions[mapKey] = true;
-                continue;
-            }
-            genericUnions[mapKey] = false;
-            std::vector<llvm::Type*> fields = {builder->getInt32Ty(), llvm::PointerType::get(context, 0)};
-            llvm::StructType* unionTy = getOrCreateStructType(fields, mapKey);
-            unionTypes[mapKey] = unionTy;
-        }
-    }
-    for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Alias) {
             if (!info.generics.empty()) {
                 genericAliases[mapKey] = true;
@@ -1459,6 +1464,9 @@ void LLVMCompiler::createUserTypes() {
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind == UserTypeKind::Enum) { generateEnum(mapKey, info); }
+    }
+    for (auto& [mapKey, info] : userTypes) {
+        if (info.kind == UserTypeKind::Union) { generateUnion(mapKey, info); }
     }
     for (auto& [mapKey, info] : userTypes) {
         if (info.kind != UserTypeKind::Class) continue;
@@ -1725,13 +1733,6 @@ llvm::Value* LLVMCompiler::emitMethodCall(llvm::Function* method, llvm::Value* t
                                           const std::string& name) {
     auto callArgs = reconcileArgs(method, thisPtr, args);
     bool returnsVoid = method->getReturnType()->isVoidTy();
-    if (insideTry()) {
-        auto* contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-        auto* invoke = builder->CreateInvoke(method, contBB, currentLandingPad(), callArgs);
-        if (!returnsVoid) { invoke->setName(name + "_result"); }
-        builder->SetInsertPoint(contBB);
-        return returnsVoid ? nullptr : invoke;
-    }
     auto* call = builder->CreateCall(method, callArgs);
     if (!returnsVoid) { call->setName(name + "_result"); }
     return returnsVoid ? nullptr : call;
@@ -1758,9 +1759,15 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
         if (!value) return nullptr;
         value = normalizeValue(value, (*bin)->left_node);
         auto* typeNode = std::get_if<TypeValueNode>(&(*bin)->right_node);
-        if (!typeNode) return nullptr;
+        if (!typeNode) {
+            cg_error(get_pos(*bin), "no such type", "QC-AS03");
+            return nullptr;
+        }
         llvm::Type* dstTy = llvmTypeFor(typeNode->tok.value);
-        if (!dstTy) return nullptr;
+        if (!dstTy) {
+            cg_error(get_pos(*bin), "no such type", "QC-AS03");
+            return nullptr;
+        }
         llvm::Type* srcTy = value->getType();
         if (srcTy == dstTy) return value;
         bool srcSigned = std::unordered_set<std::string>({"addr_t", "byte", "nibble", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
@@ -1784,6 +1791,14 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
         if (srcTy->isPointerTy() && dstTy->isPointerTy()) return builder->CreateBitCast(value, dstTy);
         if (srcTy->isPointerTy() && dstTy->isIntegerTy()) return builder->CreatePtrToInt(value, dstTy);
         if (srcTy->isIntegerTy() && dstTy->isPointerTy()) return builder->CreateIntToPtr(value, dstTy);
+        std::string unionName;
+        if (isUnionType(srcTy, &unionName)) {
+            if (unionContainsType(dstTy, unionName) == -1) {
+                cg_error(get_pos(*bin), "cannot cast union " + unionName + " to type " + typeNode->tok.value + ": no such case", "QC-AS02");
+                return nullptr;
+            }
+            return extractArrayAsValue(builder->CreateExtractValue(value, 1), dstTy);
+        }
         cg_error(get_pos(*bin), "cannot cast type " + getExpressionType((*bin)->left_node, false) + " to " + typeNode->tok.value, "QC-AS01");
         return nullptr;
     }
@@ -1968,13 +1983,6 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
                             llvm::Function* opMethod = findMethodOverload(className, opMethodName, args);
                             if (opMethod) {
                                 std::vector<llvm::Value*> allArgs = {L, R};
-                                if (insideTry()) {
-                                    auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++),
-                                                                           currentFunction);
-                                    auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                                    builder->SetInsertPoint(contBB);
-                                    return invk;
-                                }
                                 return builder->CreateCall(opMethod, allArgs, "op_result");
                             }
                         }
@@ -1986,13 +1994,6 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
                             if (fit != functions.end()) {
                                 llvm::Function* opMethod = fit->second;
                                 std::vector<llvm::Value*> allArgs = {L, R};
-                                if (insideTry()) {
-                                    auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++),
-                                                                           currentFunction);
-                                    auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                                    builder->SetInsertPoint(contBB);
-                                    return invk;
-                                }
                                 return builder->CreateCall(opMethod, allArgs, "op_result");
                             }
                         }
@@ -2012,12 +2013,6 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
                         llvm::Function* opMethod = findMethodOverload(className, opMethodName, args);
                         if (opMethod) {
                             std::vector<llvm::Value*> allArgs = {R, L};
-                            if (insideTry()) {
-                                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                                auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                                builder->SetInsertPoint(contBB);
-                                return invk;
-                            }
                             return builder->CreateCall(opMethod, allArgs, "op_result");
                         }
                     }
@@ -2029,235 +2024,11 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
                         if (fit != functions.end()) {
                             llvm::Function* opMethod = fit->second;
                             std::vector<llvm::Value*> allArgs = {L, R};
-                            if (insideTry()) {
-                                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                                auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                                builder->SetInsertPoint(contBB);
-                                return invk;
-                            }
                             return builder->CreateCall(opMethod, allArgs, "op_result");
                         }
                     }
                 }
             }
-        }
-    }
-    bool isEq = (*bin)->op_tok.type == TokenType::EQ_TO;
-    bool isNe = (*bin)->op_tok.type == TokenType::NOT_EQ;
-
-    if (isEq || isNe) {
-        llvm::Type* lTy = L->getType();
-        llvm::Type* rTy = R->getType();
-
-        std::string lUnionName, rUnionName;
-        bool lIsUnion = isUnionType(lTy, &lUnionName);
-        bool rIsUnion = isUnionType(rTy, &rUnionName);
-        if (lIsUnion && !rIsUnion) {
-            auto match = matchValueToUnionVariant(lUnionName, (*bin)->right_node, R);
-
-            if (!match) {
-                llvm::Value* res = builder->getFalse();
-                if (isNe) res = builder->CreateNot(res);
-                return res;
-            }
-
-            auto info = *match;
-            llvm::Value* tag = builder->CreateExtractValue(L, 0, "union_tag");
-            llvm::Value* dataPtr = builder->CreateExtractValue(L, 1, "union_data");
-
-            llvm::Value* tagMatch = builder->CreateICmpEQ(tag, builder->getInt32(info.tagIndex), "union_tag_match");
-            llvm::BasicBlock* matchBB = llvm::BasicBlock::Create(context, "tag_matches", currentFunction);
-            llvm::BasicBlock* mismatchBB = llvm::BasicBlock::Create(context, "tag_mismatch", currentFunction);
-            llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "cmp_end", currentFunction);
-
-            builder->CreateCondBr(tagMatch, matchBB, mismatchBB);
-
-            builder->SetInsertPoint(matchBB);
-            llvm::Value* payloadMatch = nullptr;
-
-            if (!info.memberTypeStr.empty()) {
-                llvm::Type* memberTy = llvmTypeFor(info.memberTypeStr);
-
-                if (memberTy->isPointerTy()) {
-                    llvm::Value* payload = builder->CreateBitCast(dataPtr, memberTy);
-
-                    llvm::Function* strcmp_fn = module->getFunction("qc_string_eq");
-                    if (!strcmp_fn) {
-                        auto* i8Ptr = llvm::PointerType::get(context, 0);
-                        auto* fnTy = llvm::FunctionType::get(builder->getInt1Ty(), {i8Ptr, i8Ptr}, false);
-                        strcmp_fn = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage, "qc_string_eq", module);
-                    }
-                    payloadMatch = builder->CreateCall(strcmp_fn, {payload, R}, "payload_str_eq");
-                } else {
-                    llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                    llvm::Value* payload = builder->CreateLoad(memberTy, typedPtr, "union_payload");
-
-                    if (memberTy->isIntegerTy()) {
-                        payloadMatch = builder->CreateICmpEQ(payload, R, "union_int_eq");
-                    } else if (memberTy->isFloatingPointTy()) {
-                        payloadMatch = builder->CreateFCmpOEQ(payload, R, "union_fp_eq");
-                    }
-                }
-            }
-
-            llvm::Value* fullMatch = payloadMatch ? payloadMatch : builder->getTrue();
-            if (fullMatch->getType() != builder->getInt1Ty()) { fullMatch = builder->CreateTrunc(fullMatch, builder->getInt1Ty()); }
-            builder->CreateBr(endBB);
-
-            builder->SetInsertPoint(mismatchBB);
-            builder->CreateBr(endBB);
-
-            builder->SetInsertPoint(endBB);
-            llvm::PHINode* phi = builder->CreatePHI(builder->getInt1Ty(), 2, "cmp_result");
-            phi->addIncoming(fullMatch, matchBB);
-            phi->addIncoming(builder->getFalse(), mismatchBB);
-
-            llvm::Value* result = phi;
-            if (isNe) { result = builder->CreateNot(result); }
-            return result;
-        }
-        if (!lIsUnion && rIsUnion) {
-            auto match = matchValueToUnionVariant(rUnionName, (*bin)->left_node, L);
-            if (!match) {
-                llvm::Value* res = builder->getFalse();
-                if (isNe) res = builder->CreateNot(res);
-                return res;
-            }
-
-            auto info = *match;
-            llvm::Value* tag = builder->CreateExtractValue(R, 0, "union_tag");
-            llvm::Value* dataPtr = builder->CreateExtractValue(R, 1, "union_data");
-
-            llvm::Value* tagMatch = builder->CreateICmpEQ(tag, builder->getInt32(info.tagIndex), "union_tag_match");
-
-            llvm::BasicBlock* matchBB = llvm::BasicBlock::Create(context, "tag_matches", currentFunction);
-            llvm::BasicBlock* mismatchBB = llvm::BasicBlock::Create(context, "tag_mismatch", currentFunction);
-            llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "cmp_end", currentFunction);
-
-            builder->CreateCondBr(tagMatch, matchBB, mismatchBB);
-
-            builder->SetInsertPoint(matchBB);
-            llvm::Value* payloadMatch = nullptr;
-
-            if (!info.memberTypeStr.empty()) {
-                llvm::Type* memberTy = llvmTypeFor(info.memberTypeStr);
-
-                if (memberTy->isPointerTy()) {
-                    llvm::Value* payload = builder->CreateBitCast(dataPtr, memberTy);
-
-                    llvm::Function* strcmp_fn = module->getFunction("qc_string_eq");
-                    if (!strcmp_fn) {
-                        auto* i8Ptr = llvm::PointerType::get(context, 0);
-                        auto* fnTy = llvm::FunctionType::get(builder->getInt1Ty(), {i8Ptr, i8Ptr}, false);
-                        strcmp_fn = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage, "qc_string_eq", module);
-                    }
-                    payloadMatch = builder->CreateCall(strcmp_fn, {L, payload}, "payload_str_eq");
-                } else {
-                    llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                    llvm::Value* payload = builder->CreateLoad(memberTy, typedPtr, "union_payload");
-
-                    if (memberTy->isIntegerTy()) {
-                        payloadMatch = builder->CreateICmpEQ(L, payload, "union_int_eq");
-                    } else if (memberTy->isFloatingPointTy()) {
-                        payloadMatch = builder->CreateFCmpOEQ(L, payload, "union_fp_eq");
-                    }
-                }
-            }
-
-            llvm::Value* fullMatch = payloadMatch ? payloadMatch : builder->getTrue();
-            if (fullMatch->getType() != builder->getInt1Ty()) { fullMatch = builder->CreateTrunc(fullMatch, builder->getInt1Ty()); }
-            builder->CreateBr(endBB);
-
-            builder->SetInsertPoint(mismatchBB);
-            builder->CreateBr(endBB);
-
-            builder->SetInsertPoint(endBB);
-            llvm::PHINode* phi = builder->CreatePHI(builder->getInt1Ty(), 2, "cmp_result");
-            phi->addIncoming(fullMatch, matchBB);
-            phi->addIncoming(builder->getFalse(), mismatchBB);
-
-            llvm::Value* result = phi;
-            if (isNe) { result = builder->CreateNot(result); }
-            return result;
-        }
-        if (lIsUnion && rIsUnion) {
-            llvm::Value* lhsTag = builder->CreateExtractValue(L, 0, "lhs_tag");
-            llvm::Value* rhsTag = builder->CreateExtractValue(R, 0, "rhs_tag");
-            llvm::Value* tagsEqual = builder->CreateICmpEQ(lhsTag, rhsTag, "tags_equal");
-
-            llvm::BasicBlock* tagMatchBB = llvm::BasicBlock::Create(context, "tags_match", currentFunction);
-            llvm::BasicBlock* tagMismatchBB = llvm::BasicBlock::Create(context, "tags_mismatch", currentFunction);
-            llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "union_cmp_end", currentFunction);
-
-            builder->CreateCondBr(tagsEqual, tagMatchBB, tagMismatchBB);
-            builder->SetInsertPoint(tagMatchBB);
-
-            llvm::Value* lhsPayload = builder->CreateExtractValue(L, 1, "lhs_payload");
-            llvm::Value* rhsPayload = builder->CreateExtractValue(R, 1, "rhs_payload");
-
-            auto& members = userTypes.at(baseTypeName(lUnionName)).members;
-            llvm::BasicBlock* payloadEndBB = llvm::BasicBlock::Create(context, "payload_cmp_end", currentFunction);
-            llvm::BasicBlock* defaultBB = llvm::BasicBlock::Create(context, "cmp_default", currentFunction);
-            llvm::SwitchInst* sw = builder->CreateSwitch(lhsTag, defaultBB, members.size());
-            std::vector<std::pair<llvm::BasicBlock*, llvm::Value*>> caseResults;
-
-            for (size_t i = 0; i < members.size(); i++) {
-                llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "cmp_case_" + std::to_string(i), currentFunction);
-                sw->addCase(builder->getInt32(i), caseBB);
-                builder->SetInsertPoint(caseBB);
-
-                std::string typeStr = members[i].type;
-                size_t colonPos = typeStr.find(':');
-                if (colonPos != std::string::npos) { typeStr = typeStr.substr(0, colonPos); }
-
-                llvm::Type* memberTy = llvmTypeFor(typeStr);
-
-                llvm::Value *lhsVal, *rhsVal;
-
-                if (memberTy->isPointerTy()) {
-                    lhsVal = builder->CreateBitCast(lhsPayload, memberTy);
-                    rhsVal = builder->CreateBitCast(rhsPayload, memberTy);
-                } else {
-                    llvm::Value* lhsTyped = builder->CreateBitCast(lhsPayload, llvm::PointerType::get(context, 0));
-                    llvm::Value* rhsTyped = builder->CreateBitCast(rhsPayload, llvm::PointerType::get(context, 0));
-                    lhsVal = builder->CreateLoad(memberTy, lhsTyped);
-                    rhsVal = builder->CreateLoad(memberTy, rhsTyped);
-                }
-                llvm::Value* cmp;
-                if (memberTy->isIntegerTy()) {
-                    cmp = builder->CreateICmpEQ(lhsVal, rhsVal);
-                } else if (memberTy->isFloatingPointTy()) {
-                    cmp = builder->CreateFCmpOEQ(lhsVal, rhsVal);
-                } else if (memberTy->isPointerTy()) {
-                    llvm::Function* strcmp_fn = module->getFunction("qc_string_eq");
-                    cmp = builder->CreateCall(strcmp_fn, {lhsVal, rhsVal});
-                    cmp = builder->CreateTrunc(cmp, builder->getInt1Ty());
-                } else {
-                    cmp = builder->getTrue();
-                }
-
-                caseResults.push_back({caseBB, cmp});
-                builder->CreateBr(payloadEndBB);
-            }
-            builder->SetInsertPoint(defaultBB);
-            builder->CreateBr(payloadEndBB);
-            builder->SetInsertPoint(payloadEndBB);
-            llvm::PHINode* payloadPhi = builder->CreatePHI(builder->getInt1Ty(), caseResults.size());
-            for (auto& [bb, val] : caseResults) { payloadPhi->addIncoming(val, bb); }
-            payloadPhi->addIncoming(builder->getFalse(), defaultBB);
-            builder->CreateBr(endBB);
-
-            builder->SetInsertPoint(tagMismatchBB);
-            builder->CreateBr(endBB);
-
-            builder->SetInsertPoint(endBB);
-            llvm::PHINode* finalPhi = builder->CreatePHI(builder->getInt1Ty(), 2);
-            finalPhi->addIncoming(payloadPhi, payloadEndBB);
-            finalPhi->addIncoming(builder->getFalse(), tagMismatchBB);
-
-            llvm::Value* result = finalPhi;
-            if (isNe) { result = builder->CreateNot(result); }
-            return result;
         }
     }
     if ((*bin)->is_f) {
@@ -2273,449 +2044,6 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
         }
 
         return builder->CreateCall(concatFn, {lStr, rStr}, "fstr_concat");
-    }
-    std::string lUnion, rUnion;
-    bool lIsUnion = isUnionType(L->getType(), &lUnion);
-    bool rIsUnion = isUnionType(R->getType(), &rUnion);
-    if (lIsUnion && rIsUnion) {
-        auto& members = userTypes.at(baseTypeName(lUnion)).members;
-        llvm::Value* lTag = builder->CreateExtractValue(L, 0, "ltag");
-        llvm::Value* rTag = builder->CreateExtractValue(R, 0, "rtag");
-        llvm::Value* lPayload = builder->CreateExtractValue(L, 1, "lpayload");
-        llvm::Value* rPayload = builder->CreateExtractValue(R, 1, "rpayload");
-        const bool isBooleanResult = op == TokenType::EQ_TO || op == TokenType::NOT_EQ || op == TokenType::LESS || op == TokenType::MORE ||
-                                     op == TokenType::LESS_EQ || op == TokenType::MORE_EQ || op == TokenType::AND || op == TokenType::OR ||
-                                     op == TokenType::XOR;
-        llvm::Type* resultTy = isBooleanResult ? builder->getInt1Ty() : builder->getDoubleTy();
-        llvm::AllocaInst* resultAlloc = createEntryAlloca("union_op_result", resultTy);
-        llvm::BasicBlock* dispatchBB = llvm::BasicBlock::Create(context, "union_op_dispatch", currentFunction);
-        llvm::BasicBlock* badTagBB = llvm::BasicBlock::Create(context, "union_op_bad_tag", currentFunction);
-        llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "union_op_end", currentFunction);
-        llvm::Value* sameTag = builder->CreateICmpEQ(lTag, rTag, "union_same_tag");
-        builder->CreateCondBr(sameTag, dispatchBB, badTagBB);
-        builder->SetInsertPoint(badTagBB);
-        builder->CreateStore(isBooleanResult ? static_cast<llvm::Value*>(builder->getFalse())
-                                             : static_cast<llvm::Value*>(llvm::ConstantFP::get(builder->getDoubleTy(), 0.0)),
-                             resultAlloc);
-        builder->CreateBr(endBB);
-        builder->SetInsertPoint(dispatchBB);
-        llvm::SwitchInst* sw = builder->CreateSwitch(lTag, badTagBB, members.size());
-        for (size_t i = 0; i < members.size(); ++i) {
-            llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "union_op_case_" + std::to_string(i), currentFunction);
-            sw->addCase(builder->getInt32(i), caseBB);
-            builder->SetInsertPoint(caseBB);
-            std::string ts = members[i].type;
-            size_t colon = ts.find(':');
-            if (colon != std::string::npos) ts = ts.substr(0, colon);
-            llvm::Type* memberTy = llvmTypeFor(ts);
-            if (memberTy->isPointerTy() || memberTy->isArrayTy()) {
-                cg_error((*bin)->op_tok.pos, "pointer arithmetic is not allowed on unions", "QC-S119");
-                return nullptr;
-            }
-            llvm::Value* lhsVal = builder->CreateLoad(memberTy, lPayload, "lmember");
-            llvm::Value* rhsVal = builder->CreateLoad(memberTy, rPayload, "rmember");
-            llvm::Value* res = nullptr;
-            if (auto* classTy = llvm::dyn_cast<llvm::StructType>(memberTy); classTy && classTy->hasName()) {
-                std::string className = classTy->getName().str();
-                std::string methodName = getOperatorMethodName(op);
-                if (classTypes.contains(className) && !methodName.empty()) {
-                    llvm::Function* method = findMethodOverload(className, methodName, {rhsVal});
-                    if (method) {
-                        llvm::AllocaInst* self = createEntryAlloca("union_op_self", memberTy);
-                        builder->CreateStore(lhsVal, self);
-                        std::vector<llvm::Value*> args = {self, rhsVal};
-                        if (insideTry()) {
-                            auto* contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            res = builder->CreateInvoke(method, contBB, currentLandingPad(), args);
-                            builder->SetInsertPoint(contBB);
-                        } else {
-                            res = builder->CreateCall(method, args, "op_result");
-                        }
-                    }
-                } else if (auto it = userTypes.find(className);
-                           it != userTypes.end() && it->second.kind != UserTypeKind::Concept && it->second.kind != UserTypeKind::Modifier) {
-                    auto fit = functions.find(className + "_" + methodName);
-                    if (fit != functions.end()) {
-                        llvm::Function* opMethod = fit->second;
-                        std::vector<llvm::Value*> allArgs = {L, R};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
-                        return builder->CreateCall(opMethod, allArgs, "op_result");
-                    }
-                }
-            }
-            if (!res && ts == "char" && (op == TokenType::PLUS || op == TokenType::MINUS)) {
-                llvm::Value* pl = builder->CreateSExtOrTrunc(lhsVal, builder->getInt32Ty(), "char_lhs");
-                llvm::Value* pr = builder->CreateSExtOrTrunc(rhsVal, builder->getInt32Ty(), "char_rhs");
-
-                res = op == TokenType::PLUS ? builder->CreateAdd(pl, pr, "char_add") : builder->CreateSub(pl, pr, "char_sub");
-            }
-            if (!res) {
-                const bool isFP = memberTy->isFloatingPointTy();
-                switch (op) {
-                case TokenType::AND:
-                case TokenType::OR:
-                case TokenType::XOR:
-                    lhsVal = toTruthiness(lhsVal, get_pos((*bin)->left_node));
-                    rhsVal = toTruthiness(rhsVal, get_pos((*bin)->right_node));
-                    if (op == TokenType::AND)
-                        res = builder->CreateAnd(lhsVal, rhsVal, "and");
-                    else if (op == TokenType::OR)
-                        res = builder->CreateOr(lhsVal, rhsVal, "or");
-                    else
-                        res = builder->CreateXor(lhsVal, rhsVal, "xor");
-                    break;
-                case TokenType::EQ_TO: res = isFP ? builder->CreateFCmpOEQ(lhsVal, rhsVal) : builder->CreateICmpEQ(lhsVal, rhsVal); break;
-                case TokenType::NOT_EQ: res = isFP ? builder->CreateFCmpONE(lhsVal, rhsVal) : builder->CreateICmpNE(lhsVal, rhsVal); break;
-                case TokenType::LESS: res = isFP ? builder->CreateFCmpOLT(lhsVal, rhsVal) : builder->CreateICmpSLT(lhsVal, rhsVal); break;
-                case TokenType::MORE: res = isFP ? builder->CreateFCmpOGT(lhsVal, rhsVal) : builder->CreateICmpSGT(lhsVal, rhsVal); break;
-                case TokenType::LESS_EQ: res = isFP ? builder->CreateFCmpOLE(lhsVal, rhsVal) : builder->CreateICmpSLE(lhsVal, rhsVal); break;
-                case TokenType::MORE_EQ: res = isFP ? builder->CreateFCmpOGE(lhsVal, rhsVal) : builder->CreateICmpSGE(lhsVal, rhsVal); break;
-                case TokenType::PLUS: res = isFP ? builder->CreateFAdd(lhsVal, rhsVal) : builder->CreateAdd(lhsVal, rhsVal); break;
-                case TokenType::MINUS: res = isFP ? builder->CreateFSub(lhsVal, rhsVal) : builder->CreateSub(lhsVal, rhsVal); break;
-                case TokenType::MUL: res = isFP ? builder->CreateFMul(lhsVal, rhsVal) : builder->CreateMul(lhsVal, rhsVal); break;
-                case TokenType::DIV: res = isFP ? builder->CreateFDiv(lhsVal, rhsVal) : builder->CreateSDiv(lhsVal, rhsVal); break;
-                case TokenType::MOD: res = isFP ? builder->CreateFRem(lhsVal, rhsVal) : builder->CreateSRem(lhsVal, rhsVal); break;
-                case TokenType::AMPERSAND:
-                case TokenType::PIPE:
-                case TokenType::BITWISE_XOR:
-                    if (isFP) {
-                        cg_error((*bin)->op_tok.pos,
-                                 "bitwise operation is not allowed "
-                                 "on floating-point union members",
-                                 "QC-S120");
-                        return nullptr;
-                    }
-
-                    if (op == TokenType::AMPERSAND)
-                        res = builder->CreateAnd(lhsVal, rhsVal);
-                    else if (op == TokenType::PIPE)
-                        res = builder->CreateOr(lhsVal, rhsVal);
-                    else
-                        res = builder->CreateXor(lhsVal, rhsVal);
-                    break;
-                case TokenType::LSHIFT:
-                case TokenType::RSHIFT:
-                case TokenType::LOGICAL_RSHIFT:
-                    if (isFP) {
-                        cg_error((*bin)->op_tok.pos,
-                                 "shift operation is not allowed on "
-                                 "floating-point union members",
-                                 "QC-S121");
-                        return nullptr;
-                    }
-                    if (op == TokenType::LSHIFT)
-                        res = builder->CreateShl(lhsVal, rhsVal);
-                    else if (op == TokenType::RSHIFT)
-                        res = builder->CreateAShr(lhsVal, rhsVal);
-                    else
-                        res = builder->CreateLShr(lhsVal, rhsVal);
-                    break;
-                case TokenType::L_ROT:
-                case TokenType::R_ROT: {
-                    if (isFP) {
-                        cg_error((*bin)->op_tok.pos,
-                                 "rotation is not allowed on "
-                                 "floating-point union members",
-                                 "QC-S122");
-                        return nullptr;
-                    }
-                    llvm::Intrinsic::ID id = op == TokenType::L_ROT ? llvm::Intrinsic::fshl : llvm::Intrinsic::fshr;
-                    llvm::Function* rotation = llvm::Intrinsic::getOrInsertDeclaration(module, id, {memberTy});
-                    res = builder->CreateCall(rotation, {lhsVal, lhsVal, rhsVal}, "union_rotate");
-                    break;
-                }
-                default: cg_error((*bin)->op_tok.pos, "unsupported operator for union member " + ts, "QC-S123"); return nullptr;
-                }
-            }
-            if (res->getType() != resultTy) {
-                if (resultTy->isDoubleTy()) {
-                    if (res->getType()->isIntegerTy()) {
-                        res = builder->CreateSIToFP(res, resultTy, "union_to_double");
-                    } else if (res->getType()->isFloatTy()) {
-                        res = builder->CreateFPExt(res, resultTy, "union_to_double");
-                    } else {
-                        cg_error((*bin)->op_tok.pos,
-                                 "union operator must return a numeric "
-                                 "value",
-                                 "QC-S124");
-                        return nullptr;
-                    }
-                } else {
-                    cg_error((*bin)->op_tok.pos, "union boolean operator must return bool", "QC-S125");
-                    return nullptr;
-                }
-            }
-            builder->CreateStore(res, resultAlloc);
-            builder->CreateBr(endBB);
-        }
-        builder->SetInsertPoint(endBB);
-        return builder->CreateLoad(resultTy, resultAlloc, "union_op_result");
-    }
-    if (lIsUnion || rIsUnion) {
-        std::string unionName = lIsUnion ? lUnion : rUnion;
-        auto& members = userTypes.at(baseTypeName(unionName)).members;
-        llvm::Value* unionVal = lIsUnion ? L : R;
-        llvm::Value* otherVal = lIsUnion ? R : L;
-
-        llvm::Value* tag = builder->CreateExtractValue(unionVal, 0, "tag");
-        llvm::Value* payload = builder->CreateExtractValue(unionVal, 1, "payload");
-
-        llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "union_op_end", currentFunction);
-        bool isComparison = op == TokenType::EQ_TO || op == TokenType::NOT_EQ || op == TokenType::LESS || op == TokenType::MORE ||
-                            op == TokenType::LESS_EQ || op == TokenType::MORE_EQ || op == TokenType::AND || op == TokenType::OR ||
-                            op == TokenType::XOR;
-        llvm::Type* resultTy = isComparison ? builder->getInt1Ty() : builder->getDoubleTy();
-        llvm::AllocaInst* resultAlloc = createEntryAlloca("union_op_result", resultTy);
-
-        llvm::SwitchInst* sw = builder->CreateSwitch(tag, endBB, members.size());
-        std::vector<llvm::BasicBlock*> caseBBs;
-
-        for (size_t i = 0; i < members.size(); i++) {
-            llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "union_op_case_" + std::to_string(i), currentFunction);
-            sw->addCase(builder->getInt32(i), caseBB);
-            builder->SetInsertPoint(caseBB);
-
-            std::string ts = members[i].type;
-            size_t c = ts.find(':');
-            if (c != std::string::npos) ts = ts.substr(0, c);
-            llvm::Type* memberTy = llvmTypeFor(ts);
-            bool lhsChar = lIsUnion ? ts == "char" : getExpressionType((*bin)->left_node) == "char";
-            bool rhsChar = rIsUnion ? ts == "char" : getExpressionType((*bin)->right_node) == "char";
-            llvm::Value* typedPtr = builder->CreateBitCast(payload, llvm::PointerType::get(context, 0));
-            llvm::Value* memberVal = builder->CreateLoad(memberTy, typedPtr, "member");
-
-            llvm::Value* lhsVal = lIsUnion ? memberVal : otherVal;
-            llvm::Value* rhsVal = lIsUnion ? otherVal : memberVal;
-            llvm::StructType* classTy = llvm::dyn_cast<llvm::StructType>(lhsVal->getType());
-            llvm::Value* res = nullptr;
-
-            if (classTy && classTy->hasName()) {
-                std::string className = classTy->getName().str();
-                std::string methodName = getOperatorMethodName(op);
-
-                if (classTypes.contains(className) && !methodName.empty()) {
-                    std::vector<llvm::Value*> args = {rhsVal};
-                    llvm::Function* method = findMethodOverload(className, methodName, args);
-                    if (method) {
-                        llvm::AllocaInst* self = createEntryAlloca("union_op_self", lhsVal->getType());
-                        builder->CreateStore(lhsVal, self);
-
-                        std::vector<llvm::Value*> callArgs = {self, rhsVal};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            res = builder->CreateInvoke(method, contBB, currentLandingPad(), callArgs);
-                            builder->SetInsertPoint(contBB);
-                        }
-                        res = builder->CreateCall(method, callArgs, "op_result");
-                    }
-                } else if (auto it = userTypes.find(className);
-                           it != userTypes.end() && it->second.kind != UserTypeKind::Concept && it->second.kind != UserTypeKind::Modifier) {
-                    auto fit = functions.find(className + "_" + methodName);
-                    if (fit != functions.end()) {
-                        llvm::Function* opMethod = fit->second;
-                        std::vector<llvm::Value*> allArgs = {L, R};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
-                        return builder->CreateCall(opMethod, allArgs, "op_result");
-                    }
-                }
-            } else {
-                classTy = llvm::dyn_cast<llvm::StructType>(rhsVal->getType());
-                if (classTy && classTy->hasName()) {
-                    std::string className = classTy->getName().str();
-                    std::string methodName = getRoperatorMethodName(op);
-
-                    if (classTypes.contains(className) && !methodName.empty()) {
-                        std::vector<llvm::Value*> args = {rhsVal};
-                        llvm::Function* method = findMethodOverload(className, methodName, args);
-                        if (method) {
-                            llvm::AllocaInst* self = createEntryAlloca("union_op_self", rhsVal->getType());
-                            builder->CreateStore(rhsVal, self);
-                            std::vector<llvm::Value*> callArgs = {self, lhsVal};
-                            if (insideTry()) {
-                                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                                res = builder->CreateInvoke(method, contBB, currentLandingPad(), callArgs);
-                                builder->SetInsertPoint(contBB);
-                            }
-                            res = builder->CreateCall(method, callArgs, "op_result");
-                        }
-                    }
-                } else if (classTy && classTy->hasName()) {
-                    std::string className = classTy->getName().str();
-                    if (auto it = userTypes.find(className);
-                        it != userTypes.end() && it->second.kind != UserTypeKind::Concept && it->second.kind != UserTypeKind::Modifier) {
-                        std::string opMethodName = getRoperatorMethodName((*bin)->op_tok.type);
-                        if (!opMethodName.empty()) {
-                            std::vector<llvm::Value*> args = {R};
-                            auto fit = functions.find(className + "_" + opMethodName);
-                            if (fit != functions.end()) {
-                                llvm::Function* opMethod = fit->second;
-                                std::vector<llvm::Value*> allArgs = {L, R};
-                                if (insideTry()) {
-                                    auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++),
-                                                                           currentFunction);
-                                    auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                                    builder->SetInsertPoint(contBB);
-                                    return invk;
-                                }
-                                return builder->CreateCall(opMethod, allArgs, "op_result");
-                            }
-                        }
-                    }
-                }
-            }
-            llvm::Type* lTy = lhsVal->getType();
-            llvm::Type* rTy = rhsVal->getType();
-            if ((op == TokenType::PLUS || op == TokenType::MINUS) && (lhsChar || rhsChar)) {
-                if (!lhsVal->getType()->isIntegerTy() || !rhsVal->getType()->isIntegerTy()) {
-                    cg_error((*bin)->op_tok.pos, "char arithmetic requires integer operands", "QC-S126");
-                    return nullptr;
-                }
-                unsigned width = std::max(32u, std::max(lhsVal->getType()->getIntegerBitWidth(), rhsVal->getType()->getIntegerBitWidth()));
-                llvm::Type* promotedTy = builder->getIntNTy(width);
-                lhsVal = builder->CreateSExtOrTrunc(lhsVal, promotedTy);
-                rhsVal = builder->CreateSExtOrTrunc(rhsVal, promotedTy);
-                res = op == TokenType::PLUS ? builder->CreateAdd(lhsVal, rhsVal) : builder->CreateSub(lhsVal, rhsVal);
-            }
-            bool lhsPtr = lhsVal->getType()->isPointerTy();
-            bool rhsPtr = rhsVal->getType()->isPointerTy();
-            if (lhsPtr || rhsPtr) {
-                cg_error(get_pos(*bin), "Pointer arithmetic is not allow on unions. Consider extracting the value first.", "QC-S127");
-                return nullptr;
-            }
-            if (lTy != rTy) {
-                if (lTy->isDoubleTy() || rTy->isDoubleTy()) {
-                    if (!lTy->isDoubleTy())
-                        lhsVal = lTy->isFloatTy() ? builder->CreateFPExt(lhsVal, builder->getDoubleTy())
-                                                  : builder->CreateSIToFP(lhsVal, builder->getDoubleTy());
-                    if (!rTy->isDoubleTy())
-                        rhsVal = rTy->isFloatTy() ? builder->CreateFPExt(rhsVal, builder->getDoubleTy())
-                                                  : builder->CreateSIToFP(rhsVal, builder->getDoubleTy());
-                } else if (lTy->isFloatTy() || rTy->isFloatTy()) {
-                    if (!lTy->isFloatTy()) lhsVal = builder->CreateSIToFP(lhsVal, builder->getFloatTy());
-                    if (!rTy->isFloatTy()) rhsVal = builder->CreateSIToFP(rhsVal, builder->getFloatTy());
-                } else if (lTy->isIntegerTy() && rTy->isIntegerTy()) {
-                    unsigned lBits = lTy->getIntegerBitWidth();
-                    unsigned rBits = rTy->getIntegerBitWidth();
-                    if (lBits < rBits)
-                        lhsVal = builder->CreateSExt(lhsVal, rTy);
-                    else
-                        rhsVal = builder->CreateSExt(rhsVal, lTy);
-                } else if (lTy->isIntegerTy() && rTy->isFloatingPointTy()) {
-                    lhsVal = builder->CreateSIToFP(lhsVal, rTy);
-                } else if (lTy->isFloatingPointTy() && rTy->isIntegerTy()) {
-                    rhsVal = builder->CreateSIToFP(rhsVal, lTy);
-                }
-            }
-            bool isFP = lhsVal->getType()->isFloatingPointTy();
-            if (res == nullptr) {
-                switch (op) {
-                case TokenType::AND:
-                case TokenType::OR:
-                case TokenType::XOR:
-                    lhsVal = toTruthiness(lhsVal, get_pos((*bin)->left_node));
-                    rhsVal = toTruthiness(rhsVal, get_pos((*bin)->right_node));
-                    if (op == TokenType::AND)
-                        res = builder->CreateAnd(lhsVal, rhsVal);
-                    else if (op == TokenType::OR)
-                        res = builder->CreateOr(lhsVal, rhsVal);
-                    else
-                        res = builder->CreateXor(lhsVal, rhsVal);
-                    break;
-                case TokenType::NOT_EQ: res = isFP ? builder->CreateFCmpONE(lhsVal, rhsVal) : builder->CreateICmpNE(lhsVal, rhsVal); break;
-                case TokenType::EQ: res = isFP ? builder->CreateFCmpOEQ(lhsVal, rhsVal) : builder->CreateICmpEQ(lhsVal, rhsVal); break;
-                case TokenType::MOD: res = isFP ? builder->CreateFRem(lhsVal, rhsVal) : builder->CreateSRem(lhsVal, rhsVal); break;
-                case TokenType::LESS: res = isFP ? builder->CreateFCmpOLT(lhsVal, rhsVal) : builder->CreateICmpSLT(lhsVal, rhsVal); break;
-                case TokenType::MORE: res = isFP ? builder->CreateFCmpOGT(lhsVal, rhsVal) : builder->CreateICmpSGT(lhsVal, rhsVal); break;
-                case TokenType::LESS_EQ: res = isFP ? builder->CreateFCmpOLE(lhsVal, rhsVal) : builder->CreateICmpSLE(lhsVal, rhsVal); break;
-                case TokenType::MORE_EQ: res = isFP ? builder->CreateFCmpOGE(lhsVal, rhsVal) : builder->CreateICmpSGE(lhsVal, rhsVal); break;
-                case TokenType::PLUS: res = isFP ? builder->CreateFAdd(lhsVal, rhsVal) : builder->CreateAdd(lhsVal, rhsVal); break;
-                case TokenType::MINUS: res = isFP ? builder->CreateFSub(lhsVal, rhsVal) : builder->CreateSub(lhsVal, rhsVal); break;
-                case TokenType::MUL: res = isFP ? builder->CreateFMul(lhsVal, rhsVal) : builder->CreateMul(lhsVal, rhsVal); break;
-                case TokenType::DIV: res = isFP ? builder->CreateFDiv(lhsVal, rhsVal) : builder->CreateSDiv(lhsVal, rhsVal); break;
-                case TokenType::AMPERSAND:
-                case TokenType::PIPE:
-                case TokenType::BITWISE_XOR:
-                case TokenType::LSHIFT:
-                case TokenType::RSHIFT:
-                case TokenType::LOGICAL_RSHIFT:
-                    if (isFP) {
-                        cg_error((*bin)->op_tok.pos,
-                                 "bitwise operations not allowed on "
-                                 "floating-point union members",
-                                 "QC-S128");
-                        return nullptr;
-                    }
-                    if (op == TokenType::AMPERSAND)
-                        res = builder->CreateAnd(lhsVal, rhsVal);
-                    else if (op == TokenType::PIPE)
-                        res = builder->CreateOr(lhsVal, rhsVal);
-                    else if (op == TokenType::BITWISE_XOR)
-                        res = builder->CreateXor(lhsVal, rhsVal);
-                    else if (op == TokenType::LSHIFT)
-                        res = builder->CreateShl(lhsVal, rhsVal);
-                    else if (op == TokenType::RSHIFT)
-                        res = builder->CreateAShr(lhsVal, rhsVal);
-                    else
-                        res = builder->CreateLShr(lhsVal, rhsVal);
-                    break;
-                case TokenType::L_ROT:
-                case TokenType::R_ROT: {
-                    if (isFP) {
-                        cg_error((*bin)->op_tok.pos,
-                                 "rotation not allowed on floating-point union "
-                                 "members",
-                                 "QC-S129");
-                        return nullptr;
-                    }
-                    llvm::Intrinsic::ID id = (op == TokenType::L_ROT) ? llvm::Intrinsic::fshl : llvm::Intrinsic::fshr;
-                    llvm::Function* rotFunc = llvm::Intrinsic::getOrInsertDeclaration(module, id, {lhsVal->getType()});
-                    res = builder->CreateCall(rotFunc, {lhsVal, lhsVal, rhsVal});
-                    break;
-                }
-                default: res = memberVal; break;
-                }
-            }
-            bool isCharArithmetic = (lhsChar || rhsChar) && (op == TokenType::PLUS || op == TokenType::MINUS);
-            if (isCharArithmetic) {
-                if (!lhsVal->getType()->isIntegerTy() || !rhsVal->getType()->isIntegerTy()) {
-                    cg_error((*bin)->op_tok.pos, "char arithmetic requires integer operands", "QC-S126");
-                    return nullptr;
-                }
-                bool mixedChar = lhsChar != rhsChar;
-                llvm::Type* promotedTy = builder->getInt32Ty();
-                llvm::Value* promotedL = builder->CreateSExtOrTrunc(lhsVal, promotedTy, "char_lhs");
-                llvm::Value* promotedR = builder->CreateSExtOrTrunc(rhsVal, promotedTy, "char_rhs");
-                switch (op) {
-                case TokenType::PLUS: res = builder->CreateAdd(promotedL, promotedR, "char_add"); break;
-                case TokenType::MINUS: res = builder->CreateSub(promotedL, promotedR, "char_sub"); break;
-                default: break;
-                }
-                if (mixedChar) { res = builder->CreateTrunc(res, builder->getInt8Ty(), "truncate_to_char"); }
-            }
-            llvm::Type* allocTy = resultAlloc->getAllocatedType();
-            if (res->getType() != allocTy) {
-                if (allocTy->isDoubleTy() && res->getType()->isIntegerTy())
-                    res = builder->CreateSIToFP(res, allocTy);
-                else if (allocTy->isDoubleTy() && res->getType()->isFloatTy())
-                    res = builder->CreateFPExt(res, allocTy);
-            }
-            builder->CreateStore(res, resultAlloc);
-            builder->CreateBr(endBB);
-            caseBBs.push_back(caseBB);
-        }
-
-        builder->SetInsertPoint(endBB);
-        return builder->CreateLoad(resultAlloc->getAllocatedType(), resultAlloc, "union_op_result");
     }
     std::string lTyStr = getExpressionType((*bin)->left_node, false);
     std::string rTyStr = getExpressionType((*bin)->right_node, false);
@@ -2749,12 +2077,6 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
                         builder->CreateStore(L, temp);
 
                         std::vector<llvm::Value*> allArgs = {temp, R};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            llvm::InvokeInst* invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
                         return builder->CreateCall(opMethod, allArgs, "op_result");
                     }
                 }
@@ -2766,12 +2088,6 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
                     if (fit != functions.end()) {
                         llvm::Function* opMethod = fit->second;
                         std::vector<llvm::Value*> allArgs = {L, R};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
                         return builder->CreateCall(opMethod, allArgs, "op_result");
                     }
                 }
@@ -2790,12 +2106,6 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
                         llvm::AllocaInst* temp = createEntryAlloca("temp_op_rhs", rty);
                         builder->CreateStore(R, temp);
                         std::vector<llvm::Value*> allArgs = {temp, L};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            llvm::InvokeInst* invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
                         return builder->CreateCall(opMethod, allArgs, "op_result");
                     }
                 }
@@ -2807,12 +2117,6 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
                     if (fit != functions.end()) {
                         llvm::Function* opMethod = fit->second;
                         std::vector<llvm::Value*> allArgs = {L, R};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
                         return builder->CreateCall(opMethod, allArgs, "op_result");
                     }
                 }
@@ -3510,13 +2814,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                     llvm::Function* ctor = findMethodOverload(qcType, method.name_tok.value, {});
                     if (ctor) {
                         std::vector<llvm::Value*> args = {instance};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            builder->CreateInvoke(ctor, contBB, currentLandingPad(), args);
-                            builder->SetInsertPoint(contBB);
-                        } else {
-                            builder->CreateCall(ctor, args);
-                        }
+                        builder->CreateCall(ctor, args);
                     }
                     break;
                 }
@@ -3550,13 +2848,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                         llvm::Function* ctor = findMethodOverload(mangledName, ctorMethodName, args);
                         if (ctor) {
                             std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, args);
-                            if (insideTry()) {
-                                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                                builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
-                                builder->SetInsertPoint(contBB);
-                            } else {
-                                builder->CreateCall(ctor, allArgs);
-                            }
+                            builder->CreateCall(ctor, allArgs);
                             std::string mangledName = buildMangledName(qcType, genericParams);
                             auto vtableIt = vtables.find(mangledName);
                             if (vtableIt != vtables.end()) {
@@ -3688,44 +2980,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         volatileVars[fullName] = isVolatile;
         return nullptr;
     }
-    if (genericUnions.count(qcType) && genericUnions[qcType]) {
-        UserTypeInfo info = genericiseOrFindUnion(saved_qc_type);
-        llvm::StructType* unionTy = unionTypes[resolveTypeName(saved_qc_type, false)];
-        llvm::AllocaInst* unionAlloc = createEntryAlloca(name, unionTy);
-        llvm::Value* rhs = emitExpr((*va)->value_node);
-        if (rhs) {
-            if (rhs->getType() == unionTy) {
-                builder->CreateStore(rhs, unionAlloc);
-                locals[fullName] = unionAlloc;
-                return nullptr;
-            }
-            int tag = findUnionVariantTag(qcType, (*va)->value_node, rhs);
-
-            if (tag == -1) {
-                cg_error((*va)->var_name_tok.pos, "value does not match any variant of union " + qcType, "QC-S143");
-                return nullptr;
-            }
-            auto& member = info.members[tag];
-            bool isLiteral = member.type.find(':') != std::string::npos;
-            llvm::Type* rhsTy = rhs->getType();
-            std::string baseType = isLiteral ? member.type.substr(0, member.type.find(':')) : member.type;
-            llvm::Type* memberTy = llvmTypeFor(baseType);
-            if (!rhsTy->isPointerTy() && rhsTy != memberTy) {
-                cg_error((*va)->var_name_tok.pos, "union literal variant type mismatch", "QC-T030");
-                return nullptr;
-            }
-            llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
-            unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-            llvm::Value* dataPtr = storeAndGetPointer(rhs);
-            unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
-            builder->CreateStore(unionVal, unionAlloc, isVolatile);
-        }
-        if (config.debug_symbols) insertDebugVar(unionAlloc, debugVar, location);
-        locals[fullName] = unionAlloc;
-        varTypes[fullName] = fixMangling(saved_qc_type);
-        volatileVars[fullName] = isVolatile;
-        return nullptr;
-    }
     if (userTypeIt != userTypes.end() && userTypeIt->second.kind == UserTypeKind::Struct) {
         if ((*va)->value_node.index() == 0) {
             llvm::StructType* structTy = genericiseOrFindStruct(qcType);
@@ -3787,13 +3041,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                     llvm::Function* ctor = findMethodOverload(qcType, method.name_tok.value, {});
                     if (ctor) {
                         std::vector<llvm::Value*> args = {instance};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            builder->CreateInvoke(ctor, contBB, currentLandingPad(), args);
-                            builder->SetInsertPoint(contBB);
-                        } else {
-                            builder->CreateCall(ctor, args);
-                        }
+                        builder->CreateCall(ctor, args);
                     }
                     break;
                 }
@@ -3828,13 +3076,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
 
                         if (ctor) {
                             std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, args);
-                            if (insideTry()) {
-                                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                                builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
-                                builder->SetInsertPoint(contBB);
-                            } else {
-                                builder->CreateCall(ctor, allArgs);
-                            }
+                            builder->CreateCall(ctor, allArgs);
                             auto vtableIt = vtables.find(qcType);
                             if (vtableIt != vtables.end()) {
                                 llvm::Value* vptrField = builder->CreateStructGEP(classTy, instance, 0, "vptr_field");
@@ -3894,7 +3136,8 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         return nullptr;
     }
     if (userTypeIt != userTypes.end() && userTypeIt->second.kind == UserTypeKind::Union) {
-        llvm::StructType* unionTy = unionTypes[qcType];
+        UserTypeInfo info = genericiseOrFindUnion(saved_qc_type);
+        llvm::StructType* unionTy = unionTypes[resolveTypeName(saved_qc_type, false)];
         llvm::Value* unionAlloc = getVarAddress(name);
         if (!unionAlloc) unionAlloc = createEntryAlloca(name, unionTy);
         if (config.debug_symbols) insertDebugVar(unionAlloc, debugVar, location);
@@ -3922,17 +3165,17 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 if (!storeUnion(rhs)) return nullptr;
                 locals[fullName] = llvm::cast<llvm::AllocaInst>(unionAlloc);
                 volatileVars[fullName] = isVolatile;
+                varTypes[fullName] = qcType;
                 return nullptr;
             }
-            int tag = findUnionVariantTag(qcType, (*va)->value_node, rhs);
+            int tag = findUnionVariantTag(saved_qc_type, (*va)->value_node, rhs);
             if (tag == -1) {
                 cg_error((*va)->var_name_tok.pos, "value does not match any variant of union " + qcType, "QC-S143");
                 return nullptr;
             }
-            auto& member = userTypes.at(baseTypeName(qcType)).members[tag];
-            bool isLiteral = member.type.find(':') != std::string::npos;
+            auto& member = info.members[tag];
             llvm::Type* rhsTy = rhs->getType();
-            std::string baseType = isLiteral ? member.type.substr(0, member.type.find(':')) : member.type;
+            std::string baseType = member.type;
             llvm::Type* memberTy = llvmTypeFor(baseType);
             if (!rhsTy->isPointerTy() && rhsTy != memberTy) {
                 cg_error((*va)->var_name_tok.pos, "union literal variant type mismatch", "QC-T030");
@@ -3940,12 +3183,11 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             }
             llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
             unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-            llvm::Value* dataPtr = storeAndGetPointer(rhs);
-            unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
+            unionVal = storeUnionPayload(rhs, unionVal, unionTy);
             if (!storeUnion(unionVal)) return nullptr;
         }
         locals[fullName] = llvm::cast<llvm::AllocaInst>(unionAlloc);
-        varTypes[fullName] = qcType;
+        varTypes[fullName] = fixMangling(resolveTypeName(saved_qc_type, false));
         volatileVars[fullName] = isVolatile;
         return nullptr;
     }
@@ -4071,18 +3313,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
     }
 
     llvm::Type* srcTy = rhs->getType();
-    if (isUnionType(srcTy) && !isUnionType(destTy)) {
-        llvm::Value* dataPtr = builder->CreateExtractValue(rhs, 1, "union_data");
-
-        if (destTy->isPointerTy()) {
-            rhs = builder->CreateBitCast(dataPtr, destTy);
-        } else {
-            llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-            rhs = builder->CreateLoad(destTy, typedPtr);
-        }
-
-        srcTy = destTy;
-    }
     if (srcTy != destTy) {
         if (srcTy->isPointerTy() && !destTy->isPointerTy()) {
             llvm::Type* newbase = llvmTypeFor(getExpressionType((*va)->value_node));
@@ -4368,16 +3598,6 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                         llvm::Value* rhs = builder->CreateExtractValue(tup, i);
                         llvm::AllocaInst* var = createEntryAlloca(name, rhs->getType());
                         llvm::Type* srcTy = rhs->getType();
-                        if (isUnionType(srcTy) && !isUnionType(destTy)) {
-                            llvm::Value* dataPtr = builder->CreateExtractValue(rhs, 1, "union_data");
-                            if (destTy->isPointerTy()) {
-                                rhs = builder->CreateBitCast(dataPtr, destTy);
-                            } else {
-                                llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                                rhs = builder->CreateLoad(destTy, typedPtr);
-                            }
-                            srcTy = destTy;
-                        }
                         if (srcTy != destTy) {
                             if (srcTy->isPointerTy() && !destTy->isPointerTy()) {
                                 llvm::Type* newbase = llvmTypeFor(resolveTypeName(getTupleFieldType(destructure->type, i), false));
@@ -4473,19 +3693,6 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                 llvm::Type* destTy = llvmTypeFor(lhsTypeStr);
                 if (!destTy) return nullptr;
                 llvm::Type* srcTy = rhsVal->getType();
-                for (auto& [unionName, unionTy] : unionTypes) {
-                    if (fixMangling(rhsType) == unionName) {
-                        llvm::Value* dataPtr = builder->CreateExtractValue(rhsVal, 1);
-                        if (destTy->isPointerTy()) {
-                            rhsVal = builder->CreateBitCast(dataPtr, destTy);
-                        } else {
-                            llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                            rhsVal = builder->CreateLoad(destTy, typedPtr, false);
-                        }
-                        destTy = srcTy;
-                        break;
-                    }
-                }
                 if (srcTy != destTy) {
                     if (srcTy->isFloatTy() && destTy->isDoubleTy()) {
                         rhsVal = builder->CreateFPExt(rhsVal, destTy, "f2d");
@@ -4570,12 +3777,9 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                 return rhs;
             }
             int tag = findUnionVariantTag(unionName, (*asn)->value, rhs);
-
             if (tag == -1) { continue; }
             auto member = genericiseOrFindUnion(unionName).members[tag];
-            bool isLiteral = member.type.find(':') != std::string::npos;
-
-            std::string baseType = isLiteral ? member.type.substr(0, member.type.find(':')) : member.type;
+            std::string baseType = member.type;
 
             llvm::Type* rhsTy = rhs->getType();
             llvm::Type* memberTy = llvmTypeFor(baseType);
@@ -4586,9 +3790,7 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
             }
             llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
             unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-            llvm::Value* dataPtr = storeAndGetPointer(rhs);
-            unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
-
+            unionVal = storeUnionPayload(rhs, unionVal, unionTy);
             builder->CreateStore(unionVal, alloc, resolveVolatileVar(name));
             return unionVal;
         }
@@ -4607,20 +3809,6 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
         return nullptr;
     }
     llvm::Type* srcTy = rhsVal->getType();
-    for (auto& [unionName, unionTy] : unionTypes) {
-        if (fixMangling(rhsType) == unionName) {
-            llvm::Value* dataPtr = builder->CreateExtractValue(rhsVal, 1);
-
-            if (destTy->isPointerTy()) {
-                rhsVal = builder->CreateBitCast(dataPtr, destTy);
-            } else {
-                llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                rhsVal = builder->CreateLoad(destTy, typedPtr, resolveVolatileVar(name));
-            }
-            destTy = srcTy;
-            break;
-        }
-    }
     if ((*asn)->op_tok.type != TokenType::EQ) {
         if (srcTy != destTy) {
             if (srcTy->isFloatTy() && destTy->isDoubleTy()) {
@@ -4806,12 +3994,6 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                             rhsVal = builder->CreateLoad(expectedRhsTy, rhsVal, "op_rhs_load");
                         }
                         std::vector<llvm::Value*> allArgs = {alloc, rhsVal};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            llvm::InvokeInst* invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
                         llvm::Value* callResult = builder->CreateCall(opMethod, allArgs, "op_assign_tmp");
                         return callResult;
                     }
@@ -4845,12 +4027,6 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                             rhsVal = builder->CreateLoad(expectedRhsTy, rhsVal, "op_rhs_load");
                         }
                         std::vector<llvm::Value*> allArgs = {alloc, rhsVal};
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            llvm::InvokeInst* invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
                         llvm::Value* callResult = builder->CreateCall(opMethod, allArgs, "op_assign_tmp");
                         return callResult;
                     }
@@ -4862,12 +4038,6 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                         if (fit != functions.end()) {
                             llvm::Function* opMethod = fit->second;
                             std::vector<llvm::Value*> allArgs = {alloc, rhsVal};
-                            if (insideTry()) {
-                                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                                auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                                builder->SetInsertPoint(contBB);
-                                return invk;
-                            }
                             return builder->CreateCall(opMethod, allArgs, "op_assign_tmp");
                         }
                     }
@@ -4964,7 +4134,7 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
         llvm::Value* newVal;
         if (valTy->isPointerTy()) {
             std::string elem = ty == "string" ? "char" : ty.substr(0, ty.size() - 1);
-            llvm::Value* step = llvm::ConstantInt::get(builder->getIntNTy(getPtrSize()), inc ? 1 : -1, true);
+            llvm::Value* step = llvm::ConstantInt::getSigned(builder->getIntNTy(getPtrSize()), inc ? 1 : -1, true);
             newVal = builder->CreateGEP(llvmTypeFor(elem), oldVal, step, inc ? "ptr_inc" : "ptr_dec");
         } else if (valTy->isIntegerTy()) {
             llvm::Value* one = llvm::ConstantInt::get(valTy, 1);
@@ -4979,28 +4149,6 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
     llvm::Value* operand = emitExpr((*unary)->node);
     if (!operand) return nullptr;
     llvm::Type* operandTy = operand->getType();
-    for (auto& [unionName, unionTy] : unionTypes) {
-        if (fixMangling(getExpressionType((*unary)->node)) == unionName) {
-            llvm::Type* targetTy = nullptr;
-
-            if (op == TokenType::MINUS) {
-                targetTy = builder->getInt32Ty();
-            } else if (op == TokenType::NOT) {
-                targetTy = builder->getInt1Ty();
-            } else if (op == TokenType::QNOT) {
-                targetTy = builder->getIntNTy(2);
-            } else if (op == TokenType::MUL) {
-                targetTy = builder->getPtrTy();
-            }
-            if (targetTy) {
-                llvm::Value* dataPtr = builder->CreateExtractValue(operand, 1);
-                llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                operand = builder->CreateLoad(targetTy, typedPtr);
-                operandTy = targetTy;
-            }
-            break;
-        }
-    }
     if (auto structTy = llvm::dyn_cast<llvm::StructType>(operandTy)) {
         if (structTy->hasName()) {
             std::string className = structTy->getName().str();
@@ -5020,12 +4168,6 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
 
                         std::vector<llvm::Value*> allArgs = {temp};
                         allArgs.insert(allArgs.end(), args.begin(), args.end());
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            llvm::InvokeInst* invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
                         return builder->CreateCall(opMethod, allArgs, "unary_op_result");
                     }
                 }
@@ -5041,12 +4183,6 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
                         std::vector<llvm::Value*> allArgs = {temp};
                         if (opMethodName == "operator++" || opMethodName == "operator--")
                             allArgs.push_back(isPostfix ? builder->getTrue() : builder->getFalse());
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            auto invk = builder->CreateInvoke(opMethod, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                            return invk;
-                        }
                         return builder->CreateCall(opMethod, allArgs, "op_result");
                     }
                 }
@@ -5060,7 +4196,7 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
             cg_error((*unary)->op_tok.pos, "cannot perform bitwise NOT on non-integer type", "QC-T039");
             return nullptr;
         }
-        llvm::Value* allOnes = llvm::ConstantInt::get(ty, -1, true);
+        llvm::Value* allOnes = llvm::ConstantInt::getSigned(ty, -1, true);
         return builder->CreateXor(operand, allOnes, "nottmp");
     }
     if ((*unary)->op_tok.type == TokenType::QNOT) {
@@ -5154,35 +4290,6 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
         llvm::IntegerType* addrType = llvm::IntegerType::get(context, ptrBitWidth);
         return llvm::ConstantInt::get(addrType, size);
     }
-    if ((*unary)->op_tok.type == TokenType::THROW) {
-        llvm::Value* type = getStringConstant(getExpressionType((*unary)->node));
-        llvm::Value* value = emitExpr((*unary)->node);
-        auto* valTy = value->getType();
-        if (valTy->isFloatingPointTy()) {
-            if (valTy->isFloatTy()) {
-                value = builder->CreateBitCast(value, builder->getInt32Ty());
-                value = builder->CreateZExt(value, builder->getInt64Ty());
-            } else if (valTy->isDoubleTy()) {
-                value = builder->CreateBitCast(value, builder->getInt64Ty());
-            }
-            value = builder->CreateIntToPtr(value, builder->getPtrTy());
-        } else if (valTy->isIntegerTy()) {
-            llvm::Value* int64Val = builder->CreateZExtOrTrunc(value, builder->getInt64Ty());
-            value = builder->CreateIntToPtr(int64Val, builder->getPtrTy());
-        }
-        llvm::Function* createFn = module->getFunction("__qc_create_exception");
-        llvm::Value* exception = builder->CreateCall(createFn, {type, value}, "exception");
-        llvm::Function* throwFn = module->getFunction("__qc_throw");
-        if (insideTry()) {
-            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-            builder->CreateInvoke(throwFn, contBB, currentLandingPad(), {exception});
-            builder->SetInsertPoint(contBB);
-        } else {
-            builder->CreateCall(throwFn, {exception});
-        }
-        builder->CreateUnreachable();
-        return nullptr;
-    }
     if ((*unary)->op_tok.type == TokenType::TYPEOF) {
         AnyNode& argNode = (*unary)->node;
         llvm::Value* arg = emitExpr(argNode);
@@ -5191,7 +4298,7 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
         for (auto& [unionName, unionTy] : unionTypes) {
             if (argTy == unionTy) {
                 llvm::Value* tag = builder->CreateExtractValue(arg, 0, "typeof_tag");
-                auto type = genericiseOrFindUnion(unionName);
+                auto type = userTypes.at(baseTypeName(unionName));
                 auto& members = type.members;
                 llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "typeof_end", currentFunction);
                 llvm::AllocaInst* resultAlloc = createEntryAlloca("typeof_result", llvm::PointerType::get(context, 0));
@@ -5200,8 +4307,6 @@ llvm::Value* LLVMCompiler::emitUnaryOp(UnaryOpNode* const* unary) {
                     llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "typeof_case_" + std::to_string(i), currentFunction);
                     builder->SetInsertPoint(caseBB);
                     std::string baseType = members[i].type;
-                    size_t colonPos = baseType.find(':');
-                    if (colonPos != std::string::npos) baseType = baseType.substr(0, colonPos);
                     llvm::Value* variantName = builder->CreateGlobalString(baseType);
                     builder->CreateStore(variantName, resultAlloc);
                     builder->CreateBr(endBB);
@@ -5404,19 +4509,8 @@ llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit, std::stri
     bool hasRuntimeSpread = false;
     llvm::Value* totalSize = builder->getInt32(0);
 
-    for (auto& elem : (*arrLit)->elements) {
-        if (auto spread = std::get_if<SpreadNode*>(&elem)) {
-            llvm::Value* collVal = emitExpr((*spread)->expr);
-            llvm::Value* spreadLen = getCollectionLength(collVal, (*spread)->expr);
+    for (auto& elem : (*arrLit)->elements) { totalSize = builder->CreateAdd(totalSize, builder->getInt32(1)); }
 
-            if (!llvm::isa<llvm::ConstantInt>(spreadLen)) { hasRuntimeSpread = true; }
-            totalSize = builder->CreateAdd(totalSize, spreadLen);
-        } else {
-            totalSize = builder->CreateAdd(totalSize, builder->getInt32(1));
-        }
-    }
-
-    if (hasRuntimeSpread) { return createRuntimeSizedArray((*arrLit)->elements, totalSize); }
     std::vector<llvm::Value*> allElements;
     for (auto& elem : (*arrLit)->elements) {
         if (auto spread = std::get_if<SpreadNode*>(&elem)) {
@@ -5488,13 +4582,6 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                     return nullptr;
                 }
                 llvm::Type* retTy = procTy->getReturnType();
-                if (insideTry()) {
-                    auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                    auto* invokeInst = builder->CreateInvoke(procTy, targetProceed, contBB, currentLandingPad(), callArgs,
-                                                             retTy->isVoidTy() ? "" : "calltmp");
-                    builder->SetInsertPoint(contBB);
-                    return retTy->isVoidTy() ? nullptr : invokeInst;
-                }
                 auto* callInst = builder->CreateCall(procTy, targetProceed, callArgs, retTy->isVoidTy() ? "" : "calltmp");
                 return retTy->isVoidTy() ? nullptr : callInst;
             }
@@ -5559,6 +4646,13 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
         if (funcDefIt != functionDefs.end()) {
             FuncDefNode* funcDef = funcDefIt->second;
             if (!funcDef->generics.empty()) {
+                funcName = fixMangling(funcName);
+                if (specializedFunctions.find(funcName) == specializedFunctions.end()) {
+                    llvm::Function* specializedFn = generateSpecializedFunction(funcDef, funcName);
+                    if (!specializedFn) return nullptr;
+                    specializedFunctions[funcName] = specializedFn;
+                }
+                llvm::Function* fn = specializedFunctions[funcName];
                 std::vector<llvm::Value*> argValues;
                 auto paramIt = funcDef->params.begin();
                 bool hasSpread = false;
@@ -5570,7 +4664,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                     if (paramIdx >= call.arg_nodes.size()) {
                         if (param.default_value.has_value()) {
                             AnyNode& defaultRef = const_cast<AnyNode&>(param.default_value.value());
-                            argVal = emitExpr(defaultRef);
+                            argVal = adaptArgumentForParam(emitExpr(defaultRef), defaultRef, fn->getFunctionType()->getParamType(paramIdx), paramIdx);
                             if (!argVal) {
                                 cg_error(get_pos(&call), "failed to evaluate default parameter", "QC-S168");
                                 return nullptr;
@@ -5597,27 +4691,13 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                     cg_error(get_pos(&call), "spread is no longer allowed in function calls.", "QC-S170");
                     return nullptr;
                 }
-                funcName = fixMangling(funcName);
-                if (specializedFunctions.find(funcName) == specializedFunctions.end()) {
-                    llvm::Function* specializedFn = generateSpecializedFunction(funcDef, funcName);
-                    if (!specializedFn) return nullptr;
-                    specializedFunctions[funcName] = specializedFn;
-                }
-                llvm::Function* fn = specializedFunctions[funcName];
                 if (funcDef->params.size() > 0 && funcDef->params.back().type.value == "...") {
                     size_t fixedCount = funcDef->params.size() - 1;
                     std::vector<llvm::Value*> varVals(argValues.begin() + fixedCount, argValues.end());
                     argValues.resize(fixedCount);
                     argValues.push_back(packVariadicArgs(varVals));
                 }
-                if (insideTry()) {
-                    auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                    llvm::InvokeInst* invoke = builder->CreateInvoke(fn, contBB, currentLandingPad(), argValues);
-                    builder->SetInsertPoint(contBB);
-                    return invoke;
-                } else {
-                    return builder->CreateCall(fn, argValues);
-                }
+                return builder->CreateCall(fn, argValues);
             }
         }
         std::string saved_name = funcName;
@@ -5694,13 +4774,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                     ctorArgs.push_back(packVariadicArgs(varVals));
                 }
                 std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, temp, ctorArgs);
-                if (insideTry()) {
-                    auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                    builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
-                    builder->SetInsertPoint(contBB);
-                } else {
-                    builder->CreateCall(ctor, allArgs);
-                }
+                builder->CreateCall(ctor, allArgs);
                 auto vtableIt = vtables.find(resolvedName);
                 if (vtableIt != vtables.end()) {
                     llvm::Value* vptrField = builder->CreateStructGEP(classTy, temp, 0, "vptr_field");
@@ -5781,7 +4855,10 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                                                                               {"`closedir", "qc_closedir"},
                                                                               {"`memset", ""},
                                                                               {"`memmove", ""},
-                                                                              {"`memcpy", ""}};
+                                                                              {"`memcpy", ""},
+                                                                              {"`panic", "__qc_panic"},
+                                                                              {"`has_field", ""},
+                                                                              {"`has_method", ""}};
         auto it = builtins.find(funcName);
 
         if (it != builtins.end()) {
@@ -6037,7 +5114,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 for (auto& [unionName, unionTy] : unionTypes) {
                     if (argTy == unionTy) {
                         llvm::Value* tag = builder->CreateExtractValue(arg, 0, "typeof_tag");
-                        auto type = genericiseOrFindUnion(unionName);
+                        auto type = userTypes.at(baseTypeName(unionName));
                         auto& members = type.members;
                         llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "typeof_end", currentFunction);
                         llvm::AllocaInst* resultAlloc = createEntryAlloca("typeof_result", llvm::PointerType::get(context, 0));
@@ -6046,8 +5123,6 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                             llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "typeof_case_" + std::to_string(i), currentFunction);
                             builder->SetInsertPoint(caseBB);
                             std::string baseType = members[i].type;
-                            size_t colonPos = baseType.find(':');
-                            if (colonPos != std::string::npos) baseType = baseType.substr(0, colonPos);
                             llvm::Value* variantName = builder->CreateGlobalString(baseType);
                             builder->CreateStore(variantName, resultAlloc);
                             builder->CreateBr(endBB);
@@ -6112,6 +5187,15 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 if (srcTy->isPointerTy() && dstTy->isPointerTy()) return builder->CreateBitCast(value, dstTy);
                 if (srcTy->isPointerTy() && dstTy->isIntegerTy()) return builder->CreatePtrToInt(value, dstTy);
                 if (srcTy->isIntegerTy() && dstTy->isPointerTy()) return builder->CreateIntToPtr(value, dstTy);
+                std::string unionName;
+                if (isUnionType(srcTy, &unionName)) {
+                    if (unionContainsType(dstTy, unionName) == -1) {
+                        cg_error(get_pos(&call), "cannot cast union " + unionName + " to type " + typeNode->tok.value + ": no such case", "QC-AS02");
+                        return nullptr;
+                    }
+                    return extractArrayAsValue(builder->CreateExtractValue(value, 1), dstTy);
+                }
+                cg_error(get_pos(&call), "cannot cast between these types", "QC-AS03");
                 return nullptr;
             } else if (funcName == "`write" && !call.arg_nodes.empty()) {
                 if (call.arg_nodes.size() == 3)
@@ -6320,8 +5404,8 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         builder->CreateCall(printString, {strVal});
                         to_print = "";
                         builder->CreateCall(printString,
-                                            {builder->CreateCall(fmtInt, {bigIntSigned, llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                          llvm::ConstantInt::get(builder->getInt32Ty(), precision),
+                                            {builder->CreateCall(fmtInt, {bigIntSigned, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                          llvm::ConstantInt::getSigned(builder->getInt32Ty(), precision),
                                                                           llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
@@ -6354,8 +5438,8 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         llvm::Value* strVal = builder->CreateGlobalString(to_print);
                         builder->CreateCall(printString, {strVal});
                         to_print = "";
-                        builder->CreateCall(printString,
-                                            {builder->CreateCall(fmtUInt, {bigIntSigned, llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
+                        builder->CreateCall(printString, {builder->CreateCall(
+                                                             fmtUInt, {bigIntSigned, llvm::ConstantInt::getSigned(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
                     case 's': {
@@ -6422,7 +5506,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                                 return nullptr;
                             }
                             builder->CreateCall(printString,
-                                                {builder->CreateCall(fmtStr, {stVal, llvm::ConstantInt::get(builder->getInt32Ty(), width),
+                                                {builder->CreateCall(fmtStr, {stVal, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
                                                                               llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         }
                         break;
@@ -6441,10 +5525,11 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         llvm::Value* strVal = builder->CreateGlobalString(to_print);
                         builder->CreateCall(printString, {strVal});
                         to_print = "";
-                        builder->CreateCall(printString, {builder->CreateCall(fmtFloat, {builder->CreateFPExt(floatVal, builder->getDoubleTy()),
-                                                                                         llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                                         llvm::ConstantInt::get(builder->getInt32Ty(), precision),
-                                                                                         llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
+                        builder->CreateCall(printString,
+                                            {builder->CreateCall(fmtFloat, {builder->CreateFPExt(floatVal, builder->getDoubleTy()),
+                                                                            llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                            llvm::ConstantInt::getSigned(builder->getInt32Ty(), precision),
+                                                                            llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
                     case 'd': {
@@ -6462,8 +5547,8 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         builder->CreateCall(printString, {strVal});
                         to_print = "";
                         builder->CreateCall(printString,
-                                            {builder->CreateCall(fmtDouble, {doubVal, llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                             llvm::ConstantInt::get(builder->getInt32Ty(), precision),
+                                            {builder->CreateCall(fmtDouble, {doubVal, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                             llvm::ConstantInt::getSigned(builder->getInt32Ty(), precision),
                                                                              llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
@@ -6510,7 +5595,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                                 return nullptr;
                             }
                             builder->CreateCall(printString,
-                                                {builder->CreateCall(fmtChar, {cVal, llvm::ConstantInt::get(builder->getInt32Ty(), width),
+                                                {builder->CreateCall(fmtChar, {cVal, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
                                                                                llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                             break;
                         }
@@ -6530,8 +5615,9 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         llvm::Value* strVal = builder->CreateGlobalString(to_print);
                         builder->CreateCall(printString, {strVal});
                         to_print = "";
-                        builder->CreateCall(printString, {builder->CreateCall(fmtBool, {boolVal, llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                                        llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
+                        builder->CreateCall(printString,
+                                            {builder->CreateCall(fmtBool, {boolVal, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                           llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
                     case 'q': {
@@ -6549,7 +5635,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         builder->CreateCall(printString, {strVal});
                         to_print = "";
                         builder->CreateCall(printString,
-                                            {builder->CreateCall(fmtQBool, {qboolVal, llvm::ConstantInt::get(builder->getInt32Ty(), width),
+                                            {builder->CreateCall(fmtQBool, {qboolVal, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
                                                                             llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
@@ -6579,7 +5665,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         builder->CreateCall(printString, {strVal});
                         to_print = "";
                         builder->CreateCall(printString,
-                                            {builder->CreateCall(fmtHex, {bigIntUnsigned, llvm::ConstantInt::get(builder->getInt32Ty(), width),
+                                            {builder->CreateCall(fmtHex, {bigIntUnsigned, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
                                                                           llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
@@ -6608,9 +5694,9 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         llvm::Value* strVal = builder->CreateGlobalString(to_print);
                         builder->CreateCall(printString, {strVal});
                         to_print = "";
-                        builder->CreateCall(printString,
-                                            {builder->CreateCall(fmtOctal, {bigIntUnsigned, llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                            llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
+                        builder->CreateCall(
+                            printString, {builder->CreateCall(fmtOctal, {bigIntUnsigned, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                         llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
                     case 'p': {
@@ -6627,8 +5713,9 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                             cg_error((*varAccess)->var_name_tok.pos, "p formater takes a pointer: " + funcName, "QC-S209");
                             break;
                         }
-                        builder->CreateCall(printString, {builder->CreateCall(fmtPtr, {ptVal, llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                                       llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
+                        builder->CreateCall(printString,
+                                            {builder->CreateCall(fmtPtr, {ptVal, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                          llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
                     case 'e': {
@@ -6654,8 +5741,8 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         to_print = "";
                         builder->CreateCall(printString,
                                             {builder->CreateCall(fmtScientific, {builder->CreateFPExt(decimalVal, builder->getDoubleTy()),
-                                                                                 llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                                 llvm::ConstantInt::get(builder->getInt32Ty(), precision),
+                                                                                 llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                                 llvm::ConstantInt::getSigned(builder->getInt32Ty(), precision),
                                                                                  llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                         break;
                     }
@@ -6680,8 +5767,8 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         if (aTy->isIntegerTy(32) || aTy->isIntegerTy(64) || aTy->isIntegerTy(16) || aTy->isIntegerTy(4)) {
                             builder->CreateCall(printString,
                                                 {builder->CreateCall(fmtInt, {builder->CreateZExt(val, builder->getIntNTy(getPtrSize())),
-                                                                              llvm::ConstantInt::get(builder->getIntNTy(getPtrSize()), width),
-                                                                              llvm::ConstantInt::get(builder->getInt32Ty(), precision),
+                                                                              llvm::ConstantInt::getSigned(builder->getIntNTy(getPtrSize()), width),
+                                                                              llvm::ConstantInt::getSigned(builder->getInt32Ty(), precision),
                                                                               llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                             break;
                         }
@@ -6701,22 +5788,23 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         }
                         std::string sourceType = getExpressionType(goodArgs[current_arg]);
                         if (sourceType == "string" || sourceType == "char*") {
-                            builder->CreateCall(printString, {builder->CreateCall(fmtStr, {val, llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                                           llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
+                            builder->CreateCall(printString,
+                                                {builder->CreateCall(fmtStr, {val, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                              llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                             break;
                         }
                         if (aTy->isFloatTy()) {
                             builder->CreateCall(printString,
                                                 {builder->CreateCall(fmtFloat, {builder->CreateFPExt(val, builder->getDoubleTy()),
-                                                                                llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                                llvm::ConstantInt::get(builder->getInt32Ty(), precision),
+                                                                                llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                                llvm::ConstantInt::getSigned(builder->getInt32Ty(), precision),
                                                                                 llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                             break;
                         }
                         if (aTy->isDoubleTy()) {
                             builder->CreateCall(printString,
-                                                {builder->CreateCall(fmtDouble, {val, llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                                 llvm::ConstantInt::get(builder->getInt32Ty(), precision),
+                                                {builder->CreateCall(fmtDouble, {val, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                                 llvm::ConstantInt::getSigned(builder->getInt32Ty(), precision),
                                                                                  llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                             break;
                         }
@@ -6738,7 +5826,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                             }
                             if (aTy->isIntegerTy(8)) {
                                 builder->CreateCall(printString,
-                                                    {builder->CreateCall(fmtChar, {val, llvm::ConstantInt::get(builder->getInt32Ty(), width),
+                                                    {builder->CreateCall(fmtChar, {val, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
                                                                                    llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                                 break;
                             }
@@ -6746,19 +5834,20 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         }
                         if (aTy->isIntegerTy(1)) {
                             builder->CreateCall(printString,
-                                                {builder->CreateCall(fmtBool, {val, llvm::ConstantInt::get(builder->getInt32Ty(), width),
+                                                {builder->CreateCall(fmtBool, {val, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
                                                                                llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                             break;
                         }
                         if (aTy->isIntegerTy(2)) {
                             builder->CreateCall(printString,
-                                                {builder->CreateCall(fmtQBool, {val, llvm::ConstantInt::get(builder->getInt32Ty(), width),
+                                                {builder->CreateCall(fmtQBool, {val, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
                                                                                 llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                             break;
                         }
                         if (aTy->isPointerTy()) {
-                            builder->CreateCall(printString, {builder->CreateCall(fmtPtr, {val, llvm::ConstantInt::get(builder->getInt32Ty(), width),
-                                                                                           llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
+                            builder->CreateCall(printString,
+                                                {builder->CreateCall(fmtPtr, {val, llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
+                                                                              llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                             break;
                         }
                         break;
@@ -7233,6 +6322,51 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 }
                 return nullptr;
             }
+            if (funcName == "`panic") {
+                llvm::Value* msg = call.arg_nodes.empty() ? builder->CreateGlobalString("panic") : emitExpr(call.arg_nodes.back());
+                auto pos = get_pos(&call);
+                llvm::Value* file = builder->CreateGlobalString(SourceManager::instance().get_file_name(pos.file_id));
+                llvm::Value* line = builder->getInt32(pos.line);
+                llvm::FunctionCallee fn = module->getOrInsertFunction(
+                    "__qc_panic",
+                    llvm::FunctionType::get(builder->getVoidTy(), {builder->getPtrTy(), builder->getPtrTy(), builder->getInt32Ty()}, false));
+                auto* call = builder->CreateCall(fn, {msg, file, line});
+                call->setDoesNotReturn();
+                builder->CreateUnreachable();
+                return nullptr;
+            }
+            if (funcName == "`has_method") {
+                std::string typeName = "";
+                std::string fieldName = "";
+                if (TypeValueNode* t = std::get_if<TypeValueNode>(&(call.arg_nodes.back()))) { typeName = resolveTypeName(t->tok.value, false); }
+                if (StringNode* val = std::get_if<StringNode>(&(call.arg_nodes.front()))) { fieldName = val->tok.value; }
+                if (typeName.empty() || fieldName.empty()) {
+                    cg_error(get_pos(&call), "has_method arg 1 is the type and arg 2 is the name", "QC-ITSC");
+                    return nullptr;
+                }
+                auto it = userTypes.find(baseTypeName(typeName));
+                bool has = it != userTypes.end() && std::ranges::any_of(it->second.classMethods, [&fieldName](const ClassMethodInfo& method) -> bool {
+                               return fieldName == method.name_tok.value;
+                           });
+                return builder->getInt1(has);
+            }
+            if (funcName == "`has_field") {
+                std::string typeName = "";
+                std::string fieldName = "";
+                if (TypeValueNode* t = std::get_if<TypeValueNode>(&(call.arg_nodes.back()))) { typeName = resolveTypeName(t->tok.value, false); }
+                if (StringNode* val = std::get_if<StringNode>(&(call.arg_nodes.front()))) { fieldName = val->tok.value; }
+                if (typeName.empty() || fieldName.empty()) {
+                    cg_error(get_pos(&call), "has_field arg 1 is the type and arg 2 is the name", "QC-ITSC");
+                    return nullptr;
+                }
+                auto it = userTypes.find(baseTypeName(typeName));
+                bool has = it != userTypes.end() &&
+                           (std::ranges::any_of(it->second.fields,
+                                                [&fieldName](const StructField& field) -> bool { return fieldName == field.name; }) ||
+                            std::ranges::any_of(it->second.classFields,
+                                                [&fieldName](const ClassField& field) -> bool { return fieldName == field.name; }));
+                return builder->getInt1(has);
+            }
             llvm::Function* fn = module->getFunction(runtimeName);
             if (!fn) {
                 cg_error((*varAccess)->var_name_tok.pos, "built-in function not found in runtime: " + runtimeName, "QC-S235");
@@ -7388,7 +6522,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
             if (paramIdx >= args.size()) {
                 if (param.default_value.has_value()) {
                     AnyNode& defaultRef = const_cast<AnyNode&>(param.default_value.value());
-                    llvm::Value* defVal = emitExpr(defaultRef);
+                    llvm::Value* defVal = adaptArgumentForParam(emitExpr(defaultRef), defaultRef, fnTy->getParamType(paramIdx), paramIdx);
                     if (!defVal) {
                         cg_error(get_pos(&call), "failed to evaluate default parameter", "QC-S168");
                         return nullptr;
@@ -7403,12 +6537,6 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
         }
     }
     llvm::Type* retTy = fnTy->getReturnType();
-    if (insideTry()) {
-        auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-        auto* invokeInst = builder->CreateInvoke(fnTy, calleeVal, contBB, currentLandingPad(), args, retTy->isVoidTy() ? "" : "calltmp");
-        builder->SetInsertPoint(contBB);
-        return retTy->isVoidTy() ? nullptr : invokeInst;
-    }
     auto* callInst = builder->CreateCall(fnTy, calleeVal, args, retTy->isVoidTy() ? "" : "calltmp");
     return retTy->isVoidTy() ? nullptr : callInst;
 }
@@ -7561,18 +6689,6 @@ llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
         cg_error(get_pos(*propAccess), "enum member not found", "QC-S245");
         return nullptr;
     }
-    if (propName == "length") {
-        if (hasArrayLength(baseName)) {
-            auto lenIt = findArrayLength(baseName);
-            return builder->getInt32(lenIt->second);
-        }
-        auto runtimeIt = runtimeArraySizes.find(baseName);
-        if (runtimeIt != runtimeArraySizes.end()) { return builder->CreateLoad(builder->getInt32Ty(), runtimeIt->second, "runtime_len"); }
-        if (hasLocal(baseName)) {
-            llvm::Type* allocTy = getPointeeType(baseName);
-            if (allocTy && allocTy->isArrayTy()) { return builder->getInt32(allocTy->getArrayNumElements()); }
-        }
-    }
     std::string exprType = getExpressionType(*(*propAccess)->base, false);
     llvm::Value* baseVal = emitLValue(*(*propAccess)->base, true);
     if (!baseVal) return nullptr;
@@ -7685,102 +6801,11 @@ llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
                 return nullptr;
             }
             llvm::Type* fieldTy = classTy->getElementType(fieldIdx);
-            for (auto& [unionName, unionTy] : unionTypes) {
-                if (fieldTy == unionTy) {
-                    if (isPtr) {
-                        llvm::Value* fieldPtr = builder->CreateStructGEP(classTy, baseVal, fieldIdx);
-                        return builder->CreateLoad(unionTy, fieldPtr, "union_field");
-                    }
-                    return builder->CreateExtractValue(baseVal, fieldIdx, "union_field");
-                }
-            }
             if (isPtr) {
                 llvm::Value* fieldPtr = builder->CreateStructGEP(classTy, baseVal, fieldIdx);
                 return builder->CreateLoad(fieldTy, fieldPtr, propName);
             } else {
                 return builder->CreateExtractValue(baseVal, fieldIdx, propName);
-            }
-        }
-    }
-    for (auto& [unionName, unionTy] : unionTypes) {
-        if (baseTy == unionTy) {
-            auto unionInfo = genericiseOrFindUnion(unionName);
-
-            for (auto& member : unionInfo.members) {
-                std::string resolvedBaseType = resolveTypeName(member.type, false);
-                std::string resolvedVariant = resolveTypeName(member.type);
-                if (classTypes.find(resolvedVariant) != classTypes.end()) {
-                    int fieldIdx = getFlattenedFieldIndex(resolvedVariant, propName);
-                    if (fieldIdx != -1) {
-                        llvm::Value* varAlloc = nullptr;
-                        if (auto varAcc = *std::get_if<VarAccessNode*>(&*(*propAccess)->base)) {
-                            varAlloc = getVarAddress(varAcc->var_name_tok.value);
-                        }
-                        if (!varAlloc) return nullptr;
-
-                        llvm::Value* dataFieldPtr = builder->CreateStructGEP(unionTy, varAlloc, 1, "union_data_ptr");
-                        llvm::Value* dataPtr = builder->CreateLoad(llvm::PointerType::get(context, 0), dataFieldPtr, "union_data");
-                        std::string inner = resolvedBaseType.substr(resolvedBaseType.find('<') + 1,
-                                                                    resolvedBaseType.size() - resolvedBaseType.find('<') - 2);
-                        std::vector<std::string> genericParams;
-                        std::string cur;
-                        int depth = 0;
-                        for (char c : inner) {
-                            if (c == '<')
-                                depth++;
-                            else if (c == '>')
-                                depth--;
-                            else if (c == ',' && depth == 0) {
-                                genericParams.push_back(trim(cur));
-                                cur.clear();
-                                continue;
-                            }
-                            cur += c;
-                        }
-                        if (!cur.empty()) genericParams.push_back(trim(cur));
-
-                        llvm::StructType* classTy;
-                        if (genericClasses[resolvedVariant]) {
-                            classTy = generateGenericClass(resolvedVariant, userTypes.find(resolvedVariant)->second, genericParams);
-                            if (classTy == nullptr) {
-                                cg_error(get_pos(*propAccess), "failed to create specialized version of class " + resolvedVariant, "QC-S249");
-                                return nullptr;
-                            }
-                        } else {
-                            classTy = genericiseOrFindClass(resolvedBaseType);
-                        }
-                        llvm::Value* castedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-
-                        llvm::Type* fieldTy = classTy->getElementType(fieldIdx);
-                        llvm::Value* fieldPtr = builder->CreateStructGEP(classTy, castedPtr, fieldIdx);
-                        return builder->CreateLoad(fieldTy, fieldPtr, propName);
-                    }
-                }
-                if (structTypes.find(resolvedVariant) != structTypes.end()) {
-                    auto& structInfo = userTypes.at(baseTypeName(resolvedVariant));
-                    int fieldIdx = -1;
-                    for (size_t i = 0; i < structInfo.fields.size(); i++) {
-                        if (structInfo.fields[i].name == propName) {
-                            fieldIdx = i;
-                            break;
-                        }
-                    }
-                    if (fieldIdx != -1) {
-                        llvm::Value* varAlloc = nullptr;
-                        if (auto varAcc = safe_get<VarAccessNode>(*(*propAccess)->base)) { varAlloc = getVarAddress(varAcc->var_name_tok.value); }
-                        if (!varAlloc) return nullptr;
-
-                        llvm::Value* dataFieldPtr = builder->CreateStructGEP(unionTy, varAlloc, 1, "union_data_ptr");
-                        llvm::Value* dataPtr = builder->CreateLoad(llvm::PointerType::get(context, 0), dataFieldPtr, "union_data");
-
-                        llvm::StructType* structTy = genericiseOrFindStruct(resolvedVariant);
-                        llvm::Value* castedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-
-                        llvm::Type* fieldTy = structTy->getElementType(fieldIdx);
-                        llvm::Value* fieldPtr = builder->CreateStructGEP(structTy, castedPtr, fieldIdx);
-                        return builder->CreateLoad(fieldTy, fieldPtr, propName);
-                    }
-                }
             }
         }
     }
@@ -7860,108 +6885,7 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
             if (pTy) {
                 auto* st = llvm::dyn_cast<llvm::StructType>(pTy);
                 std::string typeName = st ? st->getName().str() : "";
-                auto unionIt = unionTypes.find(typeName);
-                if (unionIt != unionTypes.end()) {
-                    llvm::Function* F = builder->GetInsertBlock()->getParent();
-                    llvm::BasicBlock* defaultBB = llvm::BasicBlock::Create(context, "union.bad", F);
-                    llvm::BasicBlock* joinBB = llvm::BasicBlock::Create(context, "union.join", F);
-                    llvm::Value* tagPtr = builder->CreateStructGEP(unionIt->second, thisPtr, 0);
-                    llvm::Value* tagVal = builder->CreateLoad(builder->getInt32Ty(), tagPtr);
-                    llvm::SwitchInst* sw = builder->CreateSwitch(tagVal, defaultBB);
-                    llvm::Value* unionPtr = thisPtr;
-                    builder->SetInsertPoint(defaultBB);
-                    builder->CreateUnreachable();
-                    builder->SetInsertPoint(joinBB);
-                    llvm::Value* result = nullptr;
-                    int idx = 0;
-                    for (auto m : genericiseOrFindUnion(typeName).members) {
-                        std::string ty = resolveTypeName(m.type, false);
-                        if (!classTypes.count(ty) && !genericClasses[ty]) {
-                            idx++;
-                            continue;
-                        }
-                        llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "union.case", F);
-                        sw->addCase(builder->getInt32(idx), caseBB);
-                        builder->SetInsertPoint(caseBB);
-                        llvm::Value* payloadPtr = builder->CreateStructGEP(unionIt->second, unionPtr, 1);
-                        llvm::Value* payload = builder->CreateLoad(builder->getPtrTy(), payloadPtr);
-                        std::vector<std::string> argTypes;
-                        for (auto& arg : (*call)->args) { argTypes.push_back(getExpressionType(arg)); }
-                        ClassMethodInfo* info = findMethodInfo(ty, (*call)->method_name.value, argTypes);
-                        if (!info) {
-                            cg_error((*call)->method_name.pos, "no overload found", "QC-O003");
-                            struct Candidate {
-                                int score;
-                                ClassMethodInfo* method;
-                            };
-                            std::vector<Candidate> candidates;
-                            for (auto& method : userTypes.at(baseTypeName(baseTypeName(ty))).classMethods) {
-                                if (method.is_constructor || (method.name_tok.value != methodName)) continue;
-                                int score = 0;
-                                size_t argCount = (*call)->args.size();
-                                size_t paramCount = method.params.size();
-                                score -= std::abs((int)argCount - (int)paramCount) * 5;
-                                size_t count = std::min(argCount, paramCount);
-                                for (size_t i = 0; i < count; i++) {
-                                    llvm::Type* argTy = emitExpr((*call)->args[i])->getType();
-                                    llvm::Type* paramTy = llvmTypeFor(method.params[i].type.value);
-                                    if (argTy == paramTy) {
-                                        score += 3;
-                                    } else if ((argTy->isIntegerTy() || argTy->isFloatTy() || argTy->isDoubleTy()) &&
-                                               (paramTy->isIntegerTy() || paramTy->isFloatTy() || paramTy->isDoubleTy())) {
-                                        score += 1;
-                                    } else if (argTy->isPointerTy() && paramTy->isPointerTy()) {
-                                        score += 1;
-                                    } else {
-                                        score -= 3;
-                                    }
-                                }
-                                candidates.push_back({score, &method});
-                            }
-                            if (candidates.empty()) {
-                                if (methodName.length() < 3) return nullptr;
-                                std::vector<std::pair<int, std::string>> suggestions;
-                                for (auto& method : userTypes[baseTypeName(ty)].classMethods) {
-                                    int distance = levenshteinDistance(methodName, method.name_tok.value);
-                                    if (distance <= 2) { suggestions.push_back({distance, method.name_tok.value}); }
-                                }
-                                std::sort(suggestions.begin(), suggestions.end());
-                                if (!suggestions.empty()) {
-                                    std::string note = "similar methods:";
-                                    for (auto& [distance, name] : suggestions) { note += "\n  - `" + name + "`"; }
-                                    cg_note(get_pos(*varAccess), note);
-                                }
-                                return nullptr;
-                            }
-                            std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
-                            if (candidates[0].score > 0) {
-                                cg_note(get_pos(*varAccess), "closest matching overload: " + candidates[0].method->print());
-                            }
-                            if (candidates.size() <= 5) {
-                                std::string note = "available overloads:";
-                                for (auto& candidate : candidates) { note += "\n  - " + candidate.method->print(); }
-                                cg_note(get_pos(*varAccess), note);
-                            } else {
-                                std::string note = "other overloads:";
-                                size_t shown = 0;
-                                for (auto& candidate : candidates) {
-                                    if (shown >= 3) break;
-                                    note += "\n  - " + candidate.method->print();
-                                    shown++;
-                                }
-                                cg_note(get_pos(*varAccess), note);
-                            }
-                            return nullptr;
-                        }
-                        auto args = prepareArgs(info, (*call)->args);
-                        llvm::Value* callResult = emitVirtualOrDirectCall(ty, methodName, payload, args);
-                        result = callResult;
-                        builder->CreateBr(joinBB);
-                        idx++;
-                    }
-                    builder->SetInsertPoint(joinBB);
-                    return result;
-                } else if (st) {
+                if (st) {
                     std::string typeStr = resolveVarType(varName);
                     if (typeStr.ends_with("*")) {
                         thisPtr = builder->CreateLoad(builder->getPtrTy(), getVarAddress(varName), "loaded_ptr");
@@ -7976,113 +6900,6 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
         llvm::Value* baseAddr = emitLValue(*(propAcc->base), true);
         std::string ownerClass = getExpressionType(*(propAcc->base));
         llvm::Type* baseTy = baseAddr->getType();
-        if (auto* st = llvm::dyn_cast<llvm::StructType>(baseTy)) {
-            std::string unionName = st->getName().str();
-            auto unionIt = unionTypes.find(unionName);
-            if (unionIt != unionTypes.end()) {
-                llvm::Function* F = builder->GetInsertBlock()->getParent();
-                llvm::BasicBlock* defaultBB = llvm::BasicBlock::Create(context, "union.bad", F);
-                llvm::BasicBlock* joinBB = llvm::BasicBlock::Create(context, "union.join", F);
-                llvm::Value* tagPtr = builder->CreateStructGEP(unionIt->second, baseAddr, 0);
-                llvm::Value* tagVal = builder->CreateLoad(builder->getInt32Ty(), tagPtr);
-                llvm::SwitchInst* sw = builder->CreateSwitch(tagVal, defaultBB);
-                llvm::Value* unionPtr = baseAddr;
-                builder->SetInsertPoint(defaultBB);
-                builder->CreateUnreachable();
-                builder->SetInsertPoint(joinBB);
-                llvm::Value* result = nullptr;
-                int idx = 0;
-                for (auto& m : genericiseOrFindUnion(unionName).members) {
-                    std::string ty = resolveTypeName(m.type, false);
-                    if (!classTypes.count(ty) && !genericClasses[ty]) {
-                        idx++;
-                        continue;
-                    }
-                    llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "union.case", F);
-                    sw->addCase(builder->getInt32(idx), caseBB);
-                    builder->SetInsertPoint(caseBB);
-                    llvm::Value* payloadPtr = builder->CreateStructGEP(unionIt->second, unionPtr, 1);
-                    llvm::Value* payload = builder->CreateLoad(builder->getPtrTy(), payloadPtr);
-                    std::vector<std::string> argTypes;
-                    for (auto& arg : (*call)->args) { argTypes.push_back(getExpressionType(arg)); }
-                    ClassMethodInfo* info = findMethodInfo(ty, (*call)->method_name.value, argTypes);
-                    if (!info) {
-                        cg_error((*call)->method_name.pos, "no overload found", "QC-O003");
-                        struct Candidate {
-                            int score;
-                            ClassMethodInfo* method;
-                        };
-                        std::vector<Candidate> candidates;
-                        for (auto& method : userTypes.at(baseTypeName(baseTypeName(ty))).classMethods) {
-                            if (method.is_constructor || (method.name_tok.value != methodName)) continue;
-                            int score = 0;
-                            size_t argCount = (*call)->args.size();
-                            size_t paramCount = method.params.size();
-                            score -= std::abs((int)argCount - (int)paramCount) * 5;
-                            size_t count = std::min(argCount, paramCount);
-                            for (size_t i = 0; i < count; i++) {
-                                llvm::Type* argTy = emitExpr((*call)->args[i])->getType();
-                                llvm::Type* paramTy = llvmTypeFor(method.params[i].type.value);
-                                if (argTy == paramTy) {
-                                    score += 3;
-                                } else if ((argTy->isIntegerTy() || argTy->isFloatTy() || argTy->isDoubleTy()) &&
-                                           (paramTy->isIntegerTy() || paramTy->isFloatTy() || paramTy->isDoubleTy())) {
-                                    score += 1;
-                                } else if (argTy->isPointerTy() && paramTy->isPointerTy()) {
-                                    score += 1;
-                                } else {
-                                    score -= 3;
-                                }
-                            }
-                            candidates.push_back({score, &method});
-                        }
-                        if (candidates.empty()) {
-                            if (methodName.length() < 3) return nullptr;
-                            std::vector<std::pair<int, std::string>> suggestions;
-                            for (auto& method : userTypes[baseTypeName(ty)].classMethods) {
-                                int distance = levenshteinDistance(methodName, method.name_tok.value);
-                                if (distance <= 2) { suggestions.push_back({distance, method.name_tok.value}); }
-                            }
-                            std::sort(suggestions.begin(), suggestions.end());
-                            if (!suggestions.empty()) {
-                                std::string note = "similar methods:";
-                                for (auto& [distance, name] : suggestions) { note += "\n  - `" + name + "`"; }
-                                cg_note((*call)->method_name.pos, note);
-                            }
-                            return nullptr;
-                        }
-                        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
-                        if (candidates[0].score > 0) {
-                            cg_note((*call)->method_name.pos, "closest matching overload: " + candidates[0].method->print());
-                        }
-                        if (candidates.size() <= 5) {
-                            std::string note = "available overloads:";
-                            for (auto& candidate : candidates) { note += "\n  - " + candidate.method->print(); }
-                            cg_note((*call)->method_name.pos, note);
-                        } else {
-                            std::string note = "other overloads:";
-                            size_t shown = 0;
-                            for (auto& candidate : candidates) {
-                                if (shown >= 3) break;
-                                note += "\n  - " + candidate.method->print();
-                                shown++;
-                            }
-                            cg_note((*call)->method_name.pos, note);
-                        }
-                        return nullptr;
-                    }
-                    auto args = prepareArgs(info, (*call)->args);
-                    llvm::Value* callResult = emitVirtualOrDirectCall(ty, methodName, payload, args);
-                    result = callResult;
-                    builder->CreateBr(joinBB);
-                    idx++;
-                }
-                builder->SetInsertPoint(joinBB);
-                return result;
-            } else if (st) {
-                targetClass = resolveTypeName(unionName, false);
-            }
-        }
         llvm::StructType* structType;
         if (genericClasses[baseTypeName(ownerClass)]) {
             structType = generateGenericClass(baseTypeName(ownerClass), userTypes.find(baseTypeName(ownerClass))->second,
@@ -8124,110 +6941,6 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
             return nullptr;
         }
         llvm::Type* baseTy = baseVal->getType();
-        if (auto* st = llvm::dyn_cast<llvm::StructType>(baseTy)) {
-            std::string unionName = st->getName().str();
-            auto unionIt = unionTypes.find(unionName);
-            if (unionIt != unionTypes.end()) {
-                llvm::Function* F = builder->GetInsertBlock()->getParent();
-                llvm::BasicBlock* defaultBB = llvm::BasicBlock::Create(context, "union.bad", F);
-                llvm::BasicBlock* joinBB = llvm::BasicBlock::Create(context, "union.join", F);
-                llvm::Value* tagPtr = builder->CreateStructGEP(unionIt->second, baseVal, 0);
-                llvm::Value* tagVal = builder->CreateLoad(builder->getInt32Ty(), tagPtr);
-                llvm::SwitchInst* sw = builder->CreateSwitch(tagVal, defaultBB);
-                builder->SetInsertPoint(defaultBB);
-                builder->CreateUnreachable();
-                builder->SetInsertPoint(joinBB);
-                llvm::Value* result = nullptr;
-                int idx = 0;
-                for (auto& m : genericiseOrFindUnion(unionName).members) {
-                    std::string ty = resolveTypeName(m.type);
-                    if (!classTypes.count(ty)) {
-                        idx++;
-                        continue;
-                    }
-                    llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "union.case", F);
-                    sw->addCase(builder->getInt32(idx), caseBB);
-                    builder->SetInsertPoint(caseBB);
-                    llvm::Value* payloadPtr = builder->CreateStructGEP(unionIt->second, baseVal, 1);
-                    llvm::Value* payload = builder->CreateLoad(builder->getPtrTy(), payloadPtr);
-                    std::vector<std::string> argTypes;
-                    for (auto& arg : (*call)->args) { argTypes.push_back(getExpressionType(arg)); }
-                    ClassMethodInfo* info = findMethodInfo(ty, (*call)->method_name.value, argTypes);
-                    if (!info) {
-                        cg_error((*call)->method_name.pos, "no overload found", "QC-O003");
-                        struct Candidate {
-                            int score;
-                            ClassMethodInfo* method;
-                        };
-                        std::vector<Candidate> candidates;
-                        for (auto& method : userTypes.at(baseTypeName(baseTypeName(ty))).classMethods) {
-                            if (method.is_constructor || (method.name_tok.value != methodName)) continue;
-                            int score = 0;
-                            size_t argCount = (*call)->args.size();
-                            size_t paramCount = method.params.size();
-                            score -= std::abs((int)argCount - (int)paramCount) * 5;
-                            size_t count = std::min(argCount, paramCount);
-                            for (size_t i = 0; i < count; i++) {
-                                llvm::Type* argTy = emitExpr((*call)->args[i])->getType();
-                                llvm::Type* paramTy = llvmTypeFor(method.params[i].type.value);
-                                if (argTy == paramTy) {
-                                    score += 3;
-                                } else if ((argTy->isIntegerTy() || argTy->isFloatTy() || argTy->isDoubleTy()) &&
-                                           (paramTy->isIntegerTy() || paramTy->isFloatTy() || paramTy->isDoubleTy())) {
-                                    score += 1;
-                                } else if (argTy->isPointerTy() && paramTy->isPointerTy()) {
-                                    score += 1;
-                                } else {
-                                    score -= 3;
-                                }
-                            }
-                            candidates.push_back({score, &method});
-                        }
-                        if (candidates.empty()) {
-                            if (methodName.length() < 3) return nullptr;
-                            std::vector<std::pair<int, std::string>> suggestions;
-                            for (auto& method : userTypes[baseTypeName(ty)].classMethods) {
-                                int distance = levenshteinDistance(methodName, method.name_tok.value);
-                                if (distance <= 2) { suggestions.push_back({distance, method.name_tok.value}); }
-                            }
-                            std::sort(suggestions.begin(), suggestions.end());
-                            if (!suggestions.empty()) {
-                                std::string note = "similar methods:";
-                                for (auto& [distance, name] : suggestions) { note += "\n  - `" + name + "`"; }
-                                cg_note((*call)->method_name.pos, note);
-                            }
-                            return nullptr;
-                        }
-                        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
-                        if (candidates[0].score > 0) {
-                            cg_note((*call)->method_name.pos, "closest matching overload: " + candidates[0].method->print());
-                        }
-                        if (candidates.size() <= 5) {
-                            std::string note = "available overloads:";
-                            for (auto& candidate : candidates) { note += "\n  - " + candidate.method->print(); }
-                            cg_note((*call)->method_name.pos, note);
-                        } else {
-                            std::string note = "other overloads:";
-                            size_t shown = 0;
-                            for (auto& candidate : candidates) {
-                                if (shown >= 3) break;
-                                note += "\n  - " + candidate.method->print();
-                                shown++;
-                            }
-                            cg_note((*call)->method_name.pos, note);
-                        }
-                        return nullptr;
-                    }
-                    auto args = prepareArgs(info, (*call)->args);
-                    llvm::Value* callResult = emitVirtualOrDirectCall(ty, methodName, payload, args);
-                    result = callResult;
-                    builder->CreateBr(joinBB);
-                    idx++;
-                }
-                builder->SetInsertPoint(joinBB);
-                return result;
-            }
-        }
         std::string exprTy = resolveTypeName(getExpressionType((*call)->base, false), false);
         if (exprTy.ends_with("*")) {
             targetClass = resolveTypeName(exprTy.substr(0, exprTy.size() - 1), false);
@@ -8275,14 +6988,28 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
                                                    std::distance(funcDef->params.begin(), paramIt));
                 }
                 argValues.push_back(argVal);
+
                 if (paramIt != funcDef->params.end()) ++paramIt;
+            }
+            llvm::Function* fn = nullptr;
+            if (!funcDef->generics.empty()) {
+                funcName = fixMangling(funcName);
+                if (specializedFunctions.find(funcName) == specializedFunctions.end()) {
+                    llvm::Function* specializedFn = generateSpecializedFunction(funcDef, funcName);
+                    if (!specializedFn) return nullptr;
+                    specializedFunctions[funcName] = specializedFn;
+                }
+                fn = specializedFunctions[funcName];
+            } else {
+                fn = module->getFunction(funcName);
             }
             size_t paramNo = 0;
             for (auto& param : funcDef->params) {
                 if (paramNo >= (*call)->args.size()) {
                     if (param.default_value.has_value()) {
                         AnyNode& defaultRef = const_cast<AnyNode&>(param.default_value.value());
-                        llvm::Value* defVal = emitExpr(defaultRef);
+                        llvm::Value* defVal = adaptArgumentForParam(emitExpr(defaultRef), defaultRef, fn->getFunctionType()->getParamType(paramNo),
+                                                                    paramNo);
                         if (!defVal) {
                             cg_error(get_pos(*call), "failed to evaluate default parameter", "QC-S168");
                             return nullptr;
@@ -8299,39 +7026,15 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
                 cg_error(get_pos(*call), "spread is no longer allowed in function calls.", "QC-S170");
                 return nullptr;
             }
-            if (!funcDef->generics.empty()) {
-                funcName = fixMangling(funcName);
-                if (specializedFunctions.find(funcName) == specializedFunctions.end()) {
-                    llvm::Function* specializedFn = generateSpecializedFunction(funcDef, funcName);
-                    if (!specializedFn) return nullptr;
-                    specializedFunctions[funcName] = specializedFn;
-                }
-                llvm::Function* fn = specializedFunctions[funcName];
-                if (funcDef->params.size() > 0 && funcDef->params.back().type.value == "...") {
-                    size_t fixedCount = funcDef->params.size() - 1;
-                    std::vector<llvm::Value*> varVals(argValues.begin() + fixedCount, argValues.end());
-                    argValues.resize(fixedCount);
-                    argValues.push_back(packVariadicArgs(varVals));
-                }
-                if (insideTry()) {
-                    auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                    llvm::InvokeInst* invoke = builder->CreateInvoke(fn, contBB, currentLandingPad(), argValues);
-                    builder->SetInsertPoint(contBB);
-                    return invoke;
-                } else {
-                    return builder->CreateCall(fn, argValues);
-                }
+            if (funcDef->params.size() > 0 && funcDef->params.back().type.value == "...") {
+                size_t fixedCount = funcDef->params.size() - 1;
+                std::vector<llvm::Value*> varVals(argValues.begin() + fixedCount, argValues.end());
+                argValues.resize(fixedCount);
+                argValues.push_back(packVariadicArgs(varVals));
             }
-            llvm::Function* fn = module->getFunction(funcName);
             if (!fn) {
                 cg_error((*call)->method_name.pos, "method '" + methodName + "' not found on type '" + targetClass + "'", "QC-T052");
                 return nullptr;
-            }
-            if (insideTry()) {
-                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                llvm::Value* invoke = builder->CreateInvoke(fn->getFunctionType(), fn, contBB, currentLandingPad(), argValues);
-                builder->SetInsertPoint(contBB);
-                return invoke;
             }
             return builder->CreateCall(fn, argValues);
         }
@@ -8395,12 +7098,6 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
             llvm::Value* fnPtrAddr = builder->CreateGEP(builder->getPtrTy(), vptr, builder->getInt32(slotIndex), "vtable_slot");
             llvm::Value* fnPtr = builder->CreateLoad(builder->getPtrTy(), fnPtrAddr, "fn_ptr");
             std::vector<llvm::Value*> allArgs = reconcileArgs(method, thisPtr, args);
-            if (insideTry()) {
-                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                llvm::InvokeInst* invoke = builder->CreateInvoke(method->getFunctionType(), fnPtr, contBB, currentLandingPad(), allArgs);
-                builder->SetInsertPoint(contBB);
-                return invoke;
-            }
             return builder->CreateCall(method->getFunctionType(), fnPtr, allArgs);
         }
     }
@@ -8602,74 +7299,26 @@ llvm::Value* LLVMCompiler::emitExpr(const AnyNode& node) {
         llvm::Value* instance = llvm::UndefValue::get(llvm::StructType::get(context, llvmTypes));
         for (size_t i = 0; i < values.size(); i++) { instance = builder->CreateInsertValue(instance, values[i], i); }
         return instance;
+    } else if (TryNode* trys = safe_get<TryNode>(node)) {
+        return emitTry(trys);
+    } else if (CatchNode* catchs = safe_get<CatchNode>(node)) {
+        return emitCatch(catchs);
     }
     return nullptr;
 }
-llvm::Value* LLVMCompiler::storeAndGetPointer(llvm::Value* val) {
-    llvm::Type* ty = val->getType();
-
-    if (ty->isPointerTy()) { return builder->CreateBitCast(val, llvm::PointerType::get(context, 0)); }
-
-    llvm::Function* mallocFn = module->getFunction("qc_malloc");
-    if (!mallocFn) {
-        llvm::FunctionType* mallocTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {builder->getIntNTy(getPtrSize())}, false);
-        mallocFn = llvm::Function::Create(mallocTy, llvm::Function::InternalLinkage, "qc_malloc", module);
-    }
-
-    const llvm::DataLayout& DL = module->getDataLayout();
-    uint64_t size = DL.getTypeAllocSize(ty);
-
-    llvm::Value* heapPtr = builder->CreateCall(mallocFn, {builder->getInt64(size)}, "union_heap");
-    llvm::Value* typedPtr = builder->CreateBitCast(heapPtr, llvm::PointerType::get(context, 0));
-    builder->CreateStore(val, typedPtr);
-
-    return heapPtr;
-}
 int LLVMCompiler::findUnionVariantTag(const std::string& unionName, AnyNode& valueNode, llvm::Value* val) {
-    auto typeIt = userTypes.find(unionName);
-    if (typeIt == userTypes.end()) return -1;
-
-    auto& members = typeIt->second.members;
-
+    std::vector<UnionMember> members;
+    if (UserTypeInfo info = genericiseOrFindUnion(unionName); info.kind != UserTypeKind::Struct)
+        members = info.members;
+    else
+        return -1;
     for (size_t i = 0; i < members.size(); i++) {
         auto& member = members[i];
 
         const std::string& m = member.type;
-        size_t colonPos = m.find(':');
-
-        if (colonPos != std::string::npos) {
-            std::string kind = m.substr(0, colonPos);
-            std::string valueStr = m.substr(colonPos + 1);
-
-            if (kind == "int") {
-                if (auto numNode = std::get_if<NumberNode>(&valueNode)) {
-                    if (numNode->tok.value == valueStr) { return i; }
-                }
-            } else if (kind == "string") {
-                if (auto strNode = std::get_if<StringNode>(&valueNode)) {
-                    std::string lit = "\"" + strNode->tok.value + "\"";
-                    if (lit == valueStr) { return i; }
-                }
-            } else if (kind == "char") {
-                if (auto charNode = std::get_if<CharNode>(&valueNode)) {
-                    std::string lit = "'" + charNode->tok.value + "'";
-                    if (lit == valueStr) { return i; }
-                }
-            } else if (kind == "bool") {
-                if (auto boolNode = std::get_if<BoolNode>(&valueNode)) {
-                    if (boolNode->tok.value == valueStr) { return i; }
-                }
-            } else if (kind == "qbool") {
-                if (auto qBoolNode = std::get_if<QBoolNode>(&valueNode)) {
-                    if (qBoolNode->tok.value == valueStr) { return i; }
-                }
-            }
-        } else {
-            llvm::Type* valTy = val->getType();
-            llvm::Type* memberTy = llvmTypeFor(m);
-
-            if (valTy == memberTy) { return i; }
-        }
+        llvm::Type* valTy = val->getType();
+        llvm::Type* memberTy = llvmTypeFor(m);
+        if (valTy == memberTy) { return i; }
     }
 
     return -1;
@@ -8803,12 +7452,6 @@ llvm::Value* LLVMCompiler::convertToString(llvm::Value* val, AnyNode& expr, Posi
                     llvm::AllocaInst* temp = createEntryAlloca("temp_repr", ty);
                     builder->CreateStore(val, temp);
                     args.push_back(temp);
-                    if (insideTry()) {
-                        auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                        llvm::InvokeInst* invk = builder->CreateInvoke(reprMethod, contBB, currentLandingPad(), args);
-                        builder->SetInsertPoint(contBB);
-                        return invk;
-                    }
                     return builder->CreateCall(reprMethod, args, "repr_result");
                 }
             }
@@ -8816,7 +7459,7 @@ llvm::Value* LLVMCompiler::convertToString(llvm::Value* val, AnyNode& expr, Posi
     }
     std::string unionName;
     if (isUnionType(ty, &unionName)) {
-        auto members = genericiseOrFindUnion(unionName).members;
+        auto members = userTypes.at(baseTypeName(unionName)).members;
         llvm::Value* tag = builder->CreateExtractValue(val, 0, "union_tag");
         llvm::Value* payload = builder->CreateExtractValue(val, 1, "union_payload");
         llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "fstr_union_end", currentFunction);
@@ -8827,8 +7470,6 @@ llvm::Value* LLVMCompiler::convertToString(llvm::Value* val, AnyNode& expr, Posi
             sw->addCase(builder->getInt32(i), caseBB);
             builder->SetInsertPoint(caseBB);
             std::string ts = members[i].type;
-            size_t c = ts.find(':');
-            if (c != std::string::npos) { ts = ts.substr(0, c); }
             llvm::Type* memberTy = llvmTypeFor(ts);
             if (!memberTy) {
                 cg_error(pos, "cannot determine union member type: " + ts, "QC-T053");
@@ -9004,66 +7645,6 @@ llvm::Value* LLVMCompiler::copySpreadToArray(llvm::Value* collVal, AnyNode& coll
     llvm::Value* finalDestIdx = builder->CreateLoad(builder->getInt32Ty(), destIdxAlloc);
     return finalDestIdx;
 }
-llvm::Value* LLVMCompiler::createRuntimeSizedArray(std::vector<AnyNode>& elements, llvm::Value* totalSize) {
-    llvm::Type* elemTy = nullptr;
-    int elemTypeCode = 0;
-    for (auto& elem : elements) {
-        if (auto spread = std::get_if<SpreadNode*>(&elem)) {
-            if (auto varAccess = std::get_if<VarAccessNode*>(&(*spread)->expr)) {
-                std::string collName = resolveTypeName((*varAccess)->var_name_tok.value);
-                if (hasArrayType(collName)) {
-                    auto typeIt = findArrayType(collName);
-                    elemTypeCode = getTypeCode(typeIt->second);
-                    elemTy = getTypeFromCode(elemTypeCode);
-                    break;
-                }
-            }
-        } else {
-            llvm::Value* v = emitExpr(elem);
-            if (v) {
-                elemTy = v->getType();
-                elemTypeCode = getTypeCodeFromLLVM(elemTy);
-                break;
-            }
-        }
-    }
-
-    if (!elemTy) {
-        cg_error(Position(), "cannot determine element type for runtime array", "QC-T054");
-        return nullptr;
-    }
-    llvm::Function* mallocFn = module->getFunction("qc_malloc");
-    if (!mallocFn) {
-        llvm::FunctionType* mallocTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {builder->getIntNTy(getPtrSize())}, false);
-        mallocFn = llvm::Function::Create(mallocTy, llvm::Function::InternalLinkage, "qc_malloc", module);
-    }
-
-    const llvm::DataLayout& DL = module->getDataLayout();
-    uint64_t elemSize = DL.getTypeAllocSize(elemTy);
-    llvm::Value* totalSizeExt = builder->CreateZExt(totalSize, builder->getIntNTy(getPtrSize()));
-    llvm::Value* sizeBytes = builder->CreateMul(totalSizeExt, builder->getInt64(elemSize));
-
-    llvm::Value* mallocCall = builder->CreateCall(mallocFn, {sizeBytes}, "runtime_arr");
-    llvm::Value* arrPtr = builder->CreateBitCast(mallocCall, llvm::PointerType::get(context, 0));
-
-    llvm::Value* currentIndex = builder->getInt32(0);
-
-    for (auto& elem : elements) {
-        if (auto spread = std::get_if<SpreadNode*>(&elem)) {
-            llvm::Value* collVal = emitExpr((*spread)->expr);
-            currentIndex = copySpreadToArray(collVal, (*spread)->expr, arrPtr, currentIndex, elemTy, elemTypeCode);
-        } else {
-            llvm::Value* elemVal = emitExpr(elem);
-            if (!elemVal) continue;
-
-            llvm::Value* elemPtr = builder->CreateGEP(elemTy, arrPtr, currentIndex);
-            builder->CreateStore(elemVal, elemPtr);
-
-            currentIndex = builder->CreateAdd(currentIndex, builder->getInt32(1));
-        }
-    }
-    return arrPtr;
-}
 llvm::AllocaInst* LLVMCompiler::createEntryAlloca(const std::string& name, llvm::Type* ty) {
     if (!currentFunction) {
         llvm::Constant* initVal = llvm::Constant::getNullValue(ty);
@@ -9156,7 +7737,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
                     builder->CreateRet(retVal);
                 }
             }
-            if (!builder->GetInsertBlock()->getTerminator()) {
+            if (!builder->GetInsertBlock()->hasTerminator()) {
                 if (fTy->getReturnType()->isVoidTy()) {
                     builder->CreateRetVoid();
                 } else {
@@ -9261,7 +7842,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
 
     emitStmt(fn.body);
 
-    if (!builder->GetInsertBlock()->getTerminator()) {
+    if (!builder->GetInsertBlock()->hasTerminator()) {
         if (fn.is_multi_return()) {
             warn("missing-return", fn.getPos(), "control reaches end of non-void function without return", "QC-W017");
             llvm::Type* retTy = fTy->getReturnType();
@@ -9340,13 +7921,7 @@ void LLVMCompiler::emitMultiRet(MultiReturnNode* mret) {
                     if (ctor) {
                         llvm::AllocaInst* retVal = createEntryAlloca("mret_val_" + std::to_string(i), classTy);
                         std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, retVal, ctorArgs);
-                        if (insideTry()) {
-                            auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                            llvm::InvokeInst* invoke = builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
-                            builder->SetInsertPoint(contBB);
-                        } else {
-                            builder->CreateCall(ctor, allArgs);
-                        }
+                        builder->CreateCall(ctor, allArgs);
                         val = builder->CreateLoad(classTy, retVal);
                     }
                 }
@@ -9382,17 +7957,6 @@ void LLVMCompiler::emitMultiRet(MultiReturnNode* mret) {
         if (!val) return;
         llvm::Type* srcTy = val->getType();
         llvm::Type* destTy = retStructTy->getElementType(i);
-        if (isUnionType(srcTy) && !isUnionType(destTy)) {
-            llvm::Value* dataPtr = builder->CreateExtractValue(val, 1, "union_data");
-            if (destTy->isPointerTy()) {
-                val = builder->CreateBitCast(dataPtr, destTy);
-            } else {
-                llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                val = builder->CreateLoad(destTy, typedPtr);
-            }
-            srcTy = destTy;
-            break;
-        }
         if (!isUnionType(srcTy)) {
             std::string unionName;
             if (isUnionType(destTy, &unionName)) {
@@ -9404,9 +7968,7 @@ void LLVMCompiler::emitMultiRet(MultiReturnNode* mret) {
 
                 llvm::Value* unionVal = llvm::ConstantAggregateZero::get(destTy);
                 unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-                llvm::Value* dataPtr = storeAndGetPointer(val);
-                val = builder->CreateInsertValue(unionVal, dataPtr, 1);
-
+                unionVal = storeUnionPayload(val, unionVal, llvm::cast<llvm::StructType>(destTy));
                 srcTy = destTy;
                 break;
             }
@@ -9451,13 +8013,7 @@ void LLVMCompiler::emitRet(ReturnNode* ret) {
                 if (ctor) {
                     llvm::AllocaInst* retVal = createEntryAlloca("ret_val", classTy);
                     std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, retVal, ctorArgs);
-                    if (insideTry()) {
-                        auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                        llvm::InvokeInst* invoke = builder->CreateInvoke(ctor, contBB, currentLandingPad(), allArgs);
-                        builder->SetInsertPoint(contBB);
-                    } else {
-                        builder->CreateCall(ctor, allArgs);
-                    }
+                    builder->CreateCall(ctor, allArgs);
                     llvm::Value* result = llvm::ConstantAggregateZero::get(classTy);
                     for (unsigned i = 0; i < classTy->getNumElements(); i++) {
                         std::vector<llvm::Value*> indices = {builder->getInt32(0), builder->getInt32(i)};
@@ -9530,9 +8086,7 @@ void LLVMCompiler::emitRet(ReturnNode* ret) {
 
             llvm::Value* unionVal = llvm::ConstantAggregateZero::get(unionTy);
             unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-            llvm::Value* dataPtr = storeAndGetPointer(v);
-            unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
-
+            unionVal = storeUnionPayload(v, unionVal, unionTy);
             builder->CreateRet(unionVal);
             return;
         }
@@ -9600,19 +8154,6 @@ void LLVMCompiler::emitMultiVar(MultiVarDeclNode* mv) {
         }
         llvm::Type* srcTy = field->getType();
         llvm::Type* destTy = llvmTypeFor(typeStr);
-        for (auto& [unionName, unionTy] : unionTypes) {
-            if (srcTy == unionTy && !isUnionType(destTy)) {
-                llvm::Value* dataPtr = builder->CreateExtractValue(field, 1, "union_data");
-                if (destTy->isPointerTy()) {
-                    field = builder->CreateBitCast(dataPtr, destTy);
-                } else {
-                    llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                    field = builder->CreateLoad(destTy, typedPtr);
-                }
-                srcTy = destTy;
-                break;
-            }
-        }
         llvm::AllocaInst* alloc = createEntryAlloca(name, destTy);
         builder->CreateStore(field, alloc);
         std::string fullName = getCurrentNamespace().empty() ? name : getCurrentNamespace() + "::" + name;
@@ -9654,7 +8195,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
                 }
                 if (comptimeValue->getZExtValue() != 0) {
                     emitStmt(if_node->elif_branches[i].second);
-                    if (!builder->GetInsertBlock()->getTerminator()) {
+                    if (!builder->GetInsertBlock()->hasTerminator()) {
                         emitDefersDownTo(outerDepth + 2);
                         builder->CreateBr(mergeBB);
                     }
@@ -9664,13 +8205,13 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
             }
             if (!emitedBranch && if_node->else_branch) {
                 emitStmt(if_node->else_branch);
-                if (!builder->GetInsertBlock()->getTerminator()) {
+                if (!builder->GetInsertBlock()->hasTerminator()) {
                     emitDefersDownTo(outerDepth + 2);
                     builder->CreateBr(mergeBB);
                 }
             }
         }
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 2);
             builder->CreateBr(mergeBB);
         }
@@ -9706,7 +8247,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
         enterScope();
         emitStmt(if_node->then_branch);
         if (if_node->then_branch->statements.empty()) { warn("empty-body", get_pos(if_node), "if body is empty", "QC-W16"); }
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 2);
             builder->CreateBr(mergeBB);
         }
@@ -9729,7 +8270,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
             enterScope();
             emitStmt(if_node->elif_branches[i].second);
             if (if_node->elif_branches[i].second->statements.empty()) { warn("empty-body", get_pos(if_node), "else if body is empty", "QC-W16"); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
+            if (!builder->GetInsertBlock()->hasTerminator()) {
                 emitDefersDownTo(outerDepth + 2);
                 builder->CreateBr(mergeBB);
             }
@@ -9740,7 +8281,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
             enterScope();
             emitStmt(if_node->else_branch);
             if (if_node->else_branch->statements.empty()) { warn("empty-body", get_pos(if_node), "else body is empty", "QC-W16"); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
+            if (!builder->GetInsertBlock()->hasTerminator()) {
                 emitDefersDownTo(outerDepth + 2);
                 builder->CreateBr(mergeBB);
             }
@@ -9779,7 +8320,7 @@ void LLVMCompiler::emitWhile(WhileNode* while_node) {
     emitStmt(while_node->body);
     if (while_node->body->statements.empty()) { warn("empty-body", get_pos(while_node), "while body is empty", "QC-W16"); }
 
-    if (!builder->GetInsertBlock()->getTerminator()) {
+    if (!builder->GetInsertBlock()->hasTerminator()) {
         emitDefersDownTo(outerDepth + 1);
         builder->CreateBr(condBB);
     }
@@ -9813,7 +8354,7 @@ void LLVMCompiler::emitFor(ForNode* for_node) {
     builder->CreateCondBr(cond, bodyBB, endBB);
     builder->SetInsertPoint(bodyBB);
     emitStmt(for_node->body);
-    if (!builder->GetInsertBlock()->getTerminator()) {
+    if (!builder->GetInsertBlock()->hasTerminator()) {
         emitDefersDownTo(outerDepth + 1);
         builder->CreateBr(incBB);
     }
@@ -9836,12 +8377,6 @@ void LLVMCompiler::emitSwitch(SwitchNode* switch_node) {
     switchVal = normalizeValue(switchVal, switch_node->value);
     llvm::Type* switchTy = switchVal->getType();
     bool canUseSwitch = switchTy->isIntegerTy();
-    for (auto& [unionName, unionTy] : unionTypes) {
-        if (switchTy == unionTy) {
-            canUseSwitch = false;
-            break;
-        }
-    }
     llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "switch.end", currentFunction);
     std::vector<llvm::BasicBlock*> sectionBlocks;
     llvm::BasicBlock* defaultBB = nullptr;
@@ -9909,7 +8444,7 @@ void LLVMCompiler::emitSwitch(SwitchNode* switch_node) {
     for (size_t i = 0; i < switch_node->sections.size(); i++) {
         builder->SetInsertPoint(sectionBlocks[i]);
         emitStmt(switch_node->sections[i].body);
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             if (i + 1 < sectionBlocks.size()) {
                 builder->CreateBr(sectionBlocks[i + 1]);
             } else {
@@ -9944,7 +8479,7 @@ void LLVMCompiler::emitQIf(QIfNode* qif_node) {
     builder->SetInsertPoint(qifBodyBB);
     enterScope();
     emitStmt(qif_node->then_branch);
-    if (!builder->GetInsertBlock()->getTerminator()) {
+    if (!builder->GetInsertBlock()->hasTerminator()) {
         emitDefersDownTo(outerDepth + 2);
         builder->CreateBr(endBB);
     }
@@ -9965,7 +8500,7 @@ void LLVMCompiler::emitQIf(QIfNode* qif_node) {
         builder->SetInsertPoint(elifBodyBB);
         enterScope();
         emitStmt(qif_node->qelif_branches[i].second);
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 2);
             builder->CreateBr(endBB);
         }
@@ -9990,7 +8525,7 @@ void LLVMCompiler::emitQIf(QIfNode* qif_node) {
         builder->SetInsertPoint(qelseBodyBB);
         enterScope();
         emitStmt(qif_node->qelse_branch);
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 2);
             builder->CreateBr(endBB);
         }
@@ -10052,7 +8587,7 @@ void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
     if (case_t_block && qsw->case_t) {
         builder->SetInsertPoint(case_t_block);
         emitStmt(qsw->case_t);
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(qswitch_end);
         }
@@ -10061,7 +8596,7 @@ void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
     if (case_f_block && qsw->case_f) {
         builder->SetInsertPoint(case_f_block);
         emitStmt(qsw->case_f);
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(qswitch_end);
         }
@@ -10070,7 +8605,7 @@ void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
     if (case_n_block && qsw->case_n) {
         builder->SetInsertPoint(case_n_block);
         emitStmt(qsw->case_n);
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(qswitch_end);
         }
@@ -10078,7 +8613,7 @@ void LLVMCompiler::emitQSwitch(QSwitchNode* qsw) {
     if (case_b_block && qsw->case_b) {
         builder->SetInsertPoint(case_b_block);
         emitStmt(qsw->case_b);
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(qswitch_end);
         }
@@ -10157,10 +8692,6 @@ void LLVMCompiler::emitArrDecl(ArrayDeclNode* arrDecl) {
                 arrayLengths[name] = userSize;
             } else if (auto* constSize = llvm::dyn_cast<llvm::ConstantInt>(totalSize)) {
                 arrayLengths[name] = constSize->getSExtValue();
-            } else {
-                llvm::AllocaInst* sizeAlloc = createEntryAlloca(name + "_size", builder->getInt32Ty());
-                builder->CreateStore(totalSize, sizeAlloc);
-                runtimeArraySizes[name] = sizeAlloc;
             }
             llvm::AllocaInst* alloc = createEntryAlloca(name, arrPtr->getType());
             builder->CreateStore(arrPtr, alloc, isVolatile);
@@ -10356,15 +8887,6 @@ void LLVMCompiler::emitForeach(ForeachNode* foreach) {
                         arrayElemTy = llvmTypeFor(typeIt->second);
                     } else {
                     }
-                } else if (runtimeArraySizes.find(collName) != runtimeArraySizes.end()) {
-                    isArray = true;
-                    arrayAlloc = alloc;
-                    llvm::AllocaInst* sizeAlloc = runtimeArraySizes[collName];
-                    lengthVal = builder->CreateLoad(builder->getInt32Ty(), sizeAlloc, "runtime_len");
-                    if (hasArrayType(collName)) {
-                        auto typeIt = findArrayType(collName);
-                        arrayElemTy = llvmTypeFor(typeIt->second);
-                    }
                 } else {
                 }
             }
@@ -10456,7 +8978,7 @@ void LLVMCompiler::emitForeach(ForeachNode* foreach) {
         currentContinueBB = condBB;
     else
         currentContinueBB = incBB;
-    if (!builder->GetInsertBlock()->getTerminator()) { builder->CreateBr(condBB); }
+    if (!builder->GetInsertBlock()->hasTerminator()) { builder->CreateBr(condBB); }
     builder->SetInsertPoint(condBB);
     if (isArray) {
         llvm::Value* iVal = builder->CreateLoad(builder->getInt32Ty(), iterAlloc, iterName);
@@ -10487,7 +9009,7 @@ void LLVMCompiler::emitForeach(ForeachNode* foreach) {
         }
         builder->CreateStore(elemVal, elemAlloc);
         emitStmt(foreach->body);
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(incBB);
         }
@@ -10502,7 +9024,7 @@ void LLVMCompiler::emitForeach(ForeachNode* foreach) {
         llvm::Value* cur = emitMethodCall(nextFn, iterObjAlloc, {}, "_next");
         builder->CreateStore(cur, elemAlloc);
         emitStmt(foreach->body);
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(condBB);
         }
@@ -10515,110 +9037,6 @@ void LLVMCompiler::emitForeach(ForeachNode* foreach) {
     currentBreakBB = savedBreakBB;
     currentContinueBB = savedContinueBB;
     return;
-}
-void LLVMCompiler::emitTryCatch(TryCatchNode* trycatch) {
-    if (insideTry()) {
-        cg_error(get_pos(trycatch), "You cannot have nested try catch blocks. Why would you need them", "QC-TC01");
-        return;
-    }
-    setDebugLocation(trycatch->getPos());
-    size_t outerScope = defersStack.size();
-    enterScope();
-    auto* tryBB = llvm::BasicBlock::Create(context, "try.start", currentFunction);
-    auto* landingPadBB = llvm::BasicBlock::Create(context, "catch.landing", currentFunction);
-    auto* endBB = llvm::BasicBlock::Create(context, "try.end", currentFunction);
-    std::vector<llvm::BasicBlock*> catchBlocks;
-    catchBlocks.reserve(trycatch->catch_bodys.size());
-    EHScope thisScope{
-        .landingPad = landingPadBB,
-        .continuation = endBB,
-        .handlers = {},
-        .deferDepth = outerScope + 1,
-    };
-    for (size_t i = 0; i < trycatch->catch_bodys.size(); ++i) {
-        auto* catchBB = llvm::BasicBlock::Create(context, "catch." + std::to_string(i), currentFunction);
-        catchBlocks.push_back(catchBB);
-        thisScope.handlers.push_back({
-            .body = trycatch->catch_bodys[i],
-            .block = catchBB,
-        });
-    }
-    ehScopes.push_back(std::move(thisScope));
-    builder->CreateBr(tryBB);
-    builder->SetInsertPoint(tryBB);
-    enterScope();
-    emitStmt(trycatch->try_body);
-    if (!builder->GetInsertBlock()->getTerminator()) {
-        emitDefersDownTo(outerScope + 2);
-        builder->CreateBr(endBB);
-    }
-    exitScope();
-    builder->SetInsertPoint(landingPadBB);
-    auto* exceptionType = llvm::StructType::get(context, {builder->getPtrTy(), builder->getInt32Ty()});
-    std::vector<EHHandler> visibleHandlers;
-    for (auto scopeIt = ehScopes.rbegin(); scopeIt != ehScopes.rend(); ++scopeIt) {
-        for (const auto& handler : scopeIt->handlers) { visibleHandlers.push_back(handler); }
-    }
-    auto* lp = builder->CreateLandingPad(exceptionType, visibleHandlers.size(), "qc.exception");
-    for (const auto& handler : visibleHandlers) {
-        const auto& c = handler.body;
-        llvm::Constant* typeInfo = c.var_type == "..." ? llvm::ConstantPointerNull::get(builder->getPtrTy()) : getStringConstant(c.var_type);
-        lp->addClause(typeInfo);
-    }
-    if (!currentFunction->hasPersonalityFn()) { currentFunction->setPersonalityFn(module->getFunction("__qc_personality")); }
-    auto* exception = builder->CreateExtractValue(lp, 0, "exception");
-    auto* selector = builder->CreateExtractValue(lp, 1, "selector");
-    auto* noMatchBB = llvm::BasicBlock::Create(context, "catch.no_match", currentFunction);
-    auto* sw = builder->CreateSwitch(selector, noMatchBB, visibleHandlers.size());
-    for (size_t i = 0; i < visibleHandlers.size(); ++i) {
-        sw->addCase(llvm::ConstantInt::get(builder->getInt32Ty(), i + 1), visibleHandlers[i].block);
-    }
-    EHScope savedScope = std::move(ehScopes.back());
-    ehScopes.pop_back();
-    for (size_t i = 0; i < savedScope.handlers.size(); ++i) {
-        const auto& c = savedScope.handlers[i].body;
-        auto* catchBB = savedScope.handlers[i].block;
-        builder->SetInsertPoint(catchBB);
-        enterScope();
-        if (!c.var_name.empty()) {
-            std::string name = getCurrentNamespace().empty() ? c.var_name : getCurrentNamespace() + c.var_name;
-            llvm::Value* payload = builder->CreateCall(module->getFunction("__qc_exception_get_value"), {exception});
-            llvm::Type* catchLLVMType = llvmTypeFor(c.var_type);
-            llvm::Value* catchValue = nullptr;
-            if (catchLLVMType->isFloatingPointTy()) {
-                llvm::Value* int64Val = builder->CreatePtrToInt(payload, builder->getInt64Ty());
-                if (catchLLVMType->isFloatTy()) {
-                    llvm::Value* int32Val = builder->CreateTrunc(int64Val, builder->getInt32Ty());
-                    catchValue = builder->CreateBitCast(int32Val, builder->getFloatTy());
-                } else {
-                    catchValue = builder->CreateBitCast(int64Val, builder->getDoubleTy());
-                }
-            } else if (catchLLVMType->isIntegerTy()) {
-                llvm::Value* int64Val = builder->CreatePtrToInt(payload, builder->getInt64Ty());
-                catchValue = builder->CreateTruncOrBitCast(int64Val, catchLLVMType);
-
-            } else {
-                catchValue = payload;
-            }
-            auto* alloc = createEntryAlloca(name, catchLLVMType);
-            builder->CreateStore(catchValue, alloc);
-            locals[name] = alloc;
-            varTypes[name] = resolveTypeName(c.var_type, false);
-        }
-        emitStmt(c.body);
-        if (c.body->statements.empty()) {
-            warn("empty-catch", get_pos(trycatch), "catch body is empty and silently consumes thrown errors", "QC-W021");
-        }
-        if (!builder->GetInsertBlock()->getTerminator()) {
-            emitDefersDownTo(outerScope + 2);
-            builder->CreateBr(endBB);
-        }
-        exitScope();
-    }
-    builder->SetInsertPoint(noMatchBB);
-    builder->CreateResume(lp);
-    exitScope();
-    builder->SetInsertPoint(endBB);
 }
 void LLVMCompiler::emitMatch(MatchNode* match_node) {
     setDebugLocation(match_node->getPos());
@@ -10640,7 +9058,9 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
     bool canUseMatch = matchTy->isIntegerTy() || ((match_node->is_enum || match_node->sections.empty() ||
                                                    (match_node->sections.size() == 1 && match_node->sections[0].is_default)) &&
                                                   isEnumType(matchTy, &enumName));
-    bool isFits = !canUseMatch;
+    std::string unionName = "";
+    bool isUnion = isUnionType(matchTy, &unionName);
+    bool isFits = !canUseMatch && !isUnion;
     llvm::Value* fitsRes = nullptr;
     std::string pattern;
     llvm::Function* fitsFn = nullptr;
@@ -10654,7 +9074,14 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
             exitScope();
             return;
         }
-    } else if (!std::ranges::any_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; })) {
+    } else if (!unionName.empty()) {
+        if (std::ranges::none_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; }) &&
+            match_node->sections.size() != userTypes.at(baseTypeName(resolveTypeName(unionName))).members.size()) {
+            cg_error(get_pos(match_node), "match must have a case for every union member, or have a default branch", "QC-MCH1");
+            exitScope();
+            return;
+        }
+    } else if (!isFits && !std::ranges::any_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; })) {
         cg_error(get_pos(match_node), "match must have a default branch for non-enum values.", "QC-MCH1");
         cg_help(get_pos(match_node), "if you know it is impossible for any other value to be here, use `default => unreachable;`");
         exitScope();
@@ -10688,14 +9115,18 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
             first = false;
         }
         if (candidates.size() != 1) {
-            cg_error(get_pos(match_node),
-                     candidates.empty() ? "cannot use match on non enum non integer types: no pattern has all of these cases"
-                                        : "ambiguous pattern for these cases",
+            cg_error(get_pos(match_node), candidates.empty() ? "cannot use match on non enum non integer types" : "ambiguous pattern for these cases",
                      "QC-MCH2");
             exitScope();
             return;
         }
         pattern = candidates[0];
+        if (std::ranges::none_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; }) &&
+            match_node->sections.size() != userTypes.at(baseTypeName(resolveTypeName(unionName))).patternInfo.patterns.size()) {
+            cg_error(get_pos(match_node), "match must have a case for every pattern member, or have a default branch", "QC-MCH1");
+            exitScope();
+            return;
+        }
         auto ptIt = patternTypes.find(pattern);
         if (ptIt == patternTypes.end()) {
             cg_error(get_pos(match_node), "no pattern type for '" + pattern + "'", "QC-MCH3");
@@ -10800,14 +9231,31 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
         for (size_t i = 0; i < match_node->sections.size(); i++) {
             auto& section = match_node->sections[i];
             if (section.is_default) continue;
-            std::string member_name = section.enum_case.first;
-            if (enumMemberInfo.find(member_name) == enumMemberInfo.end()) {
-                cg_error(get_pos(match_node), "unknown enum member: " + member_name, "QC-MCH3");
-                exitScope();
-                return;
+            int idx;
+            if (!unionName.empty()) {
+                if (section.union_case.first.empty()) {
+                    cg_error(get_pos(match_node), "non-union case in union match", "QC-MCH4");
+                    exitScope();
+                    return;
+                }
+                std::string resolved = resolveTypeName(section.union_case.first, false);
+                if (unionContainsType(llvmTypeFor(resolved), unionName) == -1) {
+                    cg_error(get_pos(match_node), "no such type in union " + unionName + ": " + section.union_case.first, "QC-MCH3");
+                    exitScope();
+                    return;
+                }
+                idx = unionContainsType(llvmTypeFor(resolved), unionName);
+            } else {
+                std::string member_name = section.enum_case.first;
+                if (enumMemberInfo.find(member_name) == enumMemberInfo.end()) {
+                    cg_error(get_pos(match_node), "unknown enum member: " + member_name, "QC-MCH3");
+                    exitScope();
+                    return;
+                }
+                idx = std::stoull(enumMemberInfo[member_name].first);
             }
             llvm::ConstantInt* caseVal = llvm::cast<llvm::ConstantInt>(
-                llvm::ConstantInt::get(llvm::dyn_cast<llvm::StructType>(matchTy)->getElementType(0), std::stoull(enumMemberInfo[member_name].first)));
+                llvm::ConstantInt::get(llvm::dyn_cast<llvm::StructType>(matchTy)->getElementType(0), idx));
             matchInst->addCase(caseVal, sectionBlocks[i]);
         }
     }
@@ -10819,8 +9267,12 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
         if ((match_node->is_enum || isFits) && !match_node->sections[i].is_default) {
             llvm::Value* agg = isFits ? fitsRes : matchVal;
             auto& sec = match_node->sections[i];
-            const std::vector<std::string>& names = isFits ? bindNames[i] : sec.enum_case.second;
-            const std::vector<std::string>* types = isFits ? nullptr : &enumMemberInfo[sec.enum_case.first].second;
+            const std::vector<std::string>& names = isFits    ? bindNames[i]
+                                                    : isUnion ? std::vector<std::string>({sec.union_case.second})
+                                                              : sec.enum_case.second;
+            const std::vector<std::string>& types = isFits    ? std::vector<std::string>()
+                                                    : isUnion ? std::vector<std::string>({sec.union_case.first})
+                                                              : enumMemberInfo[sec.enum_case.first].second;
             for (unsigned k = 0; k < names.size(); k++) {
                 std::string typeName;
                 if (isFits) {
@@ -10834,7 +9286,7 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
                         typeName = "";
                     }
                 } else {
-                    typeName = (*types)[k];
+                    typeName = types[k];
                 }
                 if (typeName.empty()) return;
                 std::string fullName = getCurrentNamespace().empty() ? names[k] : getCurrentNamespace() + "::" + names[k];
@@ -10852,7 +9304,7 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
         }
         emitStmt(match_node->sections[i].body);
         exitScope();
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             if (i + 1 == sectionBlocks.size()) emitDefersDownTo(outerDepth + 1);
             builder->CreateBr(endBB);
         }
@@ -10988,7 +9440,7 @@ void LLVMCompiler::emitFits(FitsNode* fits) {
         if (!c.condition) break;
         if (nextBB != noMatchBB) builder->SetInsertPoint(nextBB);
     }
-    if (!builder->GetInsertBlock()->getTerminator()) builder->CreateBr(noMatchBB);
+    if (!builder->GetInsertBlock()->hasTerminator()) builder->CreateBr(noMatchBB);
     builder->SetInsertPoint(noMatchBB);
     builder->CreateRet(builder->CreateInsertValue(llvm::Constant::getNullValue(retTy), builder->getInt32(-1), {0}));
     currentFunction = oldFunction;
@@ -10998,8 +9450,8 @@ void LLVMCompiler::emitFits(FitsNode* fits) {
     currentSubprogram = oldSubprogram;
     builder->SetCurrentDebugLocation(oldDebugLoc);
 }
-void LLVMCompiler::emitStmt(AnyNode node) {
-    if (builder->GetInsertBlock() && builder->GetInsertBlock()->getTerminator()) {
+void LLVMCompiler::emitStmt(AnyNode node, llvm::Value** stmt_out) {
+    if (builder->GetInsertBlock() && builder->GetInsertBlock()->hasTerminator()) {
         warn("unreachable-code", get_pos(node), "attempted to emit into terminated basic block (unreachable code)", "QC-W001");
         return;
     }
@@ -11060,7 +9512,12 @@ void LLVMCompiler::emitStmt(AnyNode node) {
                 all_labels[label->name.value] = std::make_pair(bb, defersStack.size());
             }
         }
-        for (auto& stmt : stmts->statements) { emitStmt(stmt); }
+        for (size_t i = 0; i < stmts->statements.size(); i++) {
+            if (i + 1 == stmts->statements.size())
+                emitStmt(stmts->statements[i], stmt_out);
+            else
+                emitStmt(stmts->statements[i]);
+        }
         if (stmts->is_scoped) exitScope();
         return;
     } else if (auto ns = safe_get<NamespaceNode>(node)) {
@@ -11069,8 +9526,6 @@ void LLVMCompiler::emitStmt(AnyNode node) {
         for (auto& decl : ns->body) { emitStmt(decl); }
         namespaceStack.pop_back();
         return;
-    } else if (auto trycatch = safe_get<TryCatchNode>(node)) {
-        emitTryCatch(trycatch);
     } else if (auto defer = safe_get<DeferNode>(node)) {
         defers.push_back(defer->block);
         return;
@@ -11083,7 +9538,7 @@ void LLVMCompiler::emitStmt(AnyNode node) {
             cg_error(get_pos(*label), "could not create label", "QC-LBL1");
             return;
         }
-        if (!builder->GetInsertBlock()->getTerminator()) { builder->CreateBr(block); }
+        if (!builder->GetInsertBlock()->hasTerminator()) { builder->CreateBr(block); }
         builder->SetInsertPoint(block);
     } else if (GotoNode* goto_stmt = std::get_if<GotoNode>(&node)) {
         setDebugLocation(goto_stmt->getPos());
@@ -11100,7 +9555,10 @@ void LLVMCompiler::emitStmt(AnyNode node) {
     } else if (FitsNode* fits = std::get_if<FitsNode>(&node)) {
         emitFits(fits);
     } else {
-        emitExpr(node);
+        if (stmt_out)
+            *stmt_out = emitExpr(node);
+        else
+            emitExpr(node);
         return;
     }
 }
@@ -11134,7 +9592,6 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                                            std::unordered_map<std::string, std::string> visibleArrayTypeStrings,
                                            std::unordered_map<std::string, int> visibleArrayLengths,
                                            std::unordered_map<std::string, std::string> visibleVarTypes,
-                                           std::unordered_map<std::string, llvm::AllocaInst*> visibleRuntimeArraySizes,
                                            std::unordered_map<std::string, llvm::FunctionType*> visibleLambdaTypes,
                                            std::map<std::string, llvm::Function*> visibleSpecializedFunctions,
                                            std::unordered_map<std::string, llvm::GlobalVariable*> visibleGlobals) {
@@ -11145,7 +9602,6 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
     this->varTypesStack = {visibleVarTypes};
     this->arrayTypeStringsStack = {visibleArrayTypeStrings};
     this->arrayLengthsStack = {visibleArrayLengths};
-    this->runtimeArraySizes = visibleRuntimeArraySizes;
     this->lambdaTypes = visibleLambdaTypes;
     this->localsStack = {{}};
     this->constsStack = {{}};
@@ -11401,13 +9857,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                         if (parentCtor) {
                             std::vector<llvm::Value*> allArgs = {currentThis};
                             allArgs.insert(allArgs.end(), parentArgs.begin(), parentArgs.end());
-                            if (insideTry()) {
-                                auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                                llvm::InvokeInst* invoke = builder->CreateInvoke(parentCtor, contBB, currentLandingPad(), allArgs);
-                                builder->SetInsertPoint(contBB);
-                            } else {
-                                builder->CreateCall(parentCtor, allArgs);
-                            }
+                            builder->CreateCall(parentCtor, allArgs);
                         } else {
                             cg_error(get_pos(method.parentConstructorCall), "parent class '" + info.baseClassName + "' has no matching constructor",
                                      "QC-S275");
@@ -11417,7 +9867,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                 }
             }
             if (method.body) { emitStmt(method.body); }
-            if (!builder->GetInsertBlock()->getTerminator()) {
+            if (!builder->GetInsertBlock()->hasTerminator()) {
                 if (currentTarget->getReturnType()->isVoidTy()) {
                     builder->CreateRetVoid();
                 } else {
@@ -11506,7 +9956,7 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                             builder->CreateRet(retVal);
                         }
                     }
-                    if (!builder->GetInsertBlock()->getTerminator()) {
+                    if (!builder->GetInsertBlock()->hasTerminator()) {
                         if (fTy->getReturnType()->isVoidTy()) {
                             builder->CreateRetVoid();
                         } else {
@@ -11544,14 +9994,6 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                 currentFunction = realMain;
                 std::vector<llvm::Value*> user_entry_args;
                 for (llvm::Argument& arg : realMain->args()) { user_entry_args.push_back(&arg); }
-                if (main_type == MainType::RT_ARRAY) {
-                    llvm::Value* argc = realMain->getArg(0);
-                    llvm::AllocaInst* argcSlot = builder->CreateAlloca(builder->getInt32Ty(), nullptr, "argc.addr");
-                    builder->CreateStore(argc, argcSlot);
-                    user_entry_args = {realMain->getArg(1)};
-                    arrayTypeStrings[functionDefs[entrypointName]->params.back().name.value] = "string";
-                    runtimeArraySizes[functionDefs[entrypointName]->params.back().name.value] = argcSlot;
-                }
                 llvm::Value* result = builder->CreateCall(userEntry, user_entry_args, "entry_result");
                 builder->CreateRet(result);
             } else {

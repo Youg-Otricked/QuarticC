@@ -99,7 +99,6 @@ bool isOperatorTok(TokenType t) {
     case TokenType::INCREMENT:
     case TokenType::DECREMENT:
     case TokenType::SIZEOF:
-    case TokenType::THROW:
     case TokenType::VARADIC:
     case TokenType::NOT: return true;
     default: return false;
@@ -115,7 +114,6 @@ bool isUnaryOpTok(TokenType t) {
     case TokenType::INCREMENT:
     case TokenType::DECREMENT:
     case TokenType::SIZEOF:
-    case TokenType::THROW:
     case TokenType::VARADIC:
     case TokenType::AMPERSAND:
     case TokenType::MUL:

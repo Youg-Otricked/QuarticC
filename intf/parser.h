@@ -169,7 +169,8 @@ class Parser {
     Prs atom();
     Prs power();
     Prs if_expr(bool is_comptime = false);
-    Prs defer_expr();
+    Prs defer_expr(bool is_err = false);
+    Prs try_stmt();
     Prs return_stmt();
     Prs bin_op(std::function<Prs()> func, std::initializer_list<TokenType> ops);
     Prs logical_and();
@@ -187,7 +188,6 @@ class Parser {
     Prs dowhile_stmt();
     Prs while_stmt();
     Prs for_stmt();
-    Prs try_catch_expr();
     Prs array_literal();
     Prs ternary();
     Prs text_unops();

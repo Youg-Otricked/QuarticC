@@ -232,20 +232,20 @@ Token Lexer::make_identifier() {
         /* more types */ id == "byte" || id == "nibble" || id == "addr_t" ||
         /* class stuff */ id == "friend" || id == "friendly" || id == "static" || id == "abstract" || id == "final" ||
         /* more  class stuff */ id == "public" || id == "protected" || id == "private" || id == "virtual" || id == "override" ||
-        /* defer */ id == "defer" ||
+        /* defer */ id == "defer" || id == "errdefer" ||
         /* concepts */ id == "concept" || id == "proves" || id == "with_proof" || id == "_of" || id == "at_least" || id == "all_of" ||
         id == "proved_by" ||
         /* modifiers */ id == "modifier" || id == "on_call" || id == "on_return" || id == "on_use" ||
         /* comptime */ id == "comptime" ||
         /* raw unions */ id == "union" ||
         /* goto */ id == "goto" || id == "jmp" ||
-        /* patterns */ id == "pattern" || id == "fits") {
+        /* patterns */ id == "pattern" || id == "fits" ||
+        /* panic */ id == "panic") {
         return Token(TokenType::KEYWORD, id, start_pos);
     }
     if (id == "true" || id == "false") { return Token(TokenType::BOOL, id, start_pos); }
     if (id == "qtrue" || id == "qfalse" || id == "both" || id == "none") { return Token(TokenType::QBOOL, id, start_pos); }
     if (id == "sizeof") { return Token(TokenType::SIZEOF, id, start_pos); }
-    if (id == "throw") { return Token(TokenType::THROW, id, start_pos); }
     if (id == "as") { return Token(TokenType::AS, id, start_pos); }
     if (id == "typeof") { return Token(TokenType::TYPEOF, id, start_pos); }
     return Token(TokenType::IDENTIFIER, id, start_pos);

@@ -92,7 +92,6 @@ enum class TokenType {
     PLUS_EQ,
     MINUS_EQ,
     SIZEOF,
-    THROW,
     MUL_EQ,
     DIV_EQ,
     MOD,

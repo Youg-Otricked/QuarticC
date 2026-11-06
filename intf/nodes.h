@@ -26,6 +26,7 @@ class ContinueNode;
 class FuncDefNode;
 class QInNode;
 class ReturnNode;
+class CatchNode;
 class MultiReturnNode;
 class MultiVarDeclNode;
 class ArrayDeclNode;
@@ -43,7 +44,6 @@ class QSwitchNode;
 class ArrayAssignNode;
 class FieldAssignNode;
 class MapLiteralNode;
-class TryCatchNode;
 class RefVarDeclNode;
 class NullptrNode;
 class TypeValueNode;
@@ -53,12 +53,13 @@ class TupleValueNode;
 class LabelNode;
 class GotoNode;
 class FitsNode;
+class TryNode;
 using AnyNode = std::variant<std::monostate, NumberNode, StringNode, CharNode, BoolNode, QInNode, QBoolNode, RefVarDeclNode*, NullptrNode, BinOpNode*,
                              UnaryOpNode*, VarAccessNode*, VarAssignNode*, AssignExprNode*, IfNode*, QIfNode*, StatementsNode*, SwitchNode*,
                              QSwitchNode*, BreakNode*, UnreachableNode*, WhileNode*, ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*,
-                             MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*,
+                             CatchNode*, TryNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*,
                              PropertyAccessNode*, SpreadNode*, ForeachNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*,
-                             TryCatchNode*, TypeValueNode, DeferNode*, ModifierNode*, MatchNode*, TupleValueNode*, LabelNode, GotoNode, FitsNode>;
+                             TypeValueNode, DeferNode*, ModifierNode*, MatchNode*, TupleValueNode*, LabelNode, GotoNode, FitsNode>;
 struct GenericType {
     std::string name;
     bool isVariadic = false;
@@ -450,8 +451,10 @@ class ModifierNode {
 class DeferNode {
   public:
     StatementsNode* block;
+    Token catch_name;
+    bool is_err;
     Position getPos() { return get_pos(block); }
-    DeferNode(StatementsNode* block) : block(block) {}
+    DeferNode(StatementsNode* block, Token catch_name, bool is_err) : block(block), catch_name(catch_name), is_err(is_err) {}
     std::string print() const;
 };
 
@@ -507,13 +510,14 @@ class MatchNode {
     struct Section {
         std::pair<std::string, std::vector<std::string>> enum_case;
         std::pair<std::string, std::vector<std::pair<std::string, std::string>>> struct_case;
+        std::pair<std::string, std::string> union_case;
         CaseLabel normal_case;
         bool is_default = false;
         StatementsNode* body;
     };
     std::vector<Section> sections;
     Position getPos() { return get_pos(value); }
-    std::string print() { return printAny(value); }
+    std::string print() { return "match " + printAny(value); }
 };
 
 class QSwitchNode {
@@ -554,22 +558,6 @@ class WhileNode {
     WhileNode(AnyNode cond, StatementsNode* b, bool isdowhile = false) : condition(cond), body(b), is_dowhile(isdowhile) {}
 
     std::string print() { return "(while " + printAny(condition) + " " + body->print() + ")"; }
-};
-class TryCatchNode {
-  public:
-    StatementsNode* try_body;
-    struct CatchBody {
-        std::string var_name;
-        std::string var_type;
-        StatementsNode* body;
-    };
-    std::vector<CatchBody> catch_bodys;
-    Token tok;
-    Position pos;
-    Position getPos() { return tok.pos; }
-    TryCatchNode(StatementsNode* try_b, std::vector<CatchBody> catch_b, Token t, Position p)
-        : try_body(try_b), catch_bodys(catch_b), tok(t), pos(p) {}
-    std::string print() { return "try {\n\t" + try_body->print() + "\n} catch (...) {    ...\n}"; }
 };
 class ForNode {
   public:
@@ -767,6 +755,24 @@ class MethodCallNode {
 
     std::string print() { return printAny(base) + "." + method_name.value + "(...)"; }
 };
+class CatchNode {
+  public:
+    AnyNode value;
+    Position pos;
+    Token catch_name;
+    AnyNode stmt;
+    Position getPos() { return pos; }
+    CatchNode(AnyNode val, Position p, Token catch_name, AnyNode stmt) : value(val), pos(p), catch_name(catch_name), stmt(stmt) {}
+    std::string print() { return "catch"; }
+};
+class TryNode {
+  public:
+    AnyNode value;
+    Position pos;
+    Position getPos() { return pos; }
+    TryNode(AnyNode val, Position p) : value(val), pos(p) {}
+    std::string print() { return "try " + printAny(value); }
+};
 class ReturnNode {
   public:
     AnyNode value;
@@ -835,9 +841,9 @@ class NamespaceNode {
 class ParseResult;
 using Prs = std::variant<std::monostate, ParseResult, NumberNode, StringNode, CharNode, BoolNode, BinOpNode*, Error*, UnaryOpNode*, VarAccessNode*,
                          VarAssignNode*, AssignExprNode*, StatementsNode*, IfNode*, BreakNode*, UnreachableNode*, SwitchNode*, MatchNode*, WhileNode*,
-                         ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*,
+                         ForNode*, ContinueNode*, CallNode*, FuncDefNode*, CatchNode*, TryNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*,
                          ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, SpreadNode*, ForeachNode*, QBoolNode, QInNode,
-                         QIfNode*, QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, TryCatchNode*, RefVarDeclNode*,
+                         QIfNode*, QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, RefVarDeclNode*,
                          NullptrNode, TypeValueNode, DeferNode*, ModifierNode*, TupleValueNode*, LabelNode, GotoNode, FitsNode>;
 class ParseResult {
   public:

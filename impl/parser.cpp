@@ -30,8 +30,7 @@ Token Parser::advance() {
     Position last_pos = this->current_tok.pos;
 
     if (index + 1 < tokens.size()) {
-        ++index;
-        this->current_tok = tokens[index];
+        this->current_tok = tokens[++index];
     } else {
         this->current_tok = Token(TokenType::EOFT, "", last_pos);
         index = tokens.size();
@@ -800,16 +799,22 @@ Prs Parser::qif_expr() {
     }
     return res.success(new QIfNode(std::nullopt, condition, then_branch, qelif_branches, qelse_branch));
 }
-Prs Parser::defer_expr() {
+Prs Parser::defer_expr(bool is_err) {
     ParseResult res;
-    if (!(this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "defer")) {
-        res.failure(new InvalidSyntaxError("QC-S009: Expected 'defer'", this->current_tok.pos));
+    if (!(this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == (std::string(is_err ? "err" : "") + "defer"))) {
+        res.failure(new InvalidSyntaxError("QC-S009: Expected '" + std::string(is_err ? "err" : "") + "defer'", this->current_tok.pos));
         return res.to_prs();
     }
     this->advance();
+    Token catch_name;
+    if (is_err && this->current_tok.type == TokenType::LPAREN) {
+        this->advance();
+        if (this->current_tok.type == TokenType::IDENTIFIER) catch_name = this->current_tok;
+        if (this->current_tok.type == TokenType::RPAREN) this->advance();
+    }
     StatementsNode* deferBlock;
     if (!parse_block_into(deferBlock, res)) return res.to_prs();
-    auto defernode = new DeferNode(deferBlock);
+    auto defernode = new DeferNode(deferBlock, catch_name, is_err);
     return res.success(defernode);
 }
 
@@ -955,59 +960,6 @@ Prs Parser::if_expr(bool is_comptime) {
     auto ifnode = new IfNode(init_node, condition, then_branch, elifs, else_branch, is_comptime);
     return res.success(ifnode);
 }
-Prs Parser::try_catch_expr() {
-    ParseResult res;
-    if (!(this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "try")) {
-        res.failure(new InvalidSyntaxError("QC-S030: Expected 'try'", this->current_tok.pos));
-        return res.to_prs();
-    }
-    Token try_tok = this->current_tok;
-    this->advance();
-    StatementsNode* try_body;
-    if (!parse_block_into(try_body, res)) return res.to_prs();
-    std::vector<TryCatchNode::CatchBody> catch_bodys;
-    while (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "catch") {
-        this->advance();
-        if (this->current_tok.type != TokenType::LPAREN) {
-            res.failure(new InvalidSyntaxError("QC-S032: Expected '(' after 'catch'", this->current_tok.pos));
-            return res.to_prs();
-        }
-        this->advance();
-        if (this->current_tok.type != TokenType::KEYWORD && this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.value != "..." &&
-            this->current_tok.type != TokenType::LPAREN) {
-            res.failure(new InvalidSyntaxError("QC-S033: Expected type in catch declaration", this->current_tok.pos));
-            return res.to_prs();
-        }
-        Token type_tok = this->current_tok;
-        type_tok.value = this->parseTypeString();
-        if (type_tok.type == TokenType::VARADIC) type_tok.value = "...";
-        std::string catch_type = type_tok.value;
-        if (this->current_tok.type != TokenType::IDENTIFIER && catch_type != "...") {
-            res.failure(new InvalidSyntaxError("QC-S034: Expected variable name in catch declaration", this->current_tok.pos));
-            return res.to_prs();
-        }
-        std::string catch_var = "";
-        if (catch_type != "...") {
-            Token var_tok = this->current_tok;
-            catch_var = var_tok.value;
-            this->advance();
-        }
-        if (this->current_tok.type != TokenType::RPAREN) {
-            res.failure(new InvalidSyntaxError("QC-S035: Expected ')' after catch variable", this->current_tok.pos));
-            return res.to_prs();
-        }
-        this->advance();
-        StatementsNode* catch_body;
-        if (!parse_block_into(catch_body, res)) return res.to_prs();
-        catch_bodys.push_back({catch_var, catch_type, catch_body});
-    }
-    if (catch_bodys.size() == 0) {
-        res.failure(new InvalidSyntaxError("QC-S031: Expected 'catch' after try block", this->current_tok.pos));
-        return res.to_prs();
-    }
-    auto try_catch_node = new TryCatchNode(try_body, catch_bodys, try_tok, try_tok.pos);
-    return res.success(try_catch_node);
-}
 Prs Parser::match_stmt() {
     ParseResult res;
     if (!(current_tok.type == TokenType::KEYWORD && current_tok.value == "match")) {
@@ -1041,76 +993,96 @@ Prs Parser::match_stmt() {
             this->advance();
             section.is_default = true;
         } else {
-            if (is_known_type(this->current_tok.value)) {
+            size_t saved_index = this->index;
+            std::string type = this->parseTypeString();
+            if (is_known_type(type) || is_primitive_type(type)) {
                 is_enum = true;
                 std::pair<std::string, std::vector<std::string>> data;
-                std::string type = this->parseTypeString();
                 if (this->current_tok.type != TokenType::DOT) {
-                    res.failure(new InvalidSyntaxError("QC-S301: Expected . after enum name", current_tok.pos));
-                    return res.to_prs();
-                }
-                this->advance();
-                data.first = type + "." + this->current_tok.value;
-                this->advance();
-                if (this->current_tok.type == TokenType::LPAREN) {
-                    this->advance();
-                    while (this->current_tok.type == TokenType::IDENTIFIER) {
-                        data.second.push_back(this->current_tok.value);
-                        this->advance();
-                        if (this->current_tok.type == TokenType::COMMA) this->advance();
-                    }
-                    if (this->current_tok.type != TokenType::RPAREN) {
-                        res.failure(new InvalidSyntaxError("QC-S302: Expected ) after enum tags", current_tok.pos));
-                        return res.to_prs();
-                    }
-                    this->advance();
-                } else if (this->current_tok.type == TokenType::LBRACE) {
-                    std::vector<std::pair<std::string, std::string>> things;
-                    Position start_pos = this->current_tok.pos;
-                    this->advance();
-                    std::pair<std::string, std::string> first;
-                    if (this->current_tok.type == TokenType::IDENTIFIER) {
-                        first.first = this->current_tok.value;
-                        this->advance();
-                    }
-                    if (this->current_tok.type == TokenType::COLON) {
+                    std::pair<std::string, std::string> union_case = {type, ""};
+                    if (this->current_tok.type == TokenType::LPAREN) {
                         this->advance();
                         if (this->current_tok.type == TokenType::IDENTIFIER) {
-                            first.second = this->current_tok.value;
+                            union_case.second = this->current_tok.value;
                             this->advance();
-                            things.push_back(first);
                         }
-                        while (this->current_tok.type == TokenType::COMMA) {
+                        if (this->current_tok.type != TokenType::RPAREN) {
+                            res.failure(new InvalidSyntaxError("QC-S302: Expected ) after union case type name", current_tok.pos));
+                            return res.to_prs();
+                        }
+                        this->advance();
+                        data.second = {};
+                        section.union_case = union_case;
+                    } else {
+                        res.failure(new InvalidSyntaxError("QC-S301: Expected . after enum/pattern name", current_tok.pos));
+                        return res.to_prs();
+                    }
+                } else {
+                    this->advance();
+                    data.first = type + "." + this->current_tok.value;
+                    this->advance();
+                    if (this->current_tok.type == TokenType::LPAREN) {
+                        this->advance();
+                        while (this->current_tok.type == TokenType::IDENTIFIER) {
+                            data.second.push_back(this->current_tok.value);
                             this->advance();
-
-                            if (this->current_tok.type == TokenType::IDENTIFIER) {
-                                first.first = this->current_tok.value;
-                                this->advance();
-                            }
-                            if (this->current_tok.type != TokenType::COLON) {
-                                res.failure(new InvalidSyntaxError("QC-S046: Expected ':' in map literal", this->current_tok.pos));
-                                return res.to_prs();
-                            }
+                            if (this->current_tok.type == TokenType::COMMA) this->advance();
+                        }
+                        if (this->current_tok.type != TokenType::RPAREN) {
+                            res.failure(new InvalidSyntaxError("QC-S302: Expected ) after enum tags", current_tok.pos));
+                            return res.to_prs();
+                        }
+                        this->advance();
+                    } else if (this->current_tok.type == TokenType::LBRACE) {
+                        std::vector<std::pair<std::string, std::string>> things;
+                        Position start_pos = this->current_tok.pos;
+                        this->advance();
+                        std::pair<std::string, std::string> first;
+                        if (this->current_tok.type == TokenType::IDENTIFIER) {
+                            first.first = this->current_tok.value;
+                            this->advance();
+                        }
+                        if (this->current_tok.type == TokenType::COLON) {
                             this->advance();
                             if (this->current_tok.type == TokenType::IDENTIFIER) {
                                 first.second = this->current_tok.value;
                                 this->advance();
+                                things.push_back(first);
                             }
-                            if (res.error) return res.to_prs();
-                            things.push_back(first);
+                            while (this->current_tok.type == TokenType::COMMA) {
+                                this->advance();
+
+                                if (this->current_tok.type == TokenType::IDENTIFIER) {
+                                    first.first = this->current_tok.value;
+                                    this->advance();
+                                }
+                                if (this->current_tok.type != TokenType::COLON) {
+                                    res.failure(new InvalidSyntaxError("QC-S046: Expected ':' in map literal", this->current_tok.pos));
+                                    return res.to_prs();
+                                }
+                                this->advance();
+                                if (this->current_tok.type == TokenType::IDENTIFIER) {
+                                    first.second = this->current_tok.value;
+                                    this->advance();
+                                }
+                                if (res.error) return res.to_prs();
+                                things.push_back(first);
+                            }
+                            if (this->current_tok.type != TokenType::RBRACE) {
+                                res.failure(new InvalidSyntaxError("QC-S047: Expected '}' at end of map literal", this->current_tok.pos));
+                                return res.to_prs();
+                            }
+                            this->advance();
                         }
-                        if (this->current_tok.type != TokenType::RBRACE) {
-                            res.failure(new InvalidSyntaxError("QC-S047: Expected '}' at end of map literal", this->current_tok.pos));
-                            return res.to_prs();
-                        }
-                        this->advance();
+                        section.struct_case = std::make_pair(data.first, things);
+                    } else {
+                        data.second = {};
+                        section.enum_case = data;
                     }
-                    section.struct_case = std::make_pair(data.first, things);
-                } else {
-                    data.second = {};
-                    section.enum_case = data;
                 }
             } else {
+                this->index = saved_index;
+                this->current_tok = tokens[index];
                 AnyNode case_expr = res.reg(this->text_unops());
                 if (res.error) return res.to_prs();
                 section.normal_case = CaseLabel{case_expr};
@@ -3062,7 +3034,7 @@ Prs Parser::ternary() {
 }
 Prs Parser::text_unops() {
     ParseResult res;
-    if (this->current_tok.type == TokenType::SIZEOF || this->current_tok.type == TokenType::THROW) {
+    if (this->current_tok.type == TokenType::SIZEOF) {
         Token tok = this->current_tok;
         this->advance();
         AnyNode factor_node = res.reg(this->ternary());
@@ -3097,6 +3069,23 @@ Prs Parser::comparison() {
     ParseResult res;
     AnyNode left = res.reg(this->expr());
     if (res.error) return res.to_prs();
+    if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "catch") {
+        Token op_tok = this->current_tok;
+        this->advance();
+        Token catch_name;
+        if (this->current_tok.type == TokenType::LPAREN) {
+            this->advance();
+            if (this->current_tok.type == TokenType::IDENTIFIER) {
+                catch_name = this->current_tok;
+                this->advance();
+            }
+            if (this->current_tok.type == TokenType::RPAREN) this->advance();
+        }
+        AnyNode stmt = res.reg(this->statement());
+        if (res.error) return res.to_prs();
+        auto node = new CatchNode(left, op_tok.pos, catch_name, stmt);
+        return res.success(node);
+    }
     if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "proved_by" ||
         (this->current_tok.type == TokenType::AS && this->current_tok.value == "as")) {
         Token op_tok = this->current_tok;
@@ -3155,6 +3144,19 @@ Prs Parser::bin_op(std::function<Prs()> func, std::initializer_list<TokenType> o
     }
 
     return res.success(left);
+}
+Prs Parser::try_stmt() {
+    ParseResult res;
+    Position start_pos = this->current_tok.pos;
+    this->advance();
+    AnyNode values = res.reg(this->text_unops());
+    if (res.error) { return res.to_prs(); }
+    if (this->current_tok.type != TokenType::SEMICOLON) {
+        res.failure(new MissingSemicolonError(this->current_tok.pos));
+        return res.to_prs();
+    }
+    this->advance();
+    return res.success(new TryNode(values, start_pos));
 }
 Prs Parser::return_stmt() {
     ParseResult res;
@@ -3289,16 +3291,6 @@ AnyNode to_any_node(Prs prs) {
                 return std::monostate{};
             } else if constexpr (std::is_same_v<T, ParseResult>) {
                 return arg.node;
-            } else if constexpr (std::is_same_v<T, BinOpNode*> || std::is_same_v<T, UnaryOpNode*> || std::is_same_v<T, VarAccessNode*> ||
-                                 std::is_same_v<T, VarAssignNode*> || std::is_same_v<T, AssignExprNode*> || std::is_same_v<T, IfNode*> ||
-                                 std::is_same_v<T, StatementsNode*> || std::is_same_v<T, SwitchNode*> || std::is_same_v<T, BreakNode*> ||
-                                 std::is_same_v<T, WhileNode*> || std::is_same_v<T, ForNode*> || std::is_same_v<T, ContinueNode*> ||
-                                 std::is_same_v<T, CallNode*> || std::is_same_v<T, FuncDefNode*> || std::is_same_v<T, ReturnNode*> ||
-                                 std::is_same_v<T, MultiReturnNode*> || std::is_same_v<T, MultiVarDeclNode*> || std::is_same_v<T, ArrayDeclNode*> ||
-                                 std::is_same_v<T, ArrayLiteralNode*> || std::is_same_v<T, ArrayAccessNode*> || std::is_same_v<T, QIfNode*> ||
-                                 std::is_same_v<T, QSwitchNode*> || std::is_same_v<T, FieldAssignNode*> || std::is_same_v<T, MapLiteralNode*> ||
-                                 std::is_same_v<T, NamespaceNode*> || std::is_same_v<T, TryCatchNode*> || std::is_same_v<T, UnreachableNode*>) {
-                return arg;
             } else {
                 return arg;
             }
@@ -3609,9 +3601,9 @@ Prs Parser::statement() {
         this->advance();
         tok = this->current_tok;
     }
+    if (tok.type == TokenType::KEYWORD && tok.value == "errdefer") { return this->defer_expr(true); }
     if (tok.type == TokenType::KEYWORD && tok.value == "defer") { return this->defer_expr(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "if") { return this->if_expr(is_comptime); }
-    if (tok.type == TokenType::KEYWORD && tok.value == "try") { return this->try_catch_expr(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "qif") { return this->qif_expr(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "switch") { return this->switch_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "match") { return this->match_stmt(); }
@@ -3679,6 +3671,7 @@ Prs Parser::statement() {
         this->advance();
         return res.success(node);
     }
+    if (tok.type == TokenType::KEYWORD && tok.value == "try") { return this->try_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "return") { return this->return_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "break") {
         this->advance();
@@ -3688,6 +3681,17 @@ Prs Parser::statement() {
         }
         this->advance();
         return res.success(new BreakNode(tok));
+    }
+    if (this->current_tok.value == "panic") {
+        Token mark = this->current_tok;
+        this->advance();
+        AnyNode text = res.reg(this->ternary());
+        if (current_tok.type != TokenType::SEMICOLON) {
+            res.failure(new MissingSemicolonError(current_tok.pos));
+            return res.to_prs();
+        }
+        mark.value = "`panic";
+        return res.success(new CallNode(new VarAccessNode(mark), {text}));
     }
     if (tok.type == TokenType::KEYWORD && tok.value == "unreachable") {
         this->advance();
@@ -4663,8 +4667,8 @@ Prs Parser::statement() {
         }
         info.pos = type_name.pos;
         info.baseFile = SourceManager::instance().get(this->current_tok.pos.file_id).filename;
-        info.generics = generics;
         info.namespace_path = currentNamespace;
+        info.generics = generics;
         user_types[base_type_name(full_key)] = info;
         this->current_generics = std::move(saved_generics);
         return res.success(std::monostate{});

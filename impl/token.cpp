@@ -154,7 +154,6 @@ TokenType stringToTokenType(const std::string& str) {
                                                                             {"MUL", TokenType::MUL},
                                                                             {"DIV", TokenType::DIV},
                                                                             {"SIZEOF", TokenType::SIZEOF},
-                                                                            {"THROW", TokenType::THROW},
                                                                             {"POWER", TokenType::POWER},
                                                                             {"LPAREN", TokenType::LPAREN},
                                                                             {"RPAREN", TokenType::RPAREN},
@@ -259,7 +258,6 @@ std::string get_token_name(TokenType tok) {
     case TokenType::AT: return "@";
     case TokenType::PIPE: return "|";
     case TokenType::SIZEOF: return "sizeof";
-    case TokenType::THROW: return "throw";
     case TokenType::EOFT: return "<eof>";
     case TokenType::VARADIC: return "...";
     case TokenType::RROT_EQ: return "|>>=";

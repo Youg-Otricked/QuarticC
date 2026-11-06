@@ -9,6 +9,7 @@
 #include <list>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -195,6 +196,22 @@ class LLVMCompiler {
     }
     void generateStructReprFunctions();
     llvm::Value* callStringConcat(llvm::Value* a, llvm::Value* b);
+    llvm::Type* getLargestUType(UserTypeInfo& info) {
+        size_t size = 0;
+        auto& DL = module->getDataLayout();
+        for (UnionMember& field : info.members) {
+            field.type = resolveTypeName(field.type, false);
+            llvm::Type* ty = llvmTypeFor(field.type);
+            if (!ty) {
+                cg_error(info.pos, "unknow type: " + field.type, "QC-U001");
+                size = 1;
+                continue;
+            }
+            size_t sz = DL.getTypeAllocSize(ty);
+            if (sz > size) size = sz;
+        }
+        return llvm::ArrayType::get(builder->getIntNTy(8), size);
+    }
     llvm::Type* getLargestRUType(UserTypeInfo& info) {
         size_t size = 0;
         auto& DL = module->getDataLayout();
@@ -264,6 +281,26 @@ class LLVMCompiler {
         std::vector<llvm::Type*> res = {llvmTypeFor(info.enumType)};
         for (size_t size : sizes) { res.push_back(llvm::ArrayType::get(builder->getIntNTy(8), size)); }
         return res;
+    }
+    llvm::Type* generateUnion(const std::string& name, UserTypeInfo& info) {
+        if (!info.generics.empty()) return nullptr;
+        std::vector<std::string> savedNamespaceStack = namespaceStack;
+        namespaceStack.clear();
+        size_t pos = 0;
+        size_t last_pos = 0;
+        while ((pos = name.find("::", last_pos)) != std::string::npos) {
+            namespaceStack.push_back(name.substr(last_pos, pos - last_pos));
+            last_pos = pos + 2;
+        }
+        auto it = unionTypes.find(resolveTypeName(name));
+        if (it == unionTypes.end()) {
+            namespaceStack = savedNamespaceStack;
+            return nullptr;
+        }
+        llvm::StructType* ty = it->second;
+        if (ty->isOpaque()) ty->setBody({builder->getInt32Ty(), getLargestUType(info)});
+        namespaceStack = savedNamespaceStack;
+        return ty;
     }
     llvm::Type* generateRawUnion(const std::string& name, UserTypeInfo& info) {
         if (!info.generics.empty()) return nullptr;
@@ -363,7 +400,6 @@ class LLVMCompiler {
                                  std::unordered_map<std::string, std::string> visibleArrayTypeStrings,
                                  std::unordered_map<std::string, int> visibleArrayLengths,
                                  std::unordered_map<std::string, std::string> visibleVarTypes,
-                                 std::unordered_map<std::string, llvm::AllocaInst*> visibleRuntimeArraySizes,
                                  std::unordered_map<std::string, llvm::FunctionType*> visibleLambdaTypes,
                                  std::map<std::string, llvm::Function*> visibleSpecializedFunctions,
                                  std::unordered_map<std::string, llvm::GlobalVariable*> visibleGlobals);
@@ -417,6 +453,10 @@ class LLVMCompiler {
 
         if (outName) *outName = name;
         return true;
+    }
+    bool canBeError(llvm::Value* v) {
+        llvm::StructType* st = llvm::dyn_cast<llvm::StructType>(v->getType());
+        return st && st->getNumElements() > 0 && st->getElementType(0)->isIntegerTy();
     }
     std::unordered_map<std::string, std::pair<llvm::BasicBlock*, size_t>> all_labels;
     std::unordered_map<std::string, std::pair<llvm::BasicBlock*, size_t>> scope_labels;
@@ -534,8 +574,8 @@ class LLVMCompiler {
     std::unordered_map<std::string, bool> genericStructs;
     std::unordered_map<std::string, bool> genericAliases;
     std::unordered_map<std::string, bool> genericRawUnions;
-    std::unordered_map<std::string, bool> genericUnions;
     std::unordered_map<std::string, bool> genericConcepts;
+    std::unordered_map<std::string, bool> genericUnions;
     std::unordered_map<std::string, ConceptInfo> concepts;
     struct ModifierInfo {
         StatementsNode* onCall = nullptr;
@@ -543,30 +583,15 @@ class LLVMCompiler {
         StatementsNode* onUse = nullptr;
     };
     std::unordered_map<std::string, ModifierInfo> modifiers;
-    std::unordered_map<std::string, UserTypeInfo> substitutedUnions;
     std::unordered_map<std::string, llvm::Type*> currentGenericTypes;
     std::unordered_map<std::string, std::string> currentGenericTypeStrings;
     std::unordered_map<std::string, GenericType> currentNonTypeGenericValues;
+    std::unordered_map<std::string, UserTypeInfo> substitutedUnions;
     std::vector<ExceptionHandlerInfo> handlers;
     llvm::Value* currentThis = nullptr;
     std::string currentClassName = "";
-    struct EHHandler {
-        TryCatchNode::CatchBody body;
-        llvm::BasicBlock* block;
-    };
-
-    struct EHScope {
-        llvm::BasicBlock* landingPad;
-        llvm::BasicBlock* continuation;
-        std::vector<EHHandler> handlers;
-        size_t deferDepth;
-    };
-    std::vector<EHScope> ehScopes;
-
     std::vector<std::vector<StatementsNode*>> defersStack = {{}};
 #define defers defersStack.back()
-    bool insideTry() { return !ehScopes.empty(); }
-    llvm::BasicBlock* currentLandingPad() { return ehScopes.back().landingPad; }
     llvm::Value* copySpreadToArray(llvm::Value* collVal, AnyNode& collExpr, llvm::Value* destArray, llvm::Value* startIndex, llvm::Type* elemTy,
                                    int elemTypeCode);
     std::string substituteGenerics(const std::string& typeStr) {
@@ -624,16 +649,15 @@ class LLVMCompiler {
         return result + ">" + suffix;
     }
     unsigned pointerSizeBits;
-    llvm::Value* createRuntimeSizedArray(std::vector<AnyNode>& elements, llvm::Value* totalSize);
     void expandSpreadIntoVector(llvm::Value* collVal, AnyNode& collExpr, std::vector<llvm::Value*>& elements);
     llvm::Value* emitSpreadFunctionCall(llvm::Value* calleeVal, llvm::FunctionType* fnTy, CallNode& call);
     bool fulfillsGenericConstraints(std::vector<GenericType> generics, std::vector<std::string> genericParams, Position pos = Position());
+    UserTypeInfo generateGenericUnion(std::string unionName, UserTypeInfo unionInfo, std::vector<std::string> genericParams);
     llvm::StructType* generateGenericEnum(std::string enumName, UserTypeInfo enumInfo, std::vector<std::string> genericParams);
     llvm::StructType* generateGenericRawUnion(std::string runionName, UserTypeInfo runionInfo, std::vector<std::string> genericParams);
     ConceptInfo generateGenericConcept(std::string conceptName, UserTypeInfo conceptInfo, std::vector<std::string> genericParams);
     llvm::StructType* generateGenericClass(std::string className, UserTypeInfo classInfo, std::vector<std::string> genericParams);
     llvm::StructType* generateGenericStruct(std::string structName, UserTypeInfo structInfo, std::vector<std::string> genericParams);
-    UserTypeInfo generateGenericUnion(std::string unionName, UserTypeInfo unionInfo, std::vector<std::string> genericParams);
     std::string generateGenericAlias(std::string aliasName, UserTypeInfo aliasInfo, std::vector<std::string> genericParams);
     std::unordered_map<std::string, llvm::GlobalVariable*> globals;
     std::unordered_map<std::string, FunctionSignature> functionSignatures;
@@ -644,10 +668,8 @@ class LLVMCompiler {
     std::vector<std::unordered_map<std::string, std::vector<uint8_t>>> constsStack;
     std::vector<std::unordered_map<std::string, llvm::AllocaInst*>> localsStack;
     std::vector<std::unordered_map<std::string, bool>> volatileVarsStack;
-    std::unordered_map<std::string, llvm::AllocaInst*> runtimeArraySizes;
     std::unordered_map<std::string, llvm::FunctionType*> lambdaTypes;
     int findUnionVariantTag(const std::string& unionName, AnyNode& valueNode, llvm::Value* val);
-    llvm::Value* storeAndGetPointer(llvm::Value* val);
     std::map<std::string, llvm::Function*> specializedFunctions;
     template <typename MapType> bool foundInStack(const std::vector<MapType>& stack, const std::string& key) {
         if (stack.empty()) return false;
@@ -695,10 +717,188 @@ class LLVMCompiler {
         volatileVarsStack.push_back({});
         constsStack.push_back({});
     }
-
+    llvm::Value* valueIsError(llvm::Value* val) {
+        if (canBeError(val)) {
+            return builder->CreateICmpNE(llvm::ConstantInt::get(builder->getIntNTy(module->getDataLayout().getTypeAllocSizeInBits(
+                                                                    llvm::cast<llvm::StructType>(val->getType())->getElementType(0))),
+                                                                0),
+                                         builder->CreateExtractValue(val, 0), "is_error");
+        }
+        return builder->getInt1(0);
+    }
+    int unionContainsType(llvm::Type* v, std::string unionName) {
+        UserTypeInfo& ut = userTypes.find(baseTypeName(resolveTypeName(unionName)))->second;
+        int i = 0;
+        for (UnionMember& m : ut.members) {
+            if (llvmTypeFor(m.type) == v) { return i; }
+            ++i;
+        }
+        return -1;
+    }
+    llvm::Value* storeUnionPayload(llvm::Value* rhs, llvm::Value* unionVal, llvm::StructType* unionTy) {
+        llvm::Type* storageTy = unionTy->getElementType(1);
+        auto* storageArrTy = llvm::cast<llvm::ArrayType>(storageTy);
+        llvm::Value* storage = builder->CreateAlloca(storageTy, nullptr, "union_payload");
+        builder->CreateStore(llvm::ConstantAggregateZero::get(storageArrTy), storage);
+        llvm::Value* src = builder->CreateAlloca(rhs->getType(), nullptr, "union_arg");
+        builder->CreateStore(rhs, src);
+        builder->CreateMemCpyInline(storage, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
+                                    llvm::ConstantInt::get(builder->getInt64Ty(), module->getDataLayout().getTypeStoreSize(rhs->getType())));
+        llvm::Value* payload = builder->CreateLoad(storageTy, storage, "union_payload");
+        unionVal = builder->CreateInsertValue(unionVal, payload, 1);
+        return unionVal;
+    }
+    llvm::Value* remapUnion(llvm::Value* v, llvm::StructType* src, llvm::StructType* dst, const std::vector<unsigned>& map) {
+        llvm::Value* tag = builder->CreateExtractValue(v, 0, "old_tag");
+        llvm::Type* newTagTy = dst->getElementType(0);
+        llvm::Value* newTag;
+        bool identity = std::all_of(map.begin(), map.end(), [i = 0u](unsigned m) mutable { return m == i++; });
+        if (identity) {
+            newTag = builder->CreateZExtOrTrunc(tag, newTagTy);
+        } else {
+            std::vector<llvm::Constant*> elems;
+            for (unsigned m : map) elems.push_back(llvm::ConstantInt::get(newTagTy, m));
+            auto* arrTy = llvm::ArrayType::get(newTagTy, elems.size());
+            auto* table = new llvm::GlobalVariable(*module, arrTy, true, llvm::GlobalValue::PrivateLinkage, llvm::ConstantArray::get(arrTy, elems),
+                                                   "tagmap");
+            auto* idx = builder->CreateZExtOrTrunc(tag, builder->getInt64Ty());
+            auto* p = builder->CreateInBoundsGEP(arrTy, table, {builder->getInt64(0), idx});
+            newTag = builder->CreateLoad(newTagTy, p, "new_tag");
+        }
+        auto* srcSlot = createEntryAlloca("remap_src", src);
+        builder->CreateStore(v, srcSlot);
+        auto* dstSlot = createEntryAlloca("remap_dst", dst);
+        builder->CreateStore(llvm::Constant::getNullValue(dst), dstSlot);
+        builder->CreateMemCpy(builder->CreateStructGEP(dst, dstSlot, 1), llvm::MaybeAlign(), builder->CreateStructGEP(src, srcSlot, 1),
+                              llvm::MaybeAlign(), module->getDataLayout().getTypeAllocSizeInBits(src->getElementType(0)));
+        builder->CreateStore(newTag, builder->CreateStructGEP(dst, dstSlot, 0));
+        return builder->CreateLoad(dst, dstSlot);
+    }
+    std::optional<std::vector<unsigned>> unionTagMap(const std::vector<UnionMember>& srcMembers, const std::vector<UnionMember>& dstMembers) {
+        std::vector<unsigned> map;
+        map.reserve(srcMembers.size());
+        for (const UnionMember& member : srcMembers) {
+            bool found = false;
+            for (int j = 0; j < dstMembers.size(); j++) {
+                if (resolveTypeName(member.type) == resolveTypeName(dstMembers[j].type)) {
+                    found = true;
+                    map.push_back(j);
+                    break;
+                }
+            }
+            if (!found) return std::nullopt;
+        }
+        return map;
+    }
+    [[gnu::noinline]]
+    llvm::Value* emitCatch(CatchNode* node) {
+        llvm::Value* v = emitExpr(node->value);
+        if (!canBeError(v)) {
+            cg_error(get_pos(node), "catch applied to a value that cannot be an error", "QC-CCH3");
+            return v;
+        }
+        std::string unionName = "";
+        bool isU = isUnionType(v->getType(), &unionName);
+        llvm::Type* okTy = isU ? llvmTypeFor(userTypes.at(resolveTypeName(unionName)).members[0].type) : v->getType();
+        llvm::AllocaInst* result = createEntryAlloca("catch.result", okTy);
+        auto* errBB = llvm::BasicBlock::Create(context, "catch.err", currentFunction);
+        auto* okBB = llvm::BasicBlock::Create(context, "catch.ok", currentFunction);
+        auto* endBB = llvm::BasicBlock::Create(context, "catch.end", currentFunction);
+        builder->CreateCondBr(valueIsError(v), errBB, okBB);
+        builder->SetInsertPoint(errBB);
+        enterScope();
+        if (!node->catch_name.value.empty()) {
+            std::string fullName = getCurrentNamespace().empty() ? node->catch_name.value : getCurrentNamespace() + "::" + node->catch_name.value;
+            std::string qcType = resolveTypeName(getExpressionType(node->value), false);
+            llvm::AllocaInst* alloc = createEntryAlloca(fullName, v->getType());
+            builder->CreateStore(v, alloc);
+            volatileVars[fullName] = false;
+            varTypes[fullName] = qcType;
+            locals[fullName] = alloc;
+        }
+        llvm::Value* hv = nullptr;
+        emitStmt(node->stmt, &hv);
+        if (!builder->GetInsertBlock()->hasTerminator()) {
+            if (hv) {
+                if (hv->getType() != okTy) { hv = castValue(hv, okTy); }
+                if (hv && hv->getType() == okTy) {
+                    builder->CreateStore(hv, result);
+                } else {
+                    cg_error(get_pos(node), "catch handler type does not match the success type", "QC-CCH2");
+                }
+            } else {
+                cg_error(get_pos(node), "catch handler must produce a value or return, break or continue", "QC-CCH1");
+            }
+        }
+        exitScope();
+        if (!builder->GetInsertBlock()->hasTerminator()) builder->CreateBr(endBB);
+        builder->SetInsertPoint(okBB);
+        llvm::Value* ok = v;
+        if (isU) ok = extractArrayAsValue(builder->CreateExtractValue(v, 1), okTy);
+        builder->CreateStore(ok, result);
+        builder->CreateBr(endBB);
+        builder->SetInsertPoint(endBB);
+        return builder->CreateLoad(okTy, result, "catch.val");
+    }
+    [[gnu::noinline]]
+    llvm::Value* emitTry(TryNode* node) {
+        llvm::Value* v = emitExpr(node->value);
+        if (!canBeError(v)) {
+            cg_error(get_pos(node), "try applied to a value that cannot be an error", "QC-TRY3");
+            return v;
+        }
+        auto* errBB = llvm::BasicBlock::Create(context, "try.err", currentFunction);
+        auto* okBB = llvm::BasicBlock::Create(context, "try.ok", currentFunction);
+        builder->CreateCondBr(valueIsError(v), errBB, okBB);
+        builder->SetInsertPoint(errBB);
+        emitDefersDownTo(0);
+        if (v->getType() == currentFunction->getReturnType()) {
+            builder->CreateRet(v);
+        } else {
+            std::string retUnionName = "";
+            isUnionType(currentFunction->getReturnType(), &retUnionName);
+            if (!retUnionName.empty()) {
+                if (int i = unionContainsType(v->getType(), retUnionName); i != -1) {
+                    llvm::StructType* unionTy = llvm::cast<llvm::StructType>(currentFunction->getReturnType());
+                    llvm::Value* unionVal = llvm::UndefValue::get(unionTy);
+                    unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(i), 0);
+                    unionVal = storeUnionPayload(v, unionVal, unionTy);
+                    builder->CreateRet(unionVal);
+                } else {
+                    std::string thisUnionName = "";
+                    if (isUnionType(v->getType(), &thisUnionName)) {
+                        auto tagMap = unionTagMap(userTypes.at(baseTypeName(thisUnionName)).members,
+                                                  userTypes.at(baseTypeName(retUnionName)).members);
+                        if (tagMap) {
+                            builder->CreateRet(remapUnion(v, llvm::cast<llvm::StructType>(v->getType()),
+                                                          llvm::cast<llvm::StructType>(currentFunction->getReturnType()), *tagMap));
+                        } else {
+                            cg_error(get_pos(node), "function return type does not contain all union members try type contains", "QC-TRY1");
+                            builder->SetInsertPoint(okBB);
+                            return nullptr;
+                        }
+                    } else {
+                        cg_error(get_pos(node), "function return type does not contain try type", "QC-TRY1");
+                        builder->SetInsertPoint(okBB);
+                        return nullptr;
+                    }
+                }
+            } else {
+                cg_error(get_pos(node), "invalid try type", "QC-TRY2");
+                builder->CreateUnreachable();
+            }
+        }
+        builder->SetInsertPoint(okBB);
+        std::string unionName = "";
+        if (isUnionType(v->getType(), &unionName)) {
+            llvm::Value* newV = builder->CreateExtractValue(v, 1);
+            v = extractArrayAsValue(newV, llvmTypeFor(userTypes.at(resolveTypeName(unionName)).members[0].type));
+        }
+        return v;
+    }
     void exitScope() {
         auto* currentBlock = builder->GetInsertBlock();
-        if (currentBlock && !currentBlock->getTerminator()) { emitDefersDownTo(defersStack.size()); }
+        if (currentBlock && !currentBlock->hasTerminator()) { emitDefersDownTo(defersStack.size()); }
         defersStack.pop_back();
         if (defersStack.size() <= 1) scope_labels = {};
         if (defersStack.size() == 0) {
@@ -906,6 +1106,10 @@ class LLVMCompiler {
             if ((*unaryOp)->op_tok.type == TokenType::SIZEOF) { return "addr_t"; }
             return type;
         } else if (auto binOp = std::get_if<BinOpNode*>(&node)) {
+            if ((*binOp)->op_tok.type == TokenType::AS) {
+                if (auto n = std::get_if<TypeValueNode>(&((*binOp)->right_node))) return n->tok.value;
+                return "unknown";
+            }
             std::string leftType = getExpressionType((*binOp)->left_node);
             std::string rightType = getExpressionType((*binOp)->right_node);
             if (leftType == "char" && rightType == "char") return "int";
@@ -1651,16 +1855,6 @@ class LLVMCompiler {
             }
         }
         llvm::Type* srcTy = rhs->getType();
-        if (isUnionType(srcTy) && !isUnionType(destTy)) {
-            llvm::Value* dataPtr = builder->CreateExtractValue(rhs, 1, "union_data");
-            if (destTy->isPointerTy()) {
-                rhs = builder->CreateBitCast(dataPtr, destTy);
-            } else {
-                llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-                rhs = builder->CreateLoad(destTy, typedPtr);
-            }
-            srcTy = destTy;
-        }
         if (srcTy != destTy) {
             if (srcTy->isPointerTy() && !destTy->isPointerTy()) {
                 llvm::Type* newbase = llvmTypeFor(rhsTypeString);
@@ -1817,7 +2011,7 @@ class LLVMCompiler {
                 if (!paramType) return nullptr;
                 types.push_back(paramType);
             }
-            llvm::DITypeRefArray typeArray = diBuilder->getOrCreateTypeArray(types);
+            llvm::DITypeArray typeArray = diBuilder->getOrCreateTypeArray(types);
             debug_types[type] = diBuilder->createSubroutineType(typeArray);
             return debug_types[type];
         } else if (type.ends_with("]")) {
@@ -2180,34 +2374,6 @@ class LLVMCompiler {
             }
             return builder->CreateStructGEP(structTy, baseAddr, fieldIdx, propName + "_ptr");
         }
-        if (unionTypes.count(typeName) || (genericUnions.count(baseTypeName(typeName)) && genericUnions[baseTypeName(typeName)])) {
-            auto unionInfo = genericiseOrFindUnion(typeName);
-            llvm::StructType* unionTy = unionTypes[typeName];
-            for (auto& member : unionInfo.members) {
-                std::string variantName = resolveTypeName(member.type);
-                int fieldIdx = getFlattenedFieldIndex(variantName, propName);
-                if (fieldIdx == -1 && userTypes.count(variantName)) {
-                    auto& sInfo = userTypes[variantName];
-                    for (size_t i = 0; i < sInfo.fields.size(); i++) {
-                        if (sInfo.fields[i].name == propName) {
-                            fieldIdx = i;
-                            break;
-                        }
-                    }
-                }
-                if (fieldIdx != -1) {
-                    llvm::Value* dataFieldPtr = builder->CreateStructGEP(unionTy, baseAddr, 1);
-                    llvm::Value* dataPtr = builder->CreateLoad(llvm::PointerType::get(context, 0), dataFieldPtr);
-                    llvm::Type* varTy = nullptr;
-                    if (classTypes.count(variantName))
-                        varTy = genericiseOrFindClass(variantName);
-                    else if (structTypes.count(variantName))
-                        varTy = genericiseOrFindStruct(variantName);
-                    if (!varTy) continue;
-                    return builder->CreateStructGEP(varTy, dataPtr, fieldIdx, propName + "_ptr");
-                }
-            }
-        }
         if (fallback) return emitExpr(&prop);
         cg_error(prop.property_name.pos, "cannot resolve address for property '" + propName + "' on type '" + typeName + "'", "QC-T060");
         return nullptr;
@@ -2463,74 +2629,6 @@ class LLVMCompiler {
     }
     llvm::Value* emitBuiltinConversion(llvm::Value* rawArg, const std::string& target, Position pos = Position()) {
         if (!rawArg) return nullptr;
-
-        std::string unionName;
-        if (isUnionType(rawArg->getType(), &unionName)) {
-            llvm::Value* tag = builder->CreateExtractValue(rawArg, 0, "conv_tag");
-            llvm::Value* payload = builder->CreateExtractValue(rawArg, 1, "conv_payload");
-
-            auto& members = userTypes[unionName].members;
-            llvm::Type* resultTy = nullptr;
-
-            if (target == "int")
-                resultTy = builder->getInt32Ty();
-            else if (target == "float")
-                resultTy = builder->getFloatTy();
-            else if (target == "double")
-                resultTy = builder->getDoubleTy();
-            else if (target == "bool")
-                resultTy = builder->getInt1Ty();
-            else if (target == "char")
-                resultTy = builder->getInt8Ty();
-            else if (target == "addr_t" || target == "long int")
-                resultTy = builder->getIntNTy(getPtrSize());
-            else if (target == "short int")
-                resultTy = builder->getInt16Ty();
-            else if (target == "nibble")
-                resultTy = builder->getIntNTy(4);
-            else if (target == "byte")
-                resultTy = builder->getInt8Ty();
-            else if (target == "qbool")
-                resultTy = builder->getIntNTy(2);
-            else {
-                cg_error(pos, "Unknown conversion target: " + target, "QC-S304");
-                return nullptr;
-            }
-
-            llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "conv_union_end", currentFunction);
-            llvm::BasicBlock* failBB = llvm::BasicBlock::Create(context, "conv_union_fail", currentFunction);
-            llvm::SwitchInst* sw = builder->CreateSwitch(tag, failBB, members.size());
-
-            std::vector<std::pair<llvm::BasicBlock*, llvm::Value*>> incoming;
-
-            for (size_t i = 0; i < members.size(); i++) {
-                llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "conv_union_case_" + std::to_string(i), currentFunction);
-                sw->addCase(builder->getInt32(i), caseBB);
-                builder->SetInsertPoint(caseBB);
-
-                std::string typeStr = members[i].type;
-                size_t colonPos = typeStr.find(':');
-                if (colonPos != std::string::npos) { typeStr = typeStr.substr(0, colonPos); }
-
-                llvm::Type* memberTy = llvmTypeFor(typeStr);
-                llvm::Value* typedPtr = builder->CreateBitCast(payload, llvm::PointerType::get(context, 0));
-                llvm::Value* loaded = builder->CreateLoad(memberTy, typedPtr, "conv_loaded");
-
-                llvm::Value* converted = emitPrimitiveConversion(loaded, target, pos);
-                if (!converted) return nullptr;
-
-                incoming.push_back({builder->GetInsertBlock(), converted});
-                builder->CreateBr(endBB);
-            }
-
-            builder->SetInsertPoint(failBB);
-            builder->CreateUnreachable();
-
-            builder->SetInsertPoint(endBB);
-            llvm::PHINode* phi = builder->CreatePHI(resultTy, incoming.size(), "conv_union_phi");
-            for (auto& [bb, val] : incoming) { phi->addIncoming(val, bb); }
-            return phi;
-        }
         return emitPrimitiveConversion(rawArg, target, pos);
     }
     llvm::Value* adaptArgumentForParam(llvm::Value* v, AnyNode& argNode, llvm::Type* paramTy, size_t argIndex) {
@@ -2563,10 +2661,7 @@ class LLVMCompiler {
 
                 llvm::Value* unionVal = llvm::UndefValue::get(unionTy);
                 unionVal = builder->CreateInsertValue(unionVal, builder->getInt32(tag), 0);
-
-                llvm::Value* dataPtr = storeAndGetPointer(v);
-                unionVal = builder->CreateInsertValue(unionVal, dataPtr, 1);
-
+                unionVal = storeUnionPayload(v, unionVal, unionTy);
                 v = unionVal;
                 srcTy = paramTy;
                 break;
@@ -2640,6 +2735,31 @@ class LLVMCompiler {
                 cg_error(get_pos(argNode), "Failed to emit argument", "QC-S308");
                 return {};
             }
+            if (i < fnTy->getNumParams()) {
+                llvm::Type* paramTy = fnTy->getParamType(i);
+                v = adaptArgumentForParam(v, argNode, paramTy, i);
+                if (!v) return {};
+            } else {
+            }
+            if (v->getType()->isArrayTy() && i < fnTy->getNumParams() && fnTy->getParamType(i)->isPointerTy()) { v = decayArrayToPointer(v); }
+            args.push_back(v);
+        }
+        return args;
+    }
+    std::vector<llvm::Value*> readaptArgs(const std::list<AnyNode>& argNodes, std::vector<llvm::Value*> values, llvm::FunctionType* fnTy,
+                                          const std::vector<std::string>& paramTypeStrings) {
+        std::vector<llvm::Value*> args;
+        size_t i = 0;
+        for (auto it = argNodes.begin(); it != argNodes.end(); ++it, ++i) {
+            AnyNode& argNode = const_cast<AnyNode&>(*it);
+            llvm::Value* v = values[i];
+            if (i < paramTypeStrings.size() && paramTypeStrings[i].ends_with("&")) {
+                if (!v->getType()->isPointerTy()) {
+                    cg_error(get_pos(argNode), "L-value required for reference parameter", "QC-S307");
+                    return {};
+                }
+            }
+            if (!v) { return {}; }
             if (i < fnTy->getNumParams()) {
                 llvm::Type* paramTy = fnTy->getParamType(i);
                 v = adaptArgumentForParam(v, argNode, paramTy, i);
@@ -3473,12 +3593,6 @@ class LLVMCompiler {
                 llvm::Value* fnPtrAddr = builder->CreateGEP(builder->getPtrTy(), vptr, builder->getInt32(slotIndex), "vtable_slot");
                 llvm::Value* fnPtr = builder->CreateLoad(builder->getPtrTy(), fnPtrAddr, "fn_ptr");
                 std::vector<llvm::Value*> allArgs = reconcileArgs(method, objPtr, args);
-                if (insideTry()) {
-                    auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                    llvm::InvokeInst* invoke = builder->CreateInvoke(method->getFunctionType(), fnPtr, contBB, currentLandingPad(), allArgs);
-                    builder->SetInsertPoint(contBB);
-                    return invoke;
-                }
                 return builder->CreateCall(method->getFunctionType(), fnPtr, allArgs);
             }
         }
@@ -3498,7 +3612,7 @@ class LLVMCompiler {
     }
     llvm::Function* generateSpecializedMethod(const std::string& className, size_t methodIdx, const std::string& specializedName) {
         llvm::Function* savedFunction = currentFunction;
-llvm::IRBuilderBase::InsertPointGuard guard(*builder);
+        llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         auto savedGlobals = globals;
         auto savedThis = currentThis;
         auto savedClassName = currentClassName;
@@ -3599,7 +3713,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         if (method.body) {
             for (auto& stmt : method.body->statements) { emitStmt(stmt); }
         }
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             if (baseFuncTy->getReturnType()->isVoidTy()) {
                 builder->CreateRetVoid();
             } else {
@@ -3684,7 +3798,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                         builder->CreateRet(retVal);
                     }
                 }
-                if (!builder->GetInsertBlock()->getTerminator()) {
+                if (!builder->GetInsertBlock()->hasTerminator()) {
                     if (fnTy->getReturnType()->isVoidTy()) {
                         builder->CreateRetVoid();
                     } else {
@@ -3858,7 +3972,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         }
 
         for (auto& stmt : funcDef->body->statements) { emitStmt(stmt); }
-        if (!builder->GetInsertBlock()->getTerminator()) {
+        if (!builder->GetInsertBlock()->hasTerminator()) {
             if (fnTy->getReturnType()->isVoidTy()) {
                 builder->CreateRetVoid();
             } else {
@@ -4273,7 +4387,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                     volatileVars[param.name.value] = param.isVolatile;
                                 }
                                 if (proofMethod.body) { emitStmt(proofMethod.body); }
-                                if (!builder->GetInsertBlock()->getTerminator()) {
+                                if (!builder->GetInsertBlock()->hasTerminator()) {
                                     if (currentTarget->getReturnType()->isVoidTy()) {
                                         builder->CreateRetVoid();
                                     } else {
@@ -4366,7 +4480,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                                 builder->CreateRet(retVal);
                                             }
                                         }
-                                        if (!builder->GetInsertBlock()->getTerminator()) {
+                                        if (!builder->GetInsertBlock()->hasTerminator()) {
                                             if (fTy->getReturnType()->isVoidTy()) {
                                                 builder->CreateRetVoid();
                                             } else {
@@ -4510,7 +4624,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                             volatileVars[param.name.value] = param.isVolatile;
                                         }
                                         if (concreteMethod.body) { emitStmt(concreteMethod.body); }
-                                        if (!builder->GetInsertBlock()->getTerminator()) {
+                                        if (!builder->GetInsertBlock()->hasTerminator()) {
                                             if (currentTarget->getReturnType()->isVoidTy()) {
                                                 builder->CreateRetVoid();
                                             } else {
@@ -4607,7 +4721,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                                         builder->CreateRet(retVal);
                                                     }
                                                 }
-                                                if (!builder->GetInsertBlock()->getTerminator()) {
+                                                if (!builder->GetInsertBlock()->hasTerminator()) {
                                                     if (fTy->getReturnType()->isVoidTy()) {
                                                         builder->CreateRetVoid();
                                                     } else {
@@ -4885,7 +4999,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                     volatileVars[param.name.value] = param.isVolatile;
                                 }
                                 if (proofMethod.body) { emitStmt(proofMethod.body); }
-                                if (!builder->GetInsertBlock()->getTerminator()) {
+                                if (!builder->GetInsertBlock()->hasTerminator()) {
                                     if (currentTarget->getReturnType()->isVoidTy()) {
                                         builder->CreateRetVoid();
                                     } else {
@@ -4978,7 +5092,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                                 builder->CreateRet(retVal);
                                             }
                                         }
-                                        if (!builder->GetInsertBlock()->getTerminator()) {
+                                        if (!builder->GetInsertBlock()->hasTerminator()) {
                                             if (fTy->getReturnType()->isVoidTy()) {
                                                 builder->CreateRetVoid();
                                             } else {
@@ -5116,7 +5230,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                                 volatileVars[param.name.value] = param.isVolatile;
                                             }
                                             if (concreteMethod.body) { emitStmt(concreteMethod.body); }
-                                            if (!builder->GetInsertBlock()->getTerminator()) {
+                                            if (!builder->GetInsertBlock()->hasTerminator()) {
                                                 if (currentTarget->getReturnType()->isVoidTy()) {
                                                     builder->CreateRetVoid();
                                                 } else {
@@ -5216,7 +5330,7 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                                                             builder->CreateRet(retVal);
                                                         }
                                                     }
-                                                    if (!builder->GetInsertBlock()->getTerminator()) {
+                                                    if (!builder->GetInsertBlock()->hasTerminator()) {
                                                         if (fTy->getReturnType()->isVoidTy()) {
                                                             builder->CreateRetVoid();
                                                         } else {
@@ -5388,10 +5502,10 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
             if (genericClasses.count(fullName)) return finish(result);
             if (genericRawUnions.count(fullName)) return finish(result);
             if (genericStructs.count(fullName)) return finish(result);
-            if (genericUnions.count(fullName)) return finish(result);
             if (structTypes.count(fullSavedName)) return finish(result);
             if (patternTypes.count(fullSavedName)) return finish(result);
             if (enumTypes.count(fullSavedName)) return finish(result);
+            if (genericUnions.count(fullName)) return finish(result);
             if (genericEnums.count(fullName)) return finish(result);
             if (unionTypes.count(fullSavedName)) return finish(result);
             if (rawUnionTypes.count(fullSavedName)) return finish(result);
@@ -5404,8 +5518,8 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
             if (classTypes.find(savedName) != classTypes.end()) return finish(strip ? name : savedName);
             if (genericClasses.find(name) != genericClasses.end()) return finish(strip ? name : savedName);
             if (genericStructs.find(name) != genericStructs.end()) return finish(strip ? name : savedName);
-            if (genericUnions.find(name) != genericUnions.end()) return finish(strip ? name : savedName);
             if (genericEnums.find(name) != genericEnums.end()) return finish(strip ? name : savedName);
+            if (genericUnions.find(name) != genericUnions.end()) return finish(strip ? name : savedName);
             if (genericRawUnions.find(name) != genericRawUnions.end()) return finish(strip ? name : savedName);
             if (structTypes.find(savedName) != structTypes.end()) return finish(strip ? name : savedName);
             if (enumTypes.find(savedName) != enumTypes.end()) return finish(strip ? name : savedName);
@@ -5661,12 +5775,6 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
                 llvm::AllocaInst* temp = createEntryAlloca("temp_eval", ty);
                 builder->CreateStore(v, temp);
                 args.push_back(temp);
-                if (insideTry()) {
-                    auto contBB = llvm::BasicBlock::Create(context, "invoke.cont." + std::to_string(invokeCounter++), currentFunction);
-                    llvm::InvokeInst* invoke = builder->CreateInvoke(evalMethod.first, contBB, currentLandingPad(), args);
-                    builder->SetInsertPoint(contBB);
-                    return invoke;
-                }
                 return builder->CreateCall(evalMethod.first, args);
             }
         }
@@ -5752,32 +5860,6 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         case TokenType::BITWISE_NOT: return "operator~";
         default: return "";
         }
-    }
-    struct UnionMatchInfo {
-        int tagIndex = -1;
-        std::string memberTypeStr;
-    };
-
-    std::optional<UnionMatchInfo> matchValueToUnionVariant(const std::string& unionName, AnyNode& valueNode, llvm::Value* val) {
-        auto typeIt = userTypes.find(unionName);
-        if (typeIt == userTypes.end()) return std::nullopt;
-
-        auto& members = typeIt->second.members;
-
-        int tag = findUnionVariantTag(unionName, valueNode, val);
-
-        if (tag < 0 || (size_t)tag >= members.size()) { return std::nullopt; }
-        UnionMatchInfo info;
-        info.tagIndex = tag;
-
-        const std::string& spec = members[tag].type;
-        if (spec.find(':') == std::string::npos) {
-            info.memberTypeStr = spec;
-        } else {
-            info.memberTypeStr.clear();
-        }
-
-        return info;
     }
 
   private:
@@ -5912,81 +5994,20 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
     llvm::Value* emitMthdCall(MethodCallNode* const* methodCall);
     [[gnu::noinline]]
     llvm::Value* emitFieldAssign(FieldAssignNode* const* fieldAssign);
-    llvm::Value* extractUnionToBestGuess(llvm::Value* unionVal) {
-        std::string unionName;
-        if (!isUnionType(unionVal->getType(), &unionName)) { return unionVal; }
-
-        auto utIt = userTypes.find(unionName);
-        if (utIt == userTypes.end()) { return nullptr; }
-
-        auto& info = utIt->second;
-        auto& members = info.members;
-        if (members.empty()) return nullptr;
-        std::string targetTypeStr;
-        for (auto& m : members) {
-            const std::string& t = m.type;
-            if (t.empty()) continue;
-            if (t.starts_with("\"") || t.starts_with("'") || std::isdigit(t[0]) || t == "true" || t == "false" || t == "qtrue" || t == "qfalse" ||
-                t == "none" || t == "both") {
-                continue;
-            }
-            targetTypeStr = t;
-            break;
-        }
-
-        if (targetTypeStr.empty()) { targetTypeStr = "int"; }
-
-        llvm::Type* targetTy = llvmTypeFor(targetTypeStr);
-        llvm::Value* dataPtr = builder->CreateExtractValue(unionVal, 1, "union_data");
-        llvm::Value* typedPtr = builder->CreateBitCast(dataPtr, llvm::PointerType::get(context, 0));
-        return builder->CreateLoad(targetTy, typedPtr, "union_unwrapped");
+    llvm::Value* extractArrayAsValue(llvm::Value* raw, llvm::Type* ty) {
+        llvm::AllocaInst* rawAlloc = createEntryAlloca("array_raw", raw->getType());
+        builder->CreateStore(raw, rawAlloc);
+        llvm::AllocaInst* alloc = createEntryAlloca("array_cpy", ty);
+        builder->CreateMemCpyInline(alloc, llvm::MaybeAlign(), rawAlloc, llvm::MaybeAlign(),
+                                    llvm::ConstantInt::get(builder->getInt64Ty(), module->getDataLayout().getTypeStoreSize(ty)));
+        return builder->CreateLoad(ty, alloc);
     }
     llvm::Value* normalizeValue(llvm::Value* v, AnyNode& expr) {
         if (!v) return nullptr;
         llvm::Type* ty = v->getType();
         std::string unionName;
         if (isEnumType(ty)) { return builder->CreateExtractValue(v, 0, "enum_descriminant"); }
-        bool isUnion = isUnionType(ty, &unionName);
-        if (!isUnion) { return v; }
-        std::string typeName = unionName;
-        auto utIt = userTypes.find(typeName);
-        if (utIt == userTypes.end()) return v;
-
-        llvm::Value* tag = builder->CreateExtractValue(v, 0, "tag");
-        llvm::Value* payload = builder->CreateExtractValue(v, 1, "payload");
-
-        llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "norm_end", currentFunction);
-
-        llvm::Type* voidPtrTy = llvm::PointerType::get(context, 0);
-        llvm::AllocaInst* tmp = createEntryAlloca("norm_tmp", voidPtrTy);
-
-        size_t memberCount = utIt->second.members.size();
-
-        llvm::SwitchInst* sw = builder->CreateSwitch(tag, endBB, memberCount);
-
-        for (size_t i = 0; i < memberCount; ++i) {
-            llvm::BasicBlock* caseBB = llvm::BasicBlock::Create(context, "norm_case_" + std::to_string(i), currentFunction);
-            sw->addCase(builder->getInt32(i), caseBB);
-            builder->SetInsertPoint(caseBB);
-
-            std::string typeStr;
-            if (isUnion) {
-                typeStr = utIt->second.members[i].type;
-                size_t colonPos = typeStr.find(':');
-                if (colonPos != std::string::npos) { typeStr = typeStr.substr(0, colonPos); }
-            }
-            llvm::Type* memberTy = llvmTypeFor(typeStr);
-
-            llvm::Value* typedPtr = builder->CreateBitCast(payload, llvm::PointerType::get(context, 0));
-            llvm::Value* loaded = builder->CreateLoad(memberTy, typedPtr, "member");
-            llvm::AllocaInst* memberAlloc = createEntryAlloca("member_tmp", memberTy);
-            builder->CreateStore(loaded, memberAlloc);
-            llvm::Value* asVoidPtr = builder->CreateBitCast(memberAlloc, voidPtrTy);
-            builder->CreateStore(asVoidPtr, tmp);
-            builder->CreateBr(endBB);
-        }
-        builder->SetInsertPoint(endBB);
-        return builder->CreateLoad(voidPtrTy, tmp, "normalized");
+        return v;
     }
     [[gnu::noinline]]
     void emitMultiRet(MultiReturnNode* mret);
@@ -6011,14 +6032,12 @@ llvm::IRBuilderBase::InsertPointGuard guard(*builder);
     [[gnu::noinline]]
     void emitArrDecl(ArrayDeclNode* arrDecl);
     [[gnu::noinline]]
-    void emitTryCatch(TryCatchNode* trycatch);
-    [[gnu::noinline]]
     void emitForeach(ForeachNode* foreach);
     [[gnu::noinline]]
     void emitMatch(MatchNode* match_node);
     [[gnu::noinline]]
     void emitFits(FitsNode* fits);
-    void emitStmt(AnyNode node);
+    void emitStmt(AnyNode node, llvm::Value** stmt_out = nullptr);
 };
 #endif
 #endif

@@ -155,11 +155,8 @@ int main(int argc, char* argv[]) {
 
         The 4th Evolution of C
         More Powerful Than Explosives
-        Now on a higher version than Geometry Dash
-        Now officaly past version 1(byte)
-        ITS OVER... NINE.
-        Yes it did drop from 12.0.0 to 0.15.1 i forgor to put a 0. before 12
-
+        0.5 is todays 1.0 (deprecations still happen).
+        Maybe #stable is 2.0
         github.com/Youg-Otricked/QuarticC
         )" << RESET << std::endl;
             return 0;
