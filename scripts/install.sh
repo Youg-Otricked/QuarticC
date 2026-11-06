@@ -1,12 +1,12 @@
 #!/bin/sh
-TEST=$1
+MODE=$1
 FORK=$2
 LLVM_VER=23
 LLVM_FULL=${LLVM_FULL:-23.1.5}
 MIN_GLIBCXX=3.4.32
 MIN_MACOS=14.0
 QC_HOME="${QC_HOME:-$HOME/.qc}"
-REPO_URL="${FORK:-https://github.com/Youg-Otricked/QuantumC}"
+REPO_URL="${FORK:-https://github.com/Youg-Otricked/QuarticC}"
 LOG="${TMPDIR:-/tmp}/qc-install.log"
 : >"$LOG"
 PM_CMD=""
@@ -323,8 +323,8 @@ compile_source() {
     [ "$TEST" = y ] && return 0
     SRC=$(mktemp -d "${TMPDIR:-/tmp}/qc-src.XXXXXX") || die "could not create temp dir"
     trap 'rm -rf "$SRC"' 0 2 15
-    git clone --depth 1 "$REPO_URL" "$SRC/QuantumC" >>"$LOG" 2>&1 || die "failed to clone $REPO_URL"
-    cd "$SRC/QuantumC" || die "failed to enter repo"
+    git clone --depth 1 "$REPO_URL" "$SRC/QuarticC" >>"$LOG" 2>&1 || die "failed to clone $REPO_URL"
+    cd "$SRC/QuarticC" || die "failed to enter repo"
     ok "Cloned repo"
     info "Setting up CMake"
     ask "Only compile for the x86-64 backend?" n
@@ -369,116 +369,220 @@ family=""
     echo "${ID_LIKE:-$ID}"
 )
 printf '%s========================\n   QuarticC Installer\n========================%s\n\n\n' "$GREEN" "$NC"
-printf '%sInstall method:%s\n' "$PURPLE" "$NC"
-printf '  [c/y] compile from source (recommended)\n'
-printf '  [l] latest precompiled (ARM64 macOS and recent Linux only)\n'
-printf '> '
-if have_tty; then
-    read -r choice </dev/tty
-else
-    choice=c
-fi
-printf '\n'
-case "$choice" in
-l | L) mode=prebuilt ;;
-*) mode=source ;;
-esac
-printf '%sInstalling Dependencies%s\n' "$YELLOW" "$NC"
-LLVM_FROM_TARBALL=""
-if LLVM_CONFIG=$(find_llvm_config); then
-    printf '%s  LLVM %s found (%s)%s\n' "$GREEN" "$LLVM_VER" "$LLVM_CONFIG" "$NC"
-else
-    case "$os" in
-    Darwin) need_pkg "llvm@$LLVM_VER" ;;
-    Linux)
-        case "$family" in
-        *debian* | *ubuntu*)
-            command -v curl >/dev/null 2>&1 || need_pkg curl
-            need_pkg wget
-            need_pkg gnupg
-            need_pkg lsb-release
-            need_pkg software-properties-common
-            tmp=$(mktemp)
-            curl -fsSL https://apt.llvm.org/llvm.sh -o "$tmp" || die "could not download llvm.sh"
-            ${SUDO:+$SUDO} bash "$tmp" "$LLVM_VER" >>"$LOG" 2>&1 </dev/null || {
-                tail -n 15 "$LOG" >&2
-                die "llvm.sh failed (log: $LOG)"
-            }
-            need_pkg "llvm-$LLVM_VER-dev"
+if [ "$MODE" = "build" ] || [ "$MODE" = "" ]; then
+    printf '%sInstall method:%s\n' "$PURPLE" "$NC"
+    printf '  [c/y] compile from source (recommended)\n'
+    printf '  [l] latest precompiled (ARM64 macOS and recent Linux only)\n'
+    printf '> '
+    if have_tty; then
+        read -r choice </dev/tty
+    else
+        choice=c
+    fi
+    printf '\n'
+    case "$choice" in
+    l | L) mode=prebuilt ;;
+    *) mode=source ;;
+    esac
+    printf '%sInstalling Dependencies%s\n' "$YELLOW" "$NC"
+    LLVM_FROM_TARBALL=""
+    if LLVM_CONFIG=$(find_llvm_config); then
+        printf '%s  LLVM %s found (%s)%s\n' "$GREEN" "$LLVM_VER" "$LLVM_CONFIG" "$NC"
+    else
+        case "$os" in
+        Darwin) need_pkg "llvm@$LLVM_VER" ;;
+        Linux)
+            case "$family" in
+            *debian* | *ubuntu*)
+                command -v curl >/dev/null 2>&1 || need_pkg curl
+                need_pkg wget
+                need_pkg gnupg
+                need_pkg lsb-release
+                need_pkg software-properties-common
+                tmp=$(mktemp)
+                curl -fsSL https://apt.llvm.org/llvm.sh -o "$tmp" || die "could not download llvm.sh"
+                ${SUDO:+$SUDO} bash "$tmp" "$LLVM_VER" >>"$LOG" 2>&1 </dev/null || {
+                    tail -n 15 "$LOG" >&2
+                    die "llvm.sh failed (log: $LOG)"
+                }
+                need_pkg "llvm-$LLVM_VER-dev"
+                ;;
+            *fedora* | *rhel*) install_pkg "llvm$LLVM_VER-devel" || install_pkg llvm-devel ;;
+            *arch*) install_pkg "llvm" ;;
+            *) install_llvm_tarball ;;
+            esac
             ;;
-        *fedora* | *rhel*) install_pkg "llvm$LLVM_VER-devel" || install_pkg llvm-devel ;;
-        *arch*) install_pkg "llvm" ;;
         *) install_llvm_tarball ;;
         esac
-        ;;
-    *) install_llvm_tarball ;;
-    esac
-    [ -n "$LLVM_FROM_TARBALL" ] || LLVM_CONFIG=$(find_llvm_config) || {
-        warn "package manager didn't provide LLVM $LLVM_VER, using the official tarball"
-        install_llvm_tarball
-    }
-fi
-can_prebuilt=0
-if [ "$mode" = prebuilt ]; then
-    case "$os-$cpu" in
-    Darwin-arm64)
-        if [ "$cpu" = arm64 ] && m=$(sw_vers -productVersion 2>/dev/null) &&
-            version_ge "$m" "$MIN_MACOS"; then
-            can_prebuilt=1
-        fi
-        ;;
-    Linux-x86_64)
-        lib=$(ldconfig -p 2>/dev/null | awk '/libstdc\+\+\.so\.6 /{print $NF; exit}')
-        if [ -z "$lib" ]; then
-            for d in /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu; do
-                [ -e "$d/libstdc++.so.6" ] && lib="$d/libstdc++.so.6" && break
-            done
-        fi
-        if [ -n "$lib" ] && { [ "$cpu" = x86_64 ] || [ "$cpu" = arm64 ]; }; then
-            x=$(grep -ao 'GLIBCXX_[0-9.]*' "$lib" | sort -Vu | tail -1 | sed 's/GLIBCXX_//')
-            version_ge "$x" "$MIN_GLIBCXX" && can_prebuilt=1
-        fi
-        ;;
-    esac
-fi
-if [ "$mode" = prebuilt ] && [ "$can_prebuilt" = 1 ]; then
-    info 'Installing prebuilt C^4'
-    case "$os-$cpu" in
-    Linux-x86_64) artifact="qc-linux" ;;
-    Darwin-arm64) artifact="qc-macos" ;;
-    *) die "${RED}  No prebuilt C^4 exists for this platform. Compile from source.${NC}\n" ;;
-    esac
-    need_pkg curl
-    TMP_INSTALL=$(mktemp -d)
-    trap 'rm -rf $TMP_INSTALL' 0 2 15
-    curl -fL -o "$TMP_INSTALL/qc" "$REPO_URL/releases/latest/download/$artifact" || die "could not download prebuilt"
-    curl -fL -o "$TMP_INSTALL/stdlib" "$REPO_URL/releases/latest/download/stdlib.qc" || die "could not download prebuilt"
-    ok "Installed prebuilt"
-    config "$TMP_INSTALL/qc" "$TMP_INSTALL/stdlib"
-else
-    if [ "$mode" = prebuilt ]; then
-        printf '%s  This platform lacks access to prebuilt C^4. Compiling from source.%s\n' "$RED" "$NC"
+        [ -n "$LLVM_FROM_TARBALL" ] || LLVM_CONFIG=$(find_llvm_config) || {
+            warn "package manager didn't provide LLVM $LLVM_VER, using the official tarball"
+            install_llvm_tarball
+        }
     fi
-    compile_source
-fi
-echo "Installation complete! Installation locations:"
-echo " ~/.qc/bin/qc"
-echo " ~/.qc/lib/stdlib.qc"
-echo " ~/.qc/docs"
-ask "Create demo program?" y
-if [ "$ANSWER" = 'y' ]; then
-    printf '
+    can_prebuilt=0
+    if [ "$mode" = prebuilt ]; then
+        case "$os-$cpu" in
+        Darwin-arm64)
+            if [ "$cpu" = arm64 ] && m=$(sw_vers -productVersion 2>/dev/null) &&
+                version_ge "$m" "$MIN_MACOS"; then
+                can_prebuilt=1
+            fi
+            ;;
+        Linux-x86_64)
+            lib=$(ldconfig -p 2>/dev/null | awk '/libstdc\+\+\.so\.6 /{print $NF; exit}')
+            if [ -z "$lib" ]; then
+                for d in /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu; do
+                    [ -e "$d/libstdc++.so.6" ] && lib="$d/libstdc++.so.6" && break
+                done
+            fi
+            if [ -n "$lib" ] && { [ "$cpu" = x86_64 ] || [ "$cpu" = arm64 ]; }; then
+                x=$(grep -ao 'GLIBCXX_[0-9.]*' "$lib" | sort -Vu | tail -1 | sed 's/GLIBCXX_//')
+                version_ge "$x" "$MIN_GLIBCXX" && can_prebuilt=1
+            fi
+            ;;
+        esac
+    fi
+    if [ "$mode" = prebuilt ] && [ "$can_prebuilt" = 1 ]; then
+        info 'Installing prebuilt C^4'
+        case "$os-$cpu" in
+        Linux-x86_64) artifact="qc-linux" ;;
+        Darwin-arm64) artifact="qc-macos" ;;
+        *) die "${RED}  No prebuilt C^4 exists for this platform. Compile from source.${NC}\n" ;;
+        esac
+        need_pkg curl
+        TMP_INSTALL=$(mktemp -d)
+        trap 'rm -rf $TMP_INSTALL' 0 2 15
+        curl -fL -o "$TMP_INSTALL/qc" "$REPO_URL/releases/latest/download/$artifact" || die "could not download prebuilt"
+        curl -fL -o "$TMP_INSTALL/stdlib" "$REPO_URL/releases/latest/download/stdlib.qc" || die "could not download prebuilt"
+        ok "Installed prebuilt"
+        config "$TMP_INSTALL/qc" "$TMP_INSTALL/stdlib"
+    else
+        if [ "$mode" = prebuilt ]; then
+            printf '%s  This platform lacks access to prebuilt C^4. Compiling from source.%s\n' "$RED" "$NC"
+        fi
+        compile_source
+    fi
+    echo "Installation complete! Installation locations:"
+    echo " ~/.qc/bin/qc"
+    echo " ~/.qc/lib/stdlib.qc"
+    echo " ~/.qc/docs"
+    ask "Create demo program?" y
+    if [ "$ANSWER" = 'y' ]; then
+        printf '
 int main() {
     `qout("Hello, World!\\n");
     return 0;
 }
 ' | tee demo.qc
-    info "sourcing env"
-    . "$QC_HOME/env"
-    info "compiling: qc demo.qc"
-    qc demo.qc
-    ./a.out
-    rm a.out
-    info "removing test program"
-    rm demo.qc
+        info "sourcing env"
+        . "$QC_HOME/env"
+        info "compiling: qc demo.qc"
+        qc demo.qc
+        ./a.out
+        rm a.out
+        info "removing test program"
+        rm demo.qc
+    fi
+else
+    if [ "$MODE" = "--update" ]; then
+        echo 'this assumes you already have all neccesary packages installed'
+        ask 'only update the stdlib?' n
+        stdOnly=$ANSWER
+        if [ "$stdOnly" = 'y' ]; then
+            info "Copying to $QC_HOME"
+            if [ -f "$QC_HOME/lib/stdlib.qc" ] && ! cmp -s stdlib.qc "$QC_HOME/lib/stdlib.qc"; then
+                cp "$QC_HOME/lib/stdlib.qc" "$QC_HOME/lib/stdlib.qc.bak"
+                ok "existing stdlib saved as stdlib.qc.bak"
+            fi
+            curl -L -o "$QC_HOME/lib/stdlib.qc" https://raw.githubusercontent.com/Youg-Otricked/QuarticC/master/stdlib.qc
+            info "Updated"
+        else
+            info "Reinstalling & Compiling C^4"
+            if LLVM_CONFIG=$(find_llvm_config); then
+                printf '%s  LLVM %s found (%s)%s\n' "$GREEN" "$LLVM_VER" "$LLVM_CONFIG" "$NC"
+            fi
+            llvm_bin=$("$LLVM_CONFIG" --bindir)
+            llvm_lib=$("$LLVM_CONFIG" --libdir)
+            llvm_prefix=$("$LLVM_CONFIG" --prefix)
+            clang_cfg_find() {
+                find "$llvm_prefix" -maxdepth 4 -name ClangConfig.cmake 2>/dev/null | head -n1
+            }
+            clang_ok() {
+                [ -n "$LLVM_FROM_TARBALL" ] && return 0
+                [ -n "$(clang_cfg_find)" ] || return 1
+                case "$family" in
+                *debian* | *ubuntu*) [ -f "$llvm_lib/libclangBasic.a" ] ;;
+                *) return 0 ;;
+                esac
+            }
+            if ! clang_ok; then
+                case "$os-$family" in
+                Linux-*debian* | Linux-*ubuntu*) need_pkg "libclang-$LLVM_VER-dev" ;;
+                Linux-*fedora* | Linux-*rhel*)
+                    install_pkg clang-devel || die "failed to install clang-devel (log: $LOG)"
+                    ;;
+                *) need_pkg clang ;;
+                esac
+            fi
+            clang_ok || die "Clang development files for LLVM $LLVM_VER not found under $llvm_prefix"
+            clang_cmake=$(dirname "$(clang_cfg_find)")
+            if [ -x "$llvm_bin/clang" ]; then
+                CC="$llvm_bin/clang"
+                CXX="$llvm_bin/clang++"
+            elif command -v "clang-$LLVM_VER" >/dev/null 2>&1; then
+                CC="clang-$LLVM_VER"
+                CXX="clang++-$LLVM_VER"
+            else
+                need_pkg clang
+                CC=clang
+                CXX=clang++
+                warn "using the system clang, which may not be version $LLVM_VER"
+            fi
+            ok "Reverified Clang"
+            info "Cloning repo"
+            printf '%sContinue? [Y/n]%s > ' "$PURPLE" "$NC"
+            if have_tty; then
+                read -r choice </dev/tty
+            else
+                choice=y
+            fi
+            case "$choice" in
+            n | N) exit 1 ;;
+            esac
+            SRC=$(mktemp -d "${TMPDIR:-/tmp}/qc-src.XXXXXX") || die "could not create temp dir"
+            trap 'rm -rf "$SRC"' 0 2 15
+            git clone --depth 1 "$REPO_URL" "$SRC/QuarticC" >>"$LOG" 2>&1 || die "failed to clone $REPO_URL"
+            cd "$SRC/QuarticC" || die "failed to enter repo"
+            ok "Cloned repo"
+            info "Setting up CMake"
+            ask "Only compile for the x86-64 backend?" n
+            x86=$ANSWER
+            ask "Compile at -O0 with debug symbols?" n
+            dbg=$ANSWER
+            build_type=Release
+            [ "$dbg" = y ] && build_type=Debug
+            set -- -S . -B build -DCMAKE_BUILD_TYPE="$build_type" -DLLVM_DIR="$("$LLVM_CONFIG" --cmakedir)" -DClang_DIR="$clang_cmake" -DCMAKE_PREFIX_PATH="$("$LLVM_CONFIG" --prefix)" -DCMAKE_BUILD_RPATH="$llvm_lib" -DCMAKE_INSTALL_RPATH="$llvm_lib"
+            [ "$x86" = y ] && set -- "$@" -DX86_ONLY=On
+            log="${TMPDIR:-/tmp}/qc-build.log"
+            CC=$CC CXX=$CXX cmake "$@" >"$log" 2>&1 || {
+                tail -n 30 "$log" >&2
+                die "CMake failed (full log: $log)"
+            }
+            ok "Configured"
+            cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null ||
+                sysctl -n hw.ncpu 2>/dev/null || echo 1)
+            case "$cores" in '' | *[!0-9]*) cores=1 ;; esac
+            [ "$cores" -gt 0 ] || cores=1
+            info "Building with $cores cores"
+            cmake --build build -j"$cores" >>"$log" 2>&1 || {
+                tail -n 30 "$log" >&2
+                die "build failed (full log: $log)"
+            }
+            ok "Built C^4"
+            cp build/qc "$QC_HOME/bin/qc"
+            cp stdlib.qc "$QC_HOME/lib/stdlib.qc"
+        fi
+    else
+        die "invalid option"
+    fi
 fi
