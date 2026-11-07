@@ -40,60 +40,6 @@ jobs:
           git config user.email "actions@github.com"
           git tag ${{ steps.get_version.outputs.version }}
           git push origin ${{ steps.get_version.outputs.version }}  
-  build-linux:
-    needs: [tag]
-    if: needs.tag.outputs.exists != 'true'
-    runs-on: ubuntu-latest
-    container:
-      image: debian:sid
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install deps
-        run: |
-          apt update
-          apt install -y llvm-23 llvm-23-dev clang-23 libstdc++-16-dev pkg-config cmake git libzstd-dev libclang-23-dev  libclang-common-23-dev  libclang-cpp23-dev 
-      
-      - name: Generate runtime.ll
-        run: clang++-23 -S -emit-llvm -O0 -o runtime.ll runtime.cpp
-      
-      - name: Build (Linux)
-        run: |
-          CC=clang-23 CXX=clang++-23 cmake -DCMAKE_BUILD_TYPE=Release -DCXX_RUNTIME=ON .
-          cmake --build . -j$(nproc)
-          mv qc qc-linux
-
-      - name: Upload Linux Binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: qc-linux
-          path: qc-linux
-
-  build-macos:
-    needs: [tag]
-    if: needs.tag.outputs.exists != 'true'
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          brew install llvm@23 cmake        
-          echo "LLVM_DIR=$(brew --prefix llvm@23)/lib/cmake/llvm" >> $GITHUB_ENV
-          echo "$(brew --prefix llvm@23)/bin" >> $GITHUB_PATH
-      - name: Generate runtime.ll
-        run: clang -S -emit-llvm -O0 -o runtime.ll runtime.cpp
-      - name: Build (macOS)
-        run: |
-          cmake -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR=$LLVM_DIR -DCXX_RUNTIME=ON .
-          cmake --build . -j$(sysctl -n hw.logicalcpu)
-          mv qc qc-macos
-
-      - name: Upload macOS Binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: qc-macos
-          path: qc-macos
   upload-extras:
     needs: [tag]
     if: needs.tag.outputs.exists != 'true'
