@@ -39,7 +39,7 @@ Go to the [docs](https://youg-otricked.github.io/QuarticC/)
 
 ## Quick Start
 
-Install the binaries from GitHub, use the [Package & Version Manager](https://github.com/Youg-Otricked/quartic-c-manager), or:
+Use the [Package & Version Manager](https://github.com/Youg-Otricked/quartic-c-manager), or:
 
 ### Installation
 
