@@ -5767,7 +5767,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         if (aTy->isIntegerTy(32) || aTy->isIntegerTy(64) || aTy->isIntegerTy(16) || aTy->isIntegerTy(4)) {
                             builder->CreateCall(printString,
                                                 {builder->CreateCall(fmtInt, {builder->CreateZExt(val, builder->getIntNTy(getPtrSize())),
-                                                                              llvm::ConstantInt::getSigned(builder->getIntNTy(getPtrSize()), width),
+                                                                              llvm::ConstantInt::getSigned(builder->getInt32Ty(), width),
                                                                               llvm::ConstantInt::getSigned(builder->getInt32Ty(), precision),
                                                                               llvm::ConstantInt::get(builder->getInt1Ty(), zero_pad)})});
                             break;
@@ -9675,24 +9675,28 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                 functionDefs[funcName] = fnPtr;
             }
         }
-    std::function<void(NamespaceNode&)> compileNamespaceFunctions = [&](NamespaceNode& ns) {
+    std::function<void(NamespaceNode&)> compileNamespaceNonFunctions = [&](NamespaceNode& ns) {
         namespaceStack.push_back(ns.name);
-
         for (auto& decl : ns.body) {
             if (!std::holds_alternative<FuncDefNode*>(decl)) {
-                if (auto ns = std::get_if<NamespaceNode*>(&decl)) {
-                    compileNamespaceFunctions(**ns);
+                if (auto child = std::get_if<NamespaceNode*>(&decl)) {
+                    compileNamespaceNonFunctions(**child);
                 } else {
                     emitStmt(decl);
                 }
             }
         }
+        namespaceStack.pop_back();
+    };
+    std::function<void(NamespaceNode&)> compileNamespaceFunctions = [&](NamespaceNode& ns) {
+        namespaceStack.push_back(ns.name);
         for (auto& decl : ns.body) {
-            if (auto fn = safe_get<FuncDefNode>(decl)) {
+            if (auto child = std::get_if<NamespaceNode*>(&decl)) {
+                compileNamespaceFunctions(**child);
+            } else if (auto fn = safe_get<FuncDefNode>(decl)) {
                 if (fn->name_tok.has_value()) {
-                    if (fn->name_tok.value().value == entrypointName && !this->is_main) { continue; }
-
-                    if (fn->generics.empty()) { emitFuncDef(*fn); }
+                    if (fn->name_tok->value == entrypointName && !this->is_main) continue;
+                    if (fn->generics.empty()) emitFuncDef(*fn);
                 }
             }
         }
@@ -9701,20 +9705,19 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
 
     if (root) {
         for (auto& stmt : root->statements) {
-            if (!std::holds_alternative<FuncDefNode*>(stmt)) {
-                if (auto ns = std::get_if<NamespaceNode*>(&stmt)) {
-                    compileNamespaceFunctions(**ns);
-                } else {
-                    emitStmt(stmt);
-                }
-            }
+            if (auto ns = std::get_if<NamespaceNode*>(&stmt))
+                compileNamespaceNonFunctions(**ns);
+            else if (!std::holds_alternative<FuncDefNode*>(stmt))
+                emitStmt(stmt);
         }
         for (auto& stmt : root->statements) {
-            if (std::holds_alternative<FuncDefNode*>(stmt)) {
-                auto fnPtr = std::get<FuncDefNode*>(stmt);
-                if (!fnPtr->name_tok.has_value()) continue;
-                if (fnPtr->name_tok.value().value == entrypointName && !this->is_main) { continue; }
-                if (fnPtr->generics.empty()) { emitFuncDef(*fnPtr); }
+            if (auto ns = std::get_if<NamespaceNode*>(&stmt))
+                compileNamespaceFunctions(**ns);
+            else if (auto fn = safe_get<FuncDefNode>(stmt)) {
+                if (fn->name_tok.has_value()) {
+                    if (fn->name_tok->value == entrypointName && !this->is_main) continue;
+                    if (fn->generics.empty()) emitFuncDef(*fn);
+                }
             }
         }
     }
