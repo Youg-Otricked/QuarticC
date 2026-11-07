@@ -583,8 +583,16 @@ else
             cd "$SRC/QuarticC" || die "failed to enter repo"
             ok "Cloned repo"
             info "Setting up CMake"
-            ask "Only compile for the x86-64 backend?" n
-            x86=$ANSWER
+            targets=$("$LLVM_CONFIG" --targets-built)
+            if [ "$targets" = "X86" ]; then
+                info "LLVM only has the X86 target, building x86-only"
+                x86=y
+            elif [ -n "${QC_X86_ONLY:-}" ]; then
+                x86=y
+            else
+                ask "Only compile for the x86-64 backend?" n
+                x86=$ANSWER
+            fi
             ask "Compile at -O0 with debug symbols?" n
             dbg=$ANSWER
             build_type=Release
