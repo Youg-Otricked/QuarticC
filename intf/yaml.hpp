@@ -18,7 +18,7 @@
 #include <string>
 #include <type_traits>
 #include <vector>
-
+#include <ios>
 // #include <fkYAML/detail/macros/define_macros.hpp>
 //  _______   __ __   __  _____   __  __  __
 // |   __| |_/  |  \_/  |/  _  \ /  \/  \|  |     fkYAML: A C++ header-only YAML library

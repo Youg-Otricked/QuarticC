@@ -1,6 +1,23 @@
 #!/bin/sh
-MODE=$1
-FORK=$2
+MODE=""
+FORK=""
+TAG="${QC_VERSION:-}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --update) MODE=--update ;;
+    --version)
+        TAG=$2
+        shift
+        ;;
+    --fork)
+        FORK=$2
+        shift
+        ;;
+    build) MODE=build ;;
+    *) die "unknown option: $1" ;;
+    esac
+    shift
+done
 LLVM_VER=23
 LLVM_FULL=${LLVM_FULL:-23.1.5}
 MIN_GLIBCXX=3.4.32
@@ -198,6 +215,15 @@ EOF
     printf '\n%sqc installed!%s Restart your shell, or run:\n  . "%s/env"\n\n%sThank you for using C^4!%s\n' \
         "$GLOW_GREEN" "$NC" "$QC_HOME" "$GLOW_GREEN" "$NC"
 }
+clone_repo() {
+    if [ -n "$TAG" ]; then
+        git clone --depth 1 --branch "$TAG" "$REPO_URL" "$SRC/QuarticC" >>"$LOG" 2>&1 ||
+            die "failed to clone $REPO_URL at '$TAG' (does the tag exist?)"
+    else
+        git clone --depth 1 "$REPO_URL" "$SRC/QuarticC" >>"$LOG" 2>&1 ||
+            die "failed to clone $REPO_URL"
+    fi
+}
 compile_source() {
     need_pkg git
     need_pkg cmake
@@ -323,7 +349,7 @@ compile_source() {
     [ "$TEST" = y ] && return 0
     SRC=$(mktemp -d "${TMPDIR:-/tmp}/qc-src.XXXXXX") || die "could not create temp dir"
     trap 'rm -rf "$SRC"' 0 2 15
-    git clone --depth 1 "$REPO_URL" "$SRC/QuarticC" >>"$LOG" 2>&1 || die "failed to clone $REPO_URL"
+    clone_repo
     cd "$SRC/QuarticC" || die "failed to enter repo"
     ok "Cloned repo"
     info "Setting up CMake"
@@ -466,22 +492,24 @@ if [ "$MODE" = "build" ] || [ "$MODE" = "" ]; then
     echo " ~/.qc/bin/qc"
     echo " ~/.qc/lib/stdlib.qc"
     echo " ~/.qc/docs"
-    ask "Create demo program?" y
-    if [ "$ANSWER" = 'y' ]; then
-        printf '
+    if [ -z "${QC_YES:-}" ]; then
+        ask "Create demo program?" y
+        if [ "$ANSWER" = 'y' ]; then
+            printf '
 int main() {
     `qout("Hello, World!\\n");
     return 0;
 }
 ' | tee demo.qc
-        info "sourcing env"
-        . "$QC_HOME/env"
-        info "compiling: qc demo.qc"
-        qc demo.qc
-        ./a.out
-        rm a.out
-        info "removing test program"
-        rm demo.qc
+            info "sourcing env"
+            . "$QC_HOME/env"
+            info "compiling: qc demo.qc"
+            qc demo.qc
+            ./a.out
+            rm a.out
+            info "removing test program"
+            rm demo.qc
+        fi
     fi
 else
     if [ "$MODE" = "--update" ]; then
@@ -494,7 +522,7 @@ else
                 cp "$QC_HOME/lib/stdlib.qc" "$QC_HOME/lib/stdlib.qc.bak"
                 ok "existing stdlib saved as stdlib.qc.bak"
             fi
-            curl -L -o "$QC_HOME/lib/stdlib.qc" https://raw.githubusercontent.com/Youg-Otricked/QuarticC/master/stdlib.qc
+            curl -fL -o "$QC_HOME/lib/stdlib.qc" "https://raw.githubusercontent.com/Youg-Otricked/QuarticC/${TAG:-master}/stdlib.qc"
             info "Updated"
         else
             info "Reinstalling & Compiling C^4"
@@ -551,7 +579,7 @@ else
             esac
             SRC=$(mktemp -d "${TMPDIR:-/tmp}/qc-src.XXXXXX") || die "could not create temp dir"
             trap 'rm -rf "$SRC"' 0 2 15
-            git clone --depth 1 "$REPO_URL" "$SRC/QuarticC" >>"$LOG" 2>&1 || die "failed to clone $REPO_URL"
+            clone_repo
             cd "$SRC/QuarticC" || die "failed to enter repo"
             ok "Cloned repo"
             info "Setting up CMake"

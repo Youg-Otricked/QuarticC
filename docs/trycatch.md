@@ -26,7 +26,7 @@ void assert(bool condition, string msg) {
 2. try/catch
 
 C^4 uses errors-as-values, meaning all errors are just normal values. Errors are just ANY type with a integer at field 0. That's unions, enums, and any custom type too.
-The value is considered an error if the field 0 is != 1.
+The value is considered an error if the field 0 is != 0.
 
 You use these rules with the two error handling primitives: `try`, and `catch`.
 
