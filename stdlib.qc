@@ -1354,7 +1354,7 @@ namespace String {
             negative = true;
             value = -value;
         }
-        char buffer[64];
+        char[64] buffer;
         addr_t i = 0;
         while (value > 0) {
             buffer[i++] = '0' + (value % 10);
