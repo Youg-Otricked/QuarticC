@@ -1581,8 +1581,8 @@ class LLVMCompiler {
         return "unknown";
     }
     bool is_primitive_type(const std::string_view& name) {
-        return std::unordered_set<std::string_view>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "char", "bool", "qbool",
-                                                     "ai64u_t", "ai64_t", "i32u_t", "i16u_t", "short int", "long int"})
+        return std::unordered_set<std::string_view>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "char", "bool", "qbool", "ai64u_t",
+                                                     "ai64_t", "i32u_t", "i16u_t", "short int", "long int"})
             .contains(name);
     }
     bool is_primint_type(const std::string_view& name) {
@@ -3585,6 +3585,9 @@ class LLVMCompiler {
             currentNonTypeGenericValues = oldNonTypeGenerics;
             return nullptr;
         }
+        auto savedDefers = defersStack;
+        defersStack.clear();
+        auto savedLambdaTypes = lambdaTypes;
         namespaceStack.clear();
         size_t nsSep = specializedName.rfind("::");
         if (nsSep != std::string::npos) {
@@ -3772,6 +3775,8 @@ class LLVMCompiler {
                 builder->SetCurrentDebugLocation(oldDebugLoc);
             }
         }
+        defersStack = savedDefers;
+        lambdaTypes = savedLambdaTypes;
         namespaceStack = savedNamespaceStack;
         currentFunction = savedFunction;
         globals = savedGlobals;
@@ -3812,6 +3817,9 @@ class LLVMCompiler {
             currentNonTypeGenericValues = oldNonTypeGenerics;
             return nullptr;
         }
+        auto savedDefers = defersStack;
+        defersStack.clear();
+        auto savedLambdaTypes = lambdaTypes;
         llvm::Value* savedThis = currentThis;
         std::string savedClassName = currentClassName;
         currentThis = nullptr;
@@ -3937,6 +3945,8 @@ class LLVMCompiler {
             }
         }
         exitScope();
+        defersStack = savedDefers;
+        lambdaTypes = savedLambdaTypes;
         currentSubprogram = oldSubprogram;
         builder->SetCurrentDebugLocation(oldDebugLoc);
         currentThis = savedThis;
@@ -5365,10 +5375,9 @@ class LLVMCompiler {
         return baseName;
     }
     std::string resolveTypeName(std::string name, bool strip = true) {
-        if (name == "int" || name == "float" || name == "double" || name == "char" || name == "bool" || name == "qbool" ||
-            name == "byte" || name == "void" || name == "auto" || name == "short int" || name == "long int" || name == "long double" ||
-            name == "addr_t" || name == "nibble" || name == "ai64u_t" || name == "ai64_t" || name == "i32u_t" || name == "i16u_t" ||
-            name.starts_with("(")) {
+        if (name == "int" || name == "float" || name == "double" || name == "char" || name == "bool" || name == "qbool" || name == "byte" ||
+            name == "void" || name == "auto" || name == "short int" || name == "long int" || name == "long double" || name == "addr_t" ||
+            name == "nibble" || name == "ai64u_t" || name == "ai64_t" || name == "i32u_t" || name == "i16u_t" || name.starts_with("(")) {
             return name;
         }
         name = strip_consts(name);
