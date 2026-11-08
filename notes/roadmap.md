@@ -1,3 +1,4 @@
+- _isErr unwrap
 - bitfields
 - fixed point
 - imaginary numbers

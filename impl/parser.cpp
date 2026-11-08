@@ -15,7 +15,6 @@ AnyNode Parser::default_value_for_type(const Token& type_tok, const Position& po
     if (type == "byte") return AnyNode{NumberNode(Token(TokenType::BYTE, "0", pos))};
     if (type == "nibble") return AnyNode{NumberNode(Token(TokenType::NIBBLE, "0", pos))};
     if (is_primint_type(Token(TokenType::KEYWORD, type, this->current_tok.pos))) return AnyNode{NumberNode(Token(TokenType::ADDR_T, "0", pos))};
-    if (type == "string") return AnyNode{StringNode(Token(TokenType::STRING, "", pos))};
     if (type == "char") return AnyNode{CharNode(Token(TokenType::CHAR, std::string(1, '\0'), pos))};
     if (type == "bool") return AnyNode{BoolNode(Token(TokenType::BOOL, "false", pos))};
     if (type == "qbool") return AnyNode{QBoolNode(Token(TokenType::QBOOL, "none", pos))};
@@ -55,8 +54,8 @@ void Parser::parseGenerics(std::vector<GenericType>& genericsM, ParseResult& res
             GenericType curr;
             if (this->current_tok.type != TokenType::IDENTIFIER) {
                 if (this->current_tok.type == TokenType::KEYWORD &&
-                    std::unordered_set<std::string>({"int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool",
-                                                     "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+                    std::unordered_set<std::string>(
+                        {"int", "double", "float", "byte", "nibble", "addr_t", "char", "bool", "qbool", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
                         .contains(this->current_tok.value)) {
                     curr.isNonType = true;
                     curr.nonTypeKind = this->current_tok.value;
@@ -1394,10 +1393,9 @@ Prs Parser::for_stmt() {
         if (this->current_tok.type == TokenType::KEYWORD &&
             (this->current_tok.value == "const" || this->current_tok.value == "int" || this->current_tok.value == "float" ||
              this->current_tok.value == "double" || this->current_tok.value == "bool" || this->current_tok.value == "qbool" ||
-             this->current_tok.value == "string" || this->current_tok.value == "char" || this->current_tok.value == "addr_t" ||
-             this->current_tok.value == "byte" || this->current_tok.value == "nibble" || this->current_tok.value == "atomic" ||
-             this->current_tok.value == "ai64u_t" || this->current_tok.value == "ai64_t" || this->current_tok.value == "i32u_t" ||
-             this->current_tok.value == "i16u_t")) {
+             this->current_tok.value == "char" || this->current_tok.value == "addr_t" || this->current_tok.value == "byte" ||
+             this->current_tok.value == "nibble" || this->current_tok.value == "atomic" || this->current_tok.value == "ai64u_t" ||
+             this->current_tok.value == "ai64_t" || this->current_tok.value == "i32u_t" || this->current_tok.value == "i16u_t")) {
 
             bool is_const = false;
             Token tok = current_tok;

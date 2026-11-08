@@ -21,7 +21,6 @@ int main() {
 }
 ```
 
-Docs are [here](https://youg-otricked.github.io/QuarticC/).
 Book is [here](https://youg-otricked.github.io/QCBook/).
 
 **More Powerful Than Explosives™**/j
@@ -33,11 +32,7 @@ Whether your codebase is 100 or 100,000 lines long, code should still make sense
 
 ---
 
-# Video
-
-Go to the [docs](https://youg-otricked.github.io/QuarticC/)
-
-## Quick Start
+# Quick Start
 
 Use the [Package & Version Manager](https://github.com/Youg-Otricked/quartic-c-manager), or:
 
@@ -101,7 +96,7 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 
 # Development Status
 
-Current Version: x1.5.02 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
+Current Version: x1.5.1 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 Next Version: x1.5.1 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
@@ -114,7 +109,7 @@ Major
 └─ 1.0
 
 Moderate
-└─ Deprecations 
+└─ Deprecations
 
 Minor
 └─ Deprecated and fully rebuilt error handling.
@@ -130,48 +125,48 @@ These are deprecations in the past 3 moderate versions (`x1.3.* -> x1.5.*`)
 Old way of using Unions.
 Try Catch.
 Random Intrisics
+Strings.
+A lot of intrinsics.
 
 # Upcoming Deprecations:
 
 Large amounts of intrinsic functions. Assume no intrinsics that are c-backed other than conversions printing files and heap will be available.
-Builtin strings.
-
 
 ## Feature Roadmap
 
-| Category            | Feature                                                                | Status  |
-| ------------------- | ---------------------------------------------------------------------- | ------- |
-| **Core Logic**      | Variables & Types (`int`, `float`, `double`, `string`, `char`, `bool`) | Done    |
-|                     | Constants (`const`) & `auto` Inference                                 | Done    |
-|                     | Long and Short types                                                   | Done    |
-| **Operators**       | Standard Math & Expressions (includes `#^` power operator)             | Done    |
-|                     | Control Flow (`if/else`, `switch`, `while`, `for`, `foreach`)          | Done    |
-| **Functions**       | Functions with Default Parameters                                      | Done    |
-|                     | Lambdas & Higher-Order Functions                                       | Done    |
-|                     | **Native Multi-Return Values**                                         | Done    |
-| **Data Structures** | Arrays                                                                 | Done    |
-|                     | Enums                                                                  | Done    |
-| **Advanced**        | Structs, Classes, & Namespaces                                         | Done    |
-|                     | Union Types (TypeScript-style)                                         | Done    |
-|                     | Advanced OOP & Operator Overloading                                    | Done    |
-|                     | Manual Memory Management                                               | Done    |
-| **System**          | F-Strings (Python-style interpolation)                                 | Done    |
-|                     | Random Number Generation                                               | Done    |
-|                     | Stdlib Part 1 & 2                                                      | Done    |
-| **Future**          | Stdlib Part 3                                                          | Planned |
-|                     | Inline ASM                                                             | Done    |
-|                     | Generics                                                               | Done    |
-|                     | Classes                                                                | Done    |
-|                     | Structs                                                                | Done    |
-|                     | Unions                                                                 | Done    |
-|                     | Functions & Methods                                                    | Done    |
-|                     | Variadic Generic Arguments                                             | Planned |
-|                     | `restrict`, `out`, `inout`, `volatile`                                 | Done    |
-|                     | Extern                                                                 | Done    |
-|                     | Bitwise Logic                                                          | Done    |
-|                     | Really fancy operator overloads                                        | Done    |
-|                     | Try/Catch and `throw`                                                  | Done    |
-|                     | Error message quality and helpfulness upgrade                          | Done    |
+| Category            | Feature                                                       | Status  |
+| ------------------- | ------------------------------------------------------------- | ------- |
+| **Core Logic**      | Variables & Types (`int`, `float`, `double`, `char`, `bool`)  | Done    |
+|                     | Constants (`const`) & `auto` Inference                        | Done    |
+|                     | Long and Short types                                          | Done    |
+| **Operators**       | Standard Math & Expressions (includes `#^` power operator)    | Done    |
+|                     | Control Flow (`if/else`, `switch`, `while`, `for`, `foreach`) | Done    |
+| **Functions**       | Functions with Default Parameters                             | Done    |
+|                     | Lambdas & Higher-Order Functions                              | Done    |
+|                     | **Native Multi-Return Values**                                | Done    |
+| **Data Structures** | Arrays                                                        | Done    |
+|                     | Enums                                                         | Done    |
+| **Advanced**        | Structs, Classes, & Namespaces                                | Done    |
+|                     | Union Types (TypeScript-style)                                | Done    |
+|                     | Advanced OOP & Operator Overloading                           | Done    |
+|                     | Manual Memory Management                                      | Done    |
+| **System**          | F-Strings (Python-style interpolation)                        | Done    |
+|                     | Random Number Generation                                      | Done    |
+|                     | Stdlib Part 1 & 2                                             | Done    |
+| **Future**          | Stdlib Part 3                                                 | Planned |
+|                     | Inline ASM                                                    | Done    |
+|                     | Generics                                                      | Done    |
+|                     | Classes                                                       | Done    |
+|                     | Structs                                                       | Done    |
+|                     | Unions                                                        | Done    |
+|                     | Functions & Methods                                           | Done    |
+|                     | Variadic Generic Arguments                                    | Planned |
+|                     | `restrict`, `out`, `inout`, `volatile`                        | Done    |
+|                     | Extern                                                        | Done    |
+|                     | Bitwise Logic                                                 | Done    |
+|                     | Really fancy operator overloads                               | Done    |
+|                     | Try/Catch and `throw`                                         | Done    |
+|                     | Error message quality and helpfulness upgrade                 | Done    |
 
 See the full list of remaining features in the [roadmap](https://github.com/Youg-Otricked/QuarticC/blob/master/notes/roadmap.md).
 
@@ -221,12 +216,21 @@ errors(warnings),feat(cli-flags): added warnings & -W flags
 ```
 
 Finish syntax is:
+
 ```text
 finish(catagory(commit)::named)
 ```
+
 if the catagory is todo, parens can be ommited, commit can be ommited. For example:
+
 ```text
 finish(feat::partial(HEAD~1)::install)
+```
+
+if your commit thing is a stdlib improvment, prefix it with `std::`
+
+```text
+feat(std::Vector):...
 ```
 
 But at least make your commits sensical. Unlike mine
@@ -350,7 +354,7 @@ Example:
 ```
 namespace Network {
     class Client {
-        string server_name;
+        char *server_name;
 
         void connectToServer() {
             ...
@@ -387,11 +391,11 @@ QuarticC uses a classic multi-pass compilation pipeline:
 ## Multi Return
 
 ```cpp
-int, string GetStatus() {
+int, char *GetStatus() {
     return 200, "Success";
 }
 int main() {
-    int code, string alias = GetStatus();
+    int code, char *alias = GetStatus();
     `qout("%s", f"Code: {code}, AKA: {alias}\n");
     return 0;
 }
@@ -404,7 +408,7 @@ Union types and aliases use the exact same syntax.
 ```cpp
 int main() {
     // Union type. No narrowing. Compiled to LLVM. I SPENT HOURS ON THIS.
-    type IdT = int | string;
+    type IdT = int | char *
     IdT id = 101;
     id = "A101"; // Valid
 
@@ -413,19 +417,22 @@ int main() {
     UserID myId = 5;
 }
 ```
+
 Use of unions values requires conversion.
 
 ```cpp
-    string idVal = id as string;
+    char *idVal = id as char *
 ```
 
 Or you can match and the compiler will take the right branch for you.
+
 ```cpp
     match (id) {
         int(i) => `qout("Integer id: %i", i);;
         default => ...
     }
 ```
+
 ### Tagged Enums
 
 Enums can have tags.
@@ -656,10 +663,10 @@ Can be any primitive numeric type.
 The subconstraint system is like this:
 
 ```
-<T(:!int|string)>
+<T(:!int|char *>
 ```
 
-This means "T can be any type other than int or string".
+This means "T can be any type other than int or char *.
 The ! means not anything in this set, and the type|type means these types.
 QuarticC also has non-type generic parameters.
 
@@ -747,63 +754,63 @@ class ArrayIterator<T> {
     int size;
     int current_index;
     ArrayIterator(T* data, int size, bool is_end) {
-        this.data = data;
-        this.size = size;
-        this.current_index = `ternary(is_end, size, 0);
+        this->data = data;
+        this->size = size;
+        this->current_index = `ternary(is_end, size, 0);
     }
     bool _atEnd() {
-        return this.size <= this.current_index;
+        return this->size <= this->current_index;
     }
     T _next() {
-        if (!this._atEnd()) {
-            return this.data[this.current_index++];
+        if (!this->_atEnd()) {
+            return this->data[this->current_index++];
         }
-        return this.data[this.current_index];
+        return this->data[this->current_index];
     }
     bool _atStart() {
-        return this.current_index <= 0;
+        return this->current_index <= 0;
     }
     T _prev() {
-        if (!this._atStart()) {
-            return this.data[--this.current_index];
+        if (!this->_atStart()) {
+            return this->data[--this->current_index];
         }
-        return this.data[this.current_index];
+        return this->data[this->current_index];
     }
     void _moveTo(int index) {
-        if (index >= this.size) {
-            index = this.size - 1;
+        if (index >= this->size) {
+            index = this->size - 1;
         } else if (index < 0) {
             index = 0;
         }
-        this.current_index = index;
+        this->current_index = index;
     }
 }
 class Array<T, int S = 0> {
     T* data;
     int size;
     Array() {
-        this.data = nullptr;
-        this.size = 0;
+        this->data = nullptr;
+        this->size = 0;
     }
     void operator[]=(T* data, int length) {
         if (length > S) {
-            this.size = length;
+            this->size = length;
         } else {
-            this.size = S;
+            this->size = S;
         }
-        this.data = `malloc(sizeof "T" * this.size);
-        for (int i = 0; i < this.size; i++) {
-            this.data[i] = data[i];
+        this->data = `malloc(sizeof "T" * this->size);
+        for (int i = 0; i < this->size; i++) {
+            this->data[i] = data[i];
         }
     }
     T operator[](int index) {
-        return this.data[index];
+        return this->data[index];
     }
     ArrayIterator<T> _begin() {
-        return ArrayIterator<T>(this.data, this.size, false);
+        return ArrayIterator<T>(this->data, this->size, false);
     }
     ArrayIterator<T> _end() {
-        return ArrayIterator<T>(this.data, this.size, true);
+        return ArrayIterator<T>(this->data, this->size, true);
     }
 }
 ```
@@ -828,13 +835,14 @@ namespace Array
 
 ## Try/Catch and Error Returns
 
-C^4 uses error-as-value error handling. 
+C^4 uses error-as-value error handling.
 
 Errors are either:
 Unions (first variant = happy path)
 Enums (first variant = happy path)
 Structs (integer at first field, ==0 is happy path)
 Comming soon (hint: `_isOk`)
+
 ```qc
 struct myerror {
     ...
@@ -844,12 +852,13 @@ MyResult myThing() {
     return myerror{...};
 }
 ```
+
 Try falls errors through if the value is not a happy path, and unwraps non-error unions:
 
 ```qc
 type MyError1 = int | Err;
 type MyError2 = double | Err; // Unwrap
-type MyError3 = string | MyError1; // No Unwrap
+type MyError3 = char *| MyError1; // No Unwrap
 MyError2 err2() {
     try err1(); // returns Err if fails, otherwise produces the int.
     ...
@@ -859,7 +868,9 @@ MyError3 err3() {
     ...
 }
 ```
+
 Catch handles error values.
+
 ```qc
 int main() {
     double d = err2() catch {
@@ -867,6 +878,7 @@ int main() {
     };
 }
 ```
+
 Braces may be ommitted if it is only one stmt long, and it must either terminate(return, panic, continue, unreachable, etc) or produce a value. The final stmt is the value produced.
 You can capture the error by after catch wrapping it in parens, e.g: `catch (e) {...}`
 
@@ -896,22 +908,22 @@ else:
     }
 }
 class PDF {
-    string data;
-    PDF(string data) {
-        this.data = data;
+    char *data;
+    PDF(char *data) {
+        this->data = data;
     }
     void print() {
-        `qout("%s", this.data);
+        `qout("%s", this->data);
     }
 }
 class ASCII {
-    string data;
-    ASCII(string data) {
-        this.data = data;
+    char *data;
+    ASCII(char *data) {
+        this->data = data;
     }
 }
 struct Paper {
-    string data;
+    char *data;
 }
 type File = PDF | ASCII;
 /// Print would print PDFs data
@@ -1045,7 +1057,7 @@ Math
 Utils
 OSInterop
 Unordered
-Filesystem
+String
 Owned
 ```
 

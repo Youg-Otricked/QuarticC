@@ -12,7 +12,7 @@ int main() {
     `qout("%i\n", un.i);
     un.f = 23.023f;
     `qout("%f\n", un.f);
-    Other<int, string> s;
+    Other<int, char*> s;
     s.t2 = "hello";
     s.t1 = 123;
     return 0;

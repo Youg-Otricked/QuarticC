@@ -194,8 +194,6 @@ class LLVMCompiler {
         llvm::SmallVector<llvm::Constant*, 2> indices = {zero, zero};
         return llvm::ConstantExpr::getInBoundsGetElementPtr(stringConstant->getType(), globalString, indices);
     }
-    void generateStructReprFunctions();
-    llvm::Value* callStringConcat(llvm::Value* a, llvm::Value* b);
     llvm::Type* getLargestUType(UserTypeInfo& info) {
         size_t size = 0;
         auto& DL = module->getDataLayout();
@@ -381,10 +379,9 @@ class LLVMCompiler {
     static bool isIndirectType(const std::string& t) { return !t.empty() && (t.back() == '*' || t.back() == '&'); }
     void generateStruct(const std::string& mapKey, UserTypeInfo& info);
     void generateClass(const std::string& mapKey, UserTypeInfo& info);
-    llvm::Value* convertToString(llvm::Value* val, AnyNode& expr, Position pos);
-    llvm::DISubprogram* currentSubprogram;
-    llvm::DIBuilder* diBuilder;
-    llvm::DICompileUnit* compileUnit;
+    llvm::DISubprogram* currentSubprogram = nullptr;
+    llvm::DIBuilder* diBuilder = nullptr;
+    llvm::DICompileUnit* compileUnit = nullptr;
     llvm::DIFile* getDebugFile(uint32_t file_id) {
         if (!config.debug_symbols || !diBuilder) return nullptr;
         if (auto it = debug_files.find(file_id); it != debug_files.end()) return it->second;
@@ -592,8 +589,6 @@ class LLVMCompiler {
     std::string currentClassName = "";
     std::vector<std::vector<StatementsNode*>> defersStack = {{}};
 #define defers defersStack.back()
-    llvm::Value* copySpreadToArray(llvm::Value* collVal, AnyNode& collExpr, llvm::Value* destArray, llvm::Value* startIndex, llvm::Type* elemTy,
-                                   int elemTypeCode);
     std::string substituteGenerics(const std::string& typeStr) {
         size_t anglePos = typeStr.find('<');
         size_t suffix_start = anglePos;
@@ -649,8 +644,6 @@ class LLVMCompiler {
         return result + ">" + suffix;
     }
     unsigned pointerSizeBits;
-    void expandSpreadIntoVector(llvm::Value* collVal, AnyNode& collExpr, std::vector<llvm::Value*>& elements);
-    llvm::Value* emitSpreadFunctionCall(llvm::Value* calleeVal, llvm::FunctionType* fnTy, CallNode& call);
     bool fulfillsGenericConstraints(std::vector<GenericType> generics, std::vector<std::string> genericParams, Position pos = Position());
     UserTypeInfo generateGenericUnion(std::string unionName, UserTypeInfo unionInfo, std::vector<std::string> genericParams);
     llvm::StructType* generateGenericEnum(std::string enumName, UserTypeInfo enumInfo, std::vector<std::string> genericParams);
@@ -1029,8 +1022,6 @@ class LLVMCompiler {
         }
     }
     llvm::Value* getCollectionLength(llvm::Value* collVal, AnyNode& collExpr);
-    llvm::Value* expandSpreadIntoArrays(llvm::Value* collVal, AnyNode& collExpr, llvm::AllocaInst* argsArray, llvm::AllocaInst* typesArray,
-                                        llvm::Value* startIndex);
     template <typename MapType> auto findInStack(std::vector<MapType>& stack, const std::string& key) {
         if (stack.empty()) {
             cg_error(Position(Position::INVALID_FILE_ID, 0, 0, 0), "Stack is empty", "QC-S282");
@@ -1117,7 +1108,7 @@ class LLVMCompiler {
             if (leftType == "float" || rightType == "float") return "float";
             return leftType;
         } else if (auto strNode = std::get_if<StringNode>(&node)) {
-            return "string";
+            return "char*";
         } else if (auto numNode = std::get_if<NumberNode>(&node)) {
             switch (numNode->tok.type) {
             case TokenType::INT: return "int";
@@ -1153,8 +1144,6 @@ class LLVMCompiler {
             }
             if (baseType.ends_with("*")) {
                 return baseType.substr(0, baseType.size() - 1);
-            } else if (baseType == "string") {
-                return "char";
             } else {
                 if (auto varAcc = std::get_if<VarAccessNode*>(&(*arrAcc)->base)) {
                     std::string name = (*varAcc)->var_name_tok.value;
@@ -1270,9 +1259,6 @@ class LLVMCompiler {
                 if (funcName == "`is_empty" || funcName == "`to_bool") return "bool";
                 if (funcName == "`inline" || funcName == "`qout") return "void";
                 if (funcName == "`len") return "addr_t";
-                if (funcName == "`to_lower" || funcName == "`to_upper" || funcName == "`substring" || funcName == "`trim" || funcName == "`replace" ||
-                    funcName == "`read" || funcName == "`to_string")
-                    return "string";
                 if (funcName == "`contains" || funcName == "`startswith" || funcName == "`endswith") return "bool";
                 if (funcName == "`to_int") return "int";
                 if (funcName == "`to_float") return "float";
@@ -1287,8 +1273,7 @@ class LLVMCompiler {
                 if (funcName == "`open") return "int";
                 if (funcName == "`close" || funcName == "`write" || funcName == "`free" || funcName == "`flush") return "void";
                 if (funcName == "`malloc" || funcName == "`calloc" || funcName == "`realloc" || funcName == "`mapped_ptr") return "void*";
-
-                if (funcName == "`typeof") { return "string"; }
+                if (funcName == "`typeof") { return "char*"; }
                 if (funcName == "`ternary") {
                     if ((*callNode)->arg_nodes.size() < 3) {
                         cg_error((*varAcc)->var_name_tok.pos, "too few arguments to `ternary", "QC-S283");
@@ -1475,6 +1460,8 @@ class LLVMCompiler {
                         return substituteGenerics(ret);
                     }
                 }
+                if (funcName == "`has_mehod" || funcName == "`has_field") return "bool";
+                if (funcName == "`panic") return "void";
             }
             return "unknown";
         } else if (auto methCall = std::get_if<MethodCallNode*>(&node)) {
@@ -1537,7 +1524,7 @@ class LLVMCompiler {
 
             return foundReturnType;
         } else if (const TypeValueNode* typeValue = std::get_if<TypeValueNode>(&node)) {
-            return "string";
+            return "char*";
         } else if (ModifierNode* modNode = safe_get<ModifierNode>(node)) {
             if (!modNode || modNode->modifiers.empty()) { return getExpressionType(modNode->node, strip); }
             std::string currentType = getExpressionType(modNode->node, strip);
@@ -1594,7 +1581,7 @@ class LLVMCompiler {
         return "unknown";
     }
     bool is_primitive_type(const std::string_view& name) {
-        return std::unordered_set<std::string_view>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool",
+        return std::unordered_set<std::string_view>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "char", "bool", "qbool",
                                                      "ai64u_t", "ai64_t", "i32u_t", "i16u_t", "short int", "long int"})
             .contains(name);
     }
@@ -1950,19 +1937,19 @@ class LLVMCompiler {
         if (!config.debug_symbols || !diBuilder) return nullptr;
         type = resolveTypeName(type, false);
         if (auto it = debug_types.find(type); it != debug_types.end()) return it->second;
-        if (is_primitive_type(type) && type != "string") {
+        if (is_primitive_type(type)) {
             if (type == "void") {
                 debug_types[type] = diBuilder->createUnspecifiedType("void");
                 return debug_types[type];
             }
             const llvm::DataLayout& datalayout = module->getDataLayout();
             debug_types[type] = diBuilder->createBasicType(type, datalayout.getTypeSizeInBits(llvmTypeFor(type)),
-                                                           is_primint_type(type)
+                                                           is_primint_type(type) || type == "char"
                                                                ? is_unsigned_type(type) ? llvm::dwarf::DW_ATE_unsigned : llvm::dwarf::DW_ATE_signed
                                                                : llvm::dwarf::DW_ATE_float);
             return debug_types[type];
-        } else if (type == "string" || type.ends_with("*") || type.ends_with("&")) {
-            std::string pointeeType = type == "string" ? "char*" : type;
+        } else if (type.ends_with("*") || type.ends_with("&")) {
+            std::string pointeeType = type;
             pointeeType.pop_back();
             llvm::DIType* pointee = nullptr;
             std::string base = baseTypeName(resolveTypeName(pointeeType, false));
@@ -2078,12 +2065,17 @@ class LLVMCompiler {
                         file, field.name, file, line, datalayout.getTypeAllocSizeInBits(fieldType), datalayout.getABITypeAlign(fieldType).value() * 8,
                         layout->getElementOffsetInBits(i), llvm::DINode::FlagZero, getDebugType(field.type)));
                 }
+                size_t num_statics = 0;
                 for (size_t i = 0; i < ifo.classFields.size(); i++) {
                     const ClassField& field = ifo.classFields[i];
-                    llvm::Type* fieldType = st->getElementType(i);
+                    if (field.isStatic) {
+                        num_statics++;
+                        continue;
+                    }
+                    llvm::Type* fieldType = st->getElementType(i - num_statics);
                     members.push_back(diBuilder->createMemberType(
                         file, field.name, file, line, datalayout.getTypeAllocSizeInBits(fieldType), datalayout.getABITypeAlign(fieldType).value() * 8,
-                        layout->getElementOffsetInBits(i), llvm::DINode::FlagZero, getDebugType(field.type)));
+                        layout->getElementOffsetInBits(i - num_statics), llvm::DINode::FlagZero, getDebugType(field.type)));
                 }
                 llvm::DINodeArray member_array = diBuilder->getOrCreateArray(members);
                 debug_types[type] = diBuilder->createStructType(compileUnit, type, file, line, datalayout.getTypeAllocSizeInBits(st),
@@ -2261,20 +2253,6 @@ class LLVMCompiler {
         auto* s = llvm::dyn_cast<llvm::MDString>(md->getOperand(index));
         return s && s->getString().ends_with("&");
     }
-    /*
-    class TypedValue {
-        llvm::Value* val;
-        std::string qcType; // "int&", "int*", "string", etc.
-        TypedValue(llvm::Value* val) {
-            this->val = val;
-        }
-        TypedValue(std::string qcType, llvm::Value* val) {
-            this->qcType = qcType;
-            this->val = val;
-        }
-        operator llvm::Value*() const { return this->val; }
-    };
-    */
     llvm::Value* derefIfReference(llvm::Value* val, AnyNode& argNode) {
         val = normalizeValue(val, argNode);
         if (!val || !val->getType()->isPointerTy()) return val;
@@ -2506,9 +2484,7 @@ class LLVMCompiler {
 
         if (target == "int") {
             retTy = builder->getInt32Ty();
-            if (ty->isPointerTy())
-                fnName = "qc_to_int_from_string";
-            else if (ty->isFloatTy() || ty->isDoubleTy())
+            if (ty->isFloatTy() || ty->isDoubleTy())
                 return builder->CreateFPToSI(arg, retTy);
             else if (ty->isIntegerTy(64))
                 return builder->CreateTrunc(arg, retTy);
@@ -2518,9 +2494,7 @@ class LLVMCompiler {
                 return builder->CreateSExt(arg, retTy);
         } else if (target == "short int") {
             retTy = builder->getInt16Ty();
-            if (ty->isPointerTy())
-                fnName = "qc_to_short_int_from_string";
-            else if (ty->isFloatTy() || ty->isDoubleTy())
+            if (ty->isFloatTy() || ty->isDoubleTy())
                 return builder->CreateFPToSI(arg, retTy);
             else if (ty->isIntegerTy(64) || ty->isIntegerTy(32))
                 return builder->CreateTrunc(arg, retTy);
@@ -2530,9 +2504,7 @@ class LLVMCompiler {
                 return builder->CreateSExt(arg, retTy);
         } else if (target == "long int") {
             retTy = builder->getIntNTy(getPtrSize());
-            if (ty->isPointerTy())
-                fnName = "qc_to_int_from_string";
-            else if (ty->isFloatTy() || ty->isDoubleTy())
+            if (ty->isFloatTy() || ty->isDoubleTy())
                 return builder->CreateFPToSI(arg, retTy);
             else if (ty == retTy)
                 return arg;
@@ -2540,9 +2512,7 @@ class LLVMCompiler {
                 return builder->CreateSExt(arg, retTy);
         } else if (target == "float") {
             retTy = builder->getFloatTy();
-            if (ty->isPointerTy())
-                fnName = "qc_to_float_from_string";
-            else if (ty->isIntegerTy())
+            if (ty->isIntegerTy())
                 return builder->CreateSIToFP(arg, retTy);
             else if (ty->isDoubleTy())
                 return builder->CreateFPTrunc(arg, retTy);
@@ -2550,9 +2520,7 @@ class LLVMCompiler {
                 return arg;
         } else if (target == "double") {
             retTy = builder->getDoubleTy();
-            if (ty->isPointerTy())
-                fnName = "qc_to_double_from_string";
-            else if (ty->isIntegerTy())
+            if (ty->isIntegerTy())
                 return builder->CreateSIToFP(arg, retTy);
             else if (ty->isFloatTy())
                 return builder->CreateFPExt(arg, retTy);
@@ -2566,37 +2534,27 @@ class LLVMCompiler {
                 return builder->CreateICmpNE(arg, llvm::ConstantInt::get(ty, 0));
             else if (ty->isFloatTy() || ty->isDoubleTy())
                 return builder->CreateFCmpONE(arg, llvm::ConstantFP::get(ty, 0.0));
-            else if (ty->isPointerTy())
-                fnName = "qc_to_bool_from_string";
         } else if (target == "char") {
             retTy = builder->getInt8Ty();
-            if (ty->isPointerTy())
-                fnName = "qc_to_char_from_string";
-            else if (ty->isIntegerTy(8))
+            if (ty->isIntegerTy(8))
                 return arg;
             else if (ty->isIntegerTy())
                 return builder->CreateSExtOrTrunc(arg, retTy);
         } else if (target == "addr_t") {
             retTy = builder->getIntNTy(getPtrSize());
-            if (ty->isPointerTy())
-                fnName = "qc_to_addr_t_from_string";
-            else if (ty->isIntegerTy())
+            if (ty->isIntegerTy())
                 return builder->CreateZExtOrTrunc(arg, retTy);
             else if (ty->isFloatTy() || ty->isDoubleTy())
                 return builder->CreateFPToUI(arg, retTy);
         } else if (target == "byte") {
             retTy = builder->getInt8Ty();
-            if (ty->isPointerTy())
-                fnName = "qc_to_byte_from_string";
-            else if (ty->isIntegerTy())
+            if (ty->isIntegerTy())
                 return builder->CreateZExtOrTrunc(arg, retTy);
             else if (ty->isFloatTy() || ty->isDoubleTy())
                 return builder->CreateFPToUI(arg, retTy);
         } else if (target == "nibble") {
             retTy = builder->getIntNTy(4);
-            if (ty->isPointerTy())
-                fnName = "qc_to_nibble_from_string";
-            else if (ty->isIntegerTy())
+            if (ty->isIntegerTy())
                 return builder->CreateZExtOrTrunc(arg, retTy);
             else if (ty->isFloatTy() || ty->isDoubleTy())
                 return builder->CreateFPToUI(arg, retTy);
@@ -4060,63 +4018,6 @@ class LLVMCompiler {
         }
         return result + ">";
     }
-    void generateStructReprFunction(std::string name, UserTypeInfo info) {
-        llvm::IRBuilderBase::InsertPointGuard guard(*builder);
-        if (info.kind != UserTypeKind::Struct) return;
-        llvm::StructType* structTy = genericiseOrFindStruct(name);
-        llvm::FunctionType* reprFnTy = llvm::FunctionType::get(llvm::PointerType::get(context, 0), {structTy}, false);
-        llvm::Function* reprFn = module->getFunction(name + "_repr");
-        if (!reprFn) reprFn = llvm::Function::Create(reprFnTy, llvm::Function::WeakODRLinkage, name + "_repr", module);
-        llvm::BasicBlock* entryBB = llvm::BasicBlock::Create(context, "entry", reprFn);
-        builder->SetInsertPoint(entryBB);
-        llvm::Value* structArg = reprFn->arg_begin();
-        llvm::Value* result = builder->CreateGlobalString(name + "(");
-        for (size_t i = 0; i < info.fields.size(); i++) {
-            auto& field = info.fields[i];
-            if (i > 0) {
-                llvm::Value* comma = builder->CreateGlobalString(", ");
-                result = callStringConcat(result, comma);
-            }
-            llvm::Value* fieldLabel = builder->CreateGlobalString(field.name + "=");
-            result = callStringConcat(result, fieldLabel);
-            llvm::Value* fieldVal = builder->CreateExtractValue(structArg, i);
-            llvm::Value* fieldStr = nullptr;
-            auto type = substituteGenerics(field.type);
-            if (type == "int") {
-                llvm::Function* toStrFn = module->getFunction("qc_to_string_int");
-                fieldStr = builder->CreateCall(toStrFn, {fieldVal});
-            } else if (type == "float") {
-                llvm::Function* toStrFn = module->getFunction("qc_to_string_float");
-                fieldStr = builder->CreateCall(toStrFn, {fieldVal});
-            } else if (type == "double") {
-                llvm::Function* toStrFn = module->getFunction("qc_to_string_double");
-                fieldStr = builder->CreateCall(toStrFn, {fieldVal});
-            } else if (type == "bool") {
-                llvm::Function* toStrFn = module->getFunction("qc_to_string_bool");
-                fieldStr = builder->CreateCall(toStrFn, {fieldVal});
-            } else if (type == "char") {
-                llvm::Function* toStrFn = module->getFunction("qc_to_string_char");
-                fieldStr = builder->CreateCall(toStrFn, {fieldVal});
-            } else if (type == "string") {
-                fieldStr = fieldVal;
-            } else if (structTypes.find(type) != structTypes.end()) {
-                llvm::Function* nestedReprFn = module->getFunction(type + "_repr");
-                if (nestedReprFn) {
-                    fieldStr = builder->CreateCall(nestedReprFn, {fieldVal});
-                } else {
-                    fieldStr = builder->CreateGlobalString("?");
-                }
-            } else {
-                fieldStr = builder->CreateGlobalString("?");
-            }
-
-            result = callStringConcat(result, fieldStr);
-        }
-        llvm::Value* closeParen = builder->CreateGlobalString(")");
-        result = callStringConcat(result, closeParen);
-
-        builder->CreateRet(result);
-    }
     bool testExpression(AnyNode expr) {
         llvm::IRBuilderBase::InsertPointGuard guard(*builder);
         auto saved_ip = builder->saveIP();
@@ -5464,7 +5365,7 @@ class LLVMCompiler {
         return baseName;
     }
     std::string resolveTypeName(std::string name, bool strip = true) {
-        if (name == "int" || name == "float" || name == "double" || name == "char" || name == "bool" || name == "qbool" || name == "string" ||
+        if (name == "int" || name == "float" || name == "double" || name == "char" || name == "bool" || name == "qbool" ||
             name == "byte" || name == "void" || name == "auto" || name == "short int" || name == "long int" || name == "long double" ||
             name == "addr_t" || name == "nibble" || name == "ai64u_t" || name == "ai64_t" || name == "i32u_t" || name == "i16u_t" ||
             name.starts_with("(")) {
@@ -5881,7 +5782,6 @@ class LLVMCompiler {
         if (type == "char") return 3;
         if (type == "bool") return 4;
         if (type == "qbool") return 5;
-        if (type == "string") return 6;
         return -1;
     }
     int getTypeCodeFromLLVM(llvm::Type* ty) {

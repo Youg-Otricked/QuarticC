@@ -209,7 +209,7 @@ Token Lexer::make_identifier() {
         this->advance();
     }
     if (
-        /* primitives */ id == "int" || id == "float" || id == "double" || id == "bool" || id == "string" || id == "qbool" || id == "char" ||
+        /* primitives */ id == "int" || id == "float" || id == "double" || id == "bool" || id == "qbool" || id == "char" ||
         id == "ai64u_t" || id == "ai64_t" || id == "i32u_t" || id == "i16u_t" ||
         /* storage modifiers */ id == "long" || id == "short" || id == "const" || id == "atomic" ||
         /* switch */ id == "case" || id == "switch" || id == "default" || id == "match" ||

@@ -38,7 +38,7 @@ class Parser {
             .contains(name.value);
     }
     bool is_primitive_type(std::string& name) {
-        return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "string", "char", "bool", "qbool",
+        return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "char", "bool", "qbool",
                                                 "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
                    .contains(name) ||
                (name.starts_with("(") && name.ends_with(")"));

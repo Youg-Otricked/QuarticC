@@ -1,15 +1,15 @@
 concept Serializable {
     1_of {
-        string serialize();
-        string serialize(Self self);
+        char* serialize();
+        char* serialize(Self self);
     }
     default {
 class:
-        string serialize() {
+        char* serialize() {
             return "No special implementation";
         }
 else:
-        string serialize(Self self) {
+        char* serialize(Self self) {
             return "No special implementation";
         }
     }
@@ -27,17 +27,17 @@ X<int> proves GenericConcept<int> with_proof {
 };
 X<int> x;
 class Y {
-    string serialize() {
+    char* serialize() {
     }
 } 
 Y proves Serializable;
 struct Z {
     int x;
 }
-type T = int | string;
+type T = int | char*;
 T proves Serializable;
 Z proves Serializable with_proof {
-    string serialize(Self self) {
+    char* serialize(Self self) {
         return "Hello";
     }
 };

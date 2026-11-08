@@ -1,13 +1,13 @@
 concept Printable {
     all_of {
-        string to_string(Self self);
+        char* to_string(Self self);
     }
 }
 struct Paper {
-    string data;
+    char* data;
 }
 Paper proves Printable with_proof {
-    string to_string(Paper *self) {
+    char* to_string(Paper *self) {
         return self->data;
     }
 };
