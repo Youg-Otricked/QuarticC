@@ -1350,11 +1350,11 @@ namespace String {
             return Str("0");
         }
         bool negative = false;
-        if (is_signed<T>() && value < 0) {
+        if (value < 0) {
             negative = true;
             value = -value;
         }
-        char[64] buffer;
+        char[64] buffer = [char, 64];
         addr_t i = 0;
         while (value > 0) {
             buffer[i++] = '0' + (value % 10);
