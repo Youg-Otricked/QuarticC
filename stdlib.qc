@@ -1187,7 +1187,7 @@ namespace String {
             data_2[this->length + other.length] = '\0';
             return Str(data_2, this->length + other.length);
         }
-        void operator+=(Str other) {
+        Str operator+=(Str other) {
             addr_t new_length = this->length + other.length;
             this->data = `realloc(
                 this->data,
@@ -1199,6 +1199,7 @@ namespace String {
             this->length = new_length;
             this->capacity = new_length + 1;
             this->data[this->length] = '\0';
+            return *this;
         }
         char& operator[](addr_t index) {
             if (index >= this->length) {

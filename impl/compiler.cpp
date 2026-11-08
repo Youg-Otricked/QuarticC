@@ -2751,7 +2751,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                 }
                 if (rhs->getType() != classTy) {
                     std::string mangledName = buildMangledName(qcType, genericParams);
-                    if (llvm::Function* ctor = findMethodOverload(mangledName, llvm::cast<llvm::StructType>(classTy)->getName().str(), {rhs})) {
+                    if (llvm::Function* ctor = findMethodOverload(mangledName, baseTypeName(mangledName).substr(baseTypeName(mangledName).rfind(':') + 1), {rhs})) {
                         std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, {rhs});
                         builder->CreateCall(ctor, allArgs);
                         auto vtableIt = vtables.find(mangledName);
@@ -2795,7 +2795,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             }
             if (rhs->getType() != classTy) {
                 std::string mangledName = buildMangledName(qcType, genericParams);
-                if (llvm::Function* ctor = findMethodOverload(mangledName, llvm::cast<llvm::StructType>(classTy)->getName().str(), {rhs})) {
+                if (llvm::Function* ctor = findMethodOverload(mangledName, baseTypeName(mangledName).substr(baseTypeName(mangledName).rfind(':') + 1), {rhs})) {
                     std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, {rhs});
                     builder->CreateCall(ctor, allArgs);
                     auto vtableIt = vtables.find(mangledName);
@@ -2999,7 +2999,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                         }
                     }
                     if (rhs->getType() != classTy) {
-                        if (llvm::Function* ctor = findMethodOverload(qcType, llvm::cast<llvm::StructType>(classTy)->getName().str(), {rhs})) {
+                        if (llvm::Function* ctor = findMethodOverload(qcType, baseTypeName(qcType).substr(baseTypeName(qcType).rfind(':') + 1), {rhs})) {
                             std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, {rhs});
                             builder->CreateCall(ctor, allArgs);
                             auto vtableIt = vtables.find(qcType);
@@ -3039,7 +3039,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                     }
                 }
                 if (rhs->getType() != classTy) {
-                    if (llvm::Function* ctor = findMethodOverload(qcType, llvm::cast<llvm::StructType>(classTy)->getName().str(), {rhs})) {
+                    if (llvm::Function* ctor = findMethodOverload(qcType, baseTypeName(qcType).substr(baseTypeName(qcType).rfind(':') + 1), {rhs})) {
                         std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, {rhs});
                         builder->CreateCall(ctor, allArgs);
                         auto vtableIt = vtables.find(qcType);
