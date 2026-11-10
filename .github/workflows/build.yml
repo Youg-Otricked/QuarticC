@@ -162,7 +162,7 @@ jobs:
 #         git push
 #
   release:
-    needs: [tag, build-linux, build-macos, upload-extras]
+    needs: [tag, upload-extras]
     if: always() && needs.tag.outputs.exists != 'true' && needs.tag.result == 'success'
     runs-on: ubuntu-latest
     permissions:
