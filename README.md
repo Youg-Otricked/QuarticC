@@ -197,6 +197,7 @@ feat::partial Partiallly finished, similar to todo, but active work/50% done. Fi
 remove        Delete a feature. More narrow clean
 rev           Revision on previous commit/todo/partial, not done yet
 oops          Forgot to add to previous commit
+change        An actual change, not a improvment or a new feature. e.g. changing a syntax
 ```
 
 For example:
@@ -232,6 +233,12 @@ if your commit thing is a stdlib improvment, prefix it with `std::`
 
 ```text
 feat(std::Vector):...
+```
+
+if your commit is a breaking change, put a ! between the topic and the ( for each breaking change, such as
+
+```text
+clean!(string),change!(unions): ...
 ```
 
 But at least make your commits sensical. Unlike mine
