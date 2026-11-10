@@ -39,4 +39,5 @@ core.*
 .*.dot
 *.dot
 *.txt
+.cmake
 logs/*
