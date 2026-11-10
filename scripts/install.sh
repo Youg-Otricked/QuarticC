@@ -406,7 +406,7 @@ printf '%s========================\n   QuarticC Installer\n=====================
 if [ "$MODE" = "build" ] || [ "$MODE" = "" ]; then
     printf '%sInstall method:%s\n' "$PURPLE" "$NC"
     printf '  [c/y] compile from source (recommended)\n'
-    printf '  [l] latest precompiled (ARM64 macOS and recent Linux only)\n'
+    printf '  [l] latest precompiled (unavailable for modern versions. Unrecommended)\n'
     printf '> '
     if have_tty; then
         read -r choice </dev/tty
