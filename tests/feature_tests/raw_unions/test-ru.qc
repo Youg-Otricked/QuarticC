@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 union RawUnion {
     int i;
     float f;
@@ -9,9 +12,9 @@ union Other<T, T2> {
 int main() {
     RawUnion un;
     un.i = 123;
-    `qout("%i\n", un.i);
+    IO::qout("%i\n", un.i);
     un.f = 23.023f;
-    `qout("%f\n", un.f);
+    IO::qout("%f\n", un.f);
     Other<int, char*> s;
     s.t2 = "hello";
     s.t1 = 123;

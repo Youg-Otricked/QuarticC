@@ -1,3 +1,7 @@
+namespace Exported {
+    #include <IO, std>
+}
+
 concept A {
     1_of {
         void a();
@@ -41,16 +45,16 @@ struct None {
     int x;
 }
 void test_and<T(proves A && B:)>(T value) {
-    `qout("AND");
+    IO::qout("AND");
 }
 void test_or<T(proves A || B:)>(T value) {
-    `qout("OR");
+    IO::qout("OR");
 }
 void test_not<T(proves A && !C:)>(T value) {
-    `qout("NOT");
+    IO::qout("NOT");
 }
 void test_precedence<T(proves A || B && !C:)>(T value) {
-    `qout("PRECEDENCE");
+    IO::qout("PRECEDENCE");
 }
 int main() {
     AB ab = AB{1};

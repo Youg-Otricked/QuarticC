@@ -1,13 +1,16 @@
+namespace Exported {
+    #include <IO, std>
+}
 modifier async {
     on_call {
         return proceed();
     }
     on_return {
-        `qout("%s", `typeof(returns));
+        IO::qout("%s", `typeof(returns));
     }
 }
 async void doStuff() {
-    `qout("Proceed called this");
+    IO::qout("Proceed called this");
 }
 class TestModifiersOnMethods {
     async TestModifiersOnMethods() {
@@ -33,16 +36,16 @@ modifier await {
 }
 modifier log_call {
     on_call {
-        `qout("entering generic function\n");
+        IO::qout("entering generic function\n");
         return proceed();
     }
     on_return {
-        `qout("exiting generic function\n");
+        IO::qout("exiting generic function\n");
     }
 }
 
 log_call T identity<T>(T val) {
-    `qout("inside identity body\n");
+    IO::qout("inside identity body\n");
     return val;
 }
 
@@ -52,10 +55,10 @@ log_call T add<T>(T a, T b) {
 int main() {
     doStuff();
     int x = await returnAPromise();
-    `qout("%i\n", x);
+    IO::qout("%i\n", x);
     int x = identity<int>(42);
-    `qout("result x = %i\n", x);
+    IO::qout("result x = %i\n", x);
     int sum = add<int>(10, 20);
-    `qout("result sum = %i\n", sum);
+    IO::qout("result sum = %i\n", sum);
     return 0;
 }

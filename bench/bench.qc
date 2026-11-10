@@ -1,4 +1,7 @@
 long int sink = 0l;
+namespace Exported {
+    #include <IO, std>
+}
 
 long int heavy_compute(int n) {
     long int x = 1;
@@ -18,13 +21,13 @@ int main() {
     const int outer = 50;
     const int inner = 200000;
     long int total = 0;
-    `qout("Starting heavy benchmark...\n");
+    IO::qout("Starting heavy benchmark...\n");
     for (int i = 0; i < outer; i++) {
         long int result = heavy_compute(inner);
         total += result;
-        `qout("Run %i result: %i\n", i, result);
+        IO::qout("Run %i result: %i\n", i, result);
     }
     sink = total;
-    `qout("Total sink: %i", sink);
+    IO::qout("Total sink: %i", sink);
     return 0;
 }

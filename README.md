@@ -91,13 +91,13 @@ critical version is complete. Multiple critical generations may therefore
 be in development simultaneously.
 
 Minor (Mi) is always a single decimal digit (0-9). Once a minor version reaches 9, the next release increments the moderate version instead.
-
+Modern versioning places a p before patch and allows Mi to grow beyond 9.
 Unlike semantic versioning, QuarticC versions describe the scale and category of language evolution rather than API compatibility.
 
 # Development Status
 
-Current Version: x1.5.14 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
-Next Version: x1.5.14 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
+Current Version: x1.5.2 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
+Next Version: x1.5.3 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
 
@@ -112,7 +112,7 @@ Moderate
 └─ Deprecations
 
 Minor
-└─ Deprecated and fully rebuilt error handling.
+└─ Deprecated IO, moved to stdlib.
 
 Patch
 └─ N/A
@@ -127,10 +127,11 @@ Try Catch.
 Random Intrisics
 Strings.
 A lot of intrinsics.
+Standard IO.
 
 # Upcoming Deprecations:
 
-Large amounts of intrinsic functions. Assume no intrinsics that are c-backed other than conversions printing files and heap will be available.
+Large amounts of intrinsic functions. Assume no intrinsics that are c-backed other than conversions files and heap will be available.
 
 ## Feature Roadmap
 
@@ -252,10 +253,13 @@ MIT License - See [LICENSE](./LICENSE.txt) for details
 ## Manual Memory Management
 
 ```cpp
+namespace Exported {
+    #include <IO, std>
+}
 int main() {
     int* ptr = `malloc(sizeof "int");
     *ptr = 42;
-    `qout("%p", ptr);
+    IO::qout("%p", ptr);
     `free(ptr);
 }
 ```
@@ -391,12 +395,15 @@ QuarticC uses a classic multi-pass compilation pipeline:
 ## Multi Return
 
 ```cpp
+namespace Exported {
+    #include <IO, std>
+}
 int, char *GetStatus() {
     return 200, "Success";
 }
 int main() {
     int code, char *alias = GetStatus();
-    `qout("%s", f"Code: {code}, AKA: {alias}\n");
+    IO::qout("Code: %i, AKA: %s\n", code, alias);
     return 0;
 }
 ```
@@ -428,7 +435,7 @@ Or you can match and the compiler will take the right branch for you.
 
 ```cpp
     match (id) {
-        int(i) => `qout("Integer id: %i", i);;
+        int(i) => IO::qout("Integer id: %i", i);;
         default => ...
     }
 ```
@@ -891,6 +898,9 @@ C^4 has `defer`, like Go and Zig.
 C^4's concepts are like a combination of Typescript interfaces, Rust traits, and C++ concepts.
 
 ```qc
+namespace Exported {
+    #include <IO, std>
+}
 concept Printable {
     1_of {
         void print();
@@ -899,11 +909,11 @@ concept Printable {
     default {
 class:
         void print() {
-            `qout("Printing. . .");
+            IO::qout("Printing. . .");
         }
 else:
         void print(Self self) {
-            `qout ("Printing. . .");
+            IO::qout("Printing. . .");
         }
     }
 }
@@ -913,7 +923,7 @@ class PDF {
         this->data = data;
     }
     void print() {
-        `qout("%s", this->data);
+        IO::qout("%s", this->data);
     }
 }
 class ASCII {
@@ -933,7 +943,7 @@ ASCII proves Printable;
 /// Print would print the paper's data
 Paper proves Printable with_proof { // with_proof block to add additional definitions, like impl in Rust
     void print(Self self) {
-        `qout("%s", self.data);
+        IO::qout("%s", self.data);
     }
 }
 /// Would print "Printing. . ."
@@ -946,12 +956,12 @@ The `Self` arguments are explicit for non-class methods added through concepts. 
 
 ```qc
 namespace Exported {
-    #include<Vector, std>
+    #include<Vector, IO, std>
 }
 int main() {
     Vector::Vec<int> my_vec = [1, 2, 3];
     my_vec.push(123);
-    `qout("%i", my_vec[2]);
+    IO::qout("%i", my_vec[2]);
     return 0;
 }
 ```

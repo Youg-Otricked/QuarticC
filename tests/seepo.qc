@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 concept Addable {
     1_of {
         int did_i_seriously_never_test_this();
@@ -27,7 +30,7 @@ int add(int a, int b) {
 int main() {
     C c = C();
     c.add(123, 321);
-    `qout("%i\n", C::static_works(12, 23));
-    `qout("%i\n", c.did_i_seriously_never_test_this());
+    IO::qout("%i\n", C::static_works(12, 23));
+    IO::qout("%i\n", c.did_i_seriously_never_test_this());
     return add(0, 0);
 }

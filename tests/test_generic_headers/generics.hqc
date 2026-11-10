@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 #link<thing>
 #nomain
 namespace Core {
@@ -5,7 +8,7 @@ namespace Core {
         T thing;
     }
     void i_do_generic_nonsense<T>(Mine<T> thing) {
-        `qout("Body generated with in headers");
+        IO::qout("Body generated with in headers");
     }
     void non_generic();
 }

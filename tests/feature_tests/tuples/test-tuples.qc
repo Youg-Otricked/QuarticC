@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 class Coord {
     private int y;
     private int x;
@@ -22,11 +25,11 @@ int main() {
     (int, int) testAssignment = (23, 32);
     testAssignment = (0, 0);
     ((int, int), int) testNested = ((321, 123), -1);
-    `qout("%u\n", sizeof ((int, int), void*));
+    IO::qout("%u\n", sizeof ((int, int), void*));
     (int, int){ x, y } = coord;
     Coord custom = Coord(12, 21);
     (int, int){ x1, y1 } = custom;
-    `qout("Custom destructure: (%i:%i)\n", x1, y1);
+    IO::qout("Custom destructure: (%i:%i)\n", x1, y1);
     return x + y - 20;
 }
 

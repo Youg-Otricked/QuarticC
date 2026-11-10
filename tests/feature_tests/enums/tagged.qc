@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 enum Option<T> {
     Some(T);
     None;
@@ -11,13 +14,13 @@ int main() {
     Option<int> b = Option<int>.None;
     Result<int, int> success = Result<int, int>.Ok(123);
     Result<int, int> failure = Result<int, int>.Err(-1);
-    `qout("Enums as ints: do they work? %i, %i, %i, %i, %i", a, b, success, failure, a + b + success + failure);
+    IO::qout("Enums as ints: do they work? %i, %i, %i, %i, %i", a, b, success, failure, a + b + success + failure);
     match (a) {
-        Option<int>.Some(value) => `qout("Extracted value: %i\n", value);
-        Option<int>.None => `qout("Empty\n");
+        Option<int>.Some(value) => IO::qout("Extracted value: %i\n", value);
+        Option<int>.None => IO::qout("Empty\n");
     }
     match (success) {
-        default => `qout("Got a tag\n");
+        default => IO::qout("Got a tag\n");
     }
     return 0;
 }

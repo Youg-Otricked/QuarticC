@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 type Error = double | int;
 struct Err {
     int ok;
@@ -17,9 +20,9 @@ Error2 returns_errors(bool test) {
 }
 int main() {
     Error2 e = returns_errors(false);
-    `qout("Error 1: %i\n", e as int);
+    IO::qout("Error 1: %i\n", e as int);
     e = returns_errors(true);
-    `qout("Error 2: %s\n", (e as Err).msg);
+    IO::qout("Error 2: %s\n", (e as Err).msg);
     float result = returns_errors(false) catch (e) {
         float res = 0.0f;
         match (e) {
@@ -28,6 +31,6 @@ int main() {
         }
         res;
     };
-    `qout("Collected result: %f\n", result);
+    IO::qout("Collected result: %f\n", result);
     return 0;
 }

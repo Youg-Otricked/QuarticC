@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 pattern P {
     N;
     T(int, int);
@@ -30,12 +33,12 @@ int main() {
     c.y = 0;
     MS ms = {19};
     match (c) {
-        P.N => `qout("Worked");
-        default => `qout("Failed");
+        P.N => IO::qout("Worked");
+        default => IO::qout("Failed");
     }
     match (ms) {
-        P.S {x: x, y: y} => `qout("Worked");
-        default => `qout("Failed");
+        P.S {x: x, y: y} => IO::qout("Worked");
+        default => IO::qout("Failed");
     }
     return 0;
 }

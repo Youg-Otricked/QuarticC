@@ -1,4 +1,7 @@
 
+namespace Exported {
+    #include <IO, std>
+}
 struct variadic {
     void** items;
     int count;
@@ -27,5 +30,5 @@ int main() {
     xp = variadic_next(v);
     x = *xp;
     `free(v);
-    `qout("%i, %p, %b", x, xp, b);
+    IO::qout("%i, %p, %b", x, xp, b);
 }

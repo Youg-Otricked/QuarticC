@@ -1,13 +1,16 @@
+namespace Exported {
+    #include <IO, std>
+}
 int main() {
-    defer `qout("thing\n");
+    defer IO::qout("thing\n");
     int i = 0;
     {
 nested_label:
-        `qout("Nested\n");
+        IO::qout("Nested\n");
         i++;
     } 
     {
-        defer `qout("thing1\n");
+        defer IO::qout("thing1\n");
         if (i < 2) goto nested_label;
         else goto exit;
     }

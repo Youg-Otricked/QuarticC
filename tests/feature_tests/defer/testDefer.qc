@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 class Counter {
     static int order_sum = 0;
     static int side_effect_count = 0;
@@ -70,9 +73,9 @@ class TestRunner {
 int main() {
     int res = TestRunner::run_all_tests();
     if (res == 0) {
-        `qout("All defer tests passed");
+        IO::qout("All defer tests passed");
     } else {
-        `qout("%i", res);
+        IO::qout("%i", res);
     }
     return res;
 }

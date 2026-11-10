@@ -1,7 +1,10 @@
+namespace Exported {
+    #include <IO, std>
+}
 class MyClass<T> {
     MyClass(T x) {}
     void operator( )(int x) {
-        `qout("%i", x);
+        IO::qout("%i", x);
     }
     void operator( )<K>(K x) {
         return;

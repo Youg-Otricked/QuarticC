@@ -177,7 +177,6 @@ class Parser {
     Prs qif_expr();
     Prs bitwise();
     Prs qout_expr();
-    Prs qin_expr();
     Prs logical_or();
     Prs match_stmt();
     Prs switch_stmt();

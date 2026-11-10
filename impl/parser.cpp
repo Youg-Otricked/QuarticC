@@ -1727,12 +1727,6 @@ Prs Parser::atom() {
         }
     }
     if (tok.type == TokenType::LBRACKET) return this->array_literal();
-    if (current_tok.value == "qin") {
-        this->advance();
-
-        return this->qin_expr();
-    }
-
     if (tok.type == TokenType::INT || tok.type == TokenType::FLOAT || tok.type == TokenType::DOUBLE || tok.type == TokenType::ADDR_T ||
         tok.type == TokenType::BYTE || tok.type == TokenType::LONG_INT || tok.type == TokenType::SHORT_INT || tok.type == TokenType::LONG_DOUBLE ||
         tok.type == TokenType::NIBBLE) {
@@ -3042,26 +3036,6 @@ Prs Parser::text_unops() {
     AnyNode n = res.reg(this->ternary());
     if (res.error) return res.to_prs();
     return res.success(n);
-}
-Prs Parser::qin_expr() {
-    ParseResult res;
-
-    AnyNode left = QInNode{};
-
-    while (current_tok.type == TokenType::RSHIFT) {
-        Token op_tok = current_tok;
-        advance();
-
-        AnyNode right = res.reg(this->bitwise());
-        if (!std::holds_alternative<VarAccessNode*>(right)) {
-            res.failure(new InvalidSyntaxError("QC-S055: Right-hand side of >> must be a variable", op_tok.pos));
-            return res.to_prs();
-        }
-
-        left = new BinOpNode(left, op_tok, right);
-    }
-
-    return res.success(left);
 }
 Prs Parser::comparison() {
     ParseResult res;

@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 concept Serializable {
     1_of {
         char* serialize();
@@ -43,6 +46,6 @@ Z proves Serializable with_proof {
 };
 int main() {
     Z thing = Z{123};
-    `qout("%s", thing.serialize(thing));
+    IO::qout("%s", thing.serialize(thing));
     return 0;
 }

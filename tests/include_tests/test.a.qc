@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 int main() {
 }
 namespace ImImportant {
@@ -7,7 +10,7 @@ namespace ImImportant {
     }
     class C {
         C() {
-            `qout("%i", ImUnimportant::add(123, 321));
+            IO::qout("%i", ImUnimportant::add(123, 321));
         }
     }
 }

@@ -504,8 +504,11 @@ if [ "$MODE" = "build" ] || [ "$MODE" = "" ]; then
         ask "Create demo program?" y
         if [ "$ANSWER" = 'y' ]; then
             printf '
+namespace Exported {
+    #incldue<IO, std>
+}
 int main() {
-    `qout("Hello, World!\\n");
+    IO::qout("Hello, World!\\n");
     return 0;
 }
 ' | tee demo.qc

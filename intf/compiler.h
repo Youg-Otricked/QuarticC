@@ -163,11 +163,6 @@ class LLVMCompiler {
     llvm::LLVMContext& context;
     llvm::Module* module;
     llvm::IRBuilder<>* builder;
-    bool startsWithQIn(const AnyNode& node) {
-        if (auto bin = std::get_if<BinOpNode*>(&node)) { return startsWithQIn((*bin)->left_node); }
-        if (auto qin = std::get_if<QInNode>(&node)) { return true; }
-        return false;
-    }
     std::string baseTypeName(const std::string& mangled) {
         size_t angle = mangled.find('<');
         if (angle == std::string::npos) return mangled;
@@ -1257,7 +1252,7 @@ class LLVMCompiler {
             if (auto varAcc = std::get_if<VarAccessNode*>(&(*callNode)->node_to_call)) {
                 std::string funcName = (*varAcc)->var_name_tok.value;
                 if (funcName == "`is_empty" || funcName == "`to_bool") return "bool";
-                if (funcName == "`inline" || funcName == "`qout") return "void";
+                if (funcName == "`inline") return "void";
                 if (funcName == "`len") return "addr_t";
                 if (funcName == "`contains" || funcName == "`startswith" || funcName == "`endswith") return "bool";
                 if (funcName == "`to_int") return "int";

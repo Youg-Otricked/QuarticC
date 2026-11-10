@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 class Counter {
     static int count;
     static int MAX = 100;
@@ -39,9 +42,9 @@ class TestRunner {
 int main() {
     int result = TestRunner::run_all_tests();
     if (result == 0) {
-        `qout("pass");
+        IO::qout("pass");
     } else {
-        `qout("Static test %i failed", result);
+        IO::qout("Static test %i failed", result);
     }
     return result;
 }

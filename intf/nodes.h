@@ -24,7 +24,6 @@ class ForNode;
 class CallNode;
 class ContinueNode;
 class FuncDefNode;
-class QInNode;
 class ReturnNode;
 class CatchNode;
 class MultiReturnNode;
@@ -54,7 +53,7 @@ class LabelNode;
 class GotoNode;
 class FitsNode;
 class TryNode;
-using AnyNode = std::variant<std::monostate, NumberNode, StringNode, CharNode, BoolNode, QInNode, QBoolNode, RefVarDeclNode*, NullptrNode, BinOpNode*,
+using AnyNode = std::variant<std::monostate, NumberNode, StringNode, CharNode, BoolNode, QBoolNode, RefVarDeclNode*, NullptrNode, BinOpNode*,
                              UnaryOpNode*, VarAccessNode*, VarAssignNode*, AssignExprNode*, IfNode*, QIfNode*, StatementsNode*, SwitchNode*,
                              QSwitchNode*, BreakNode*, UnreachableNode*, WhileNode*, ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*,
                              CatchNode*, TryNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*,
@@ -74,12 +73,6 @@ struct GenericType {
 class Parameter;
 std::string printAny(const AnyNode& node);
 Position get_pos(AnyNode node);
-class QInNode {
-  public:
-    QInNode() {}
-
-    std::string print() const { return "std::qin"; }
-};
 class CharNode {
   public:
     Token tok;
@@ -842,7 +835,7 @@ class ParseResult;
 using Prs = std::variant<std::monostate, ParseResult, NumberNode, StringNode, CharNode, BoolNode, BinOpNode*, Error*, UnaryOpNode*, VarAccessNode*,
                          VarAssignNode*, AssignExprNode*, StatementsNode*, IfNode*, BreakNode*, UnreachableNode*, SwitchNode*, MatchNode*, WhileNode*,
                          ForNode*, ContinueNode*, CallNode*, FuncDefNode*, CatchNode*, TryNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*,
-                         ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, SpreadNode*, ForeachNode*, QBoolNode, QInNode,
+                         ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, SpreadNode*, ForeachNode*, QBoolNode,
                          QIfNode*, QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, RefVarDeclNode*,
                          NullptrNode, TypeValueNode, DeferNode*, ModifierNode*, TupleValueNode*, LabelNode, GotoNode, FitsNode>;
 class ParseResult {

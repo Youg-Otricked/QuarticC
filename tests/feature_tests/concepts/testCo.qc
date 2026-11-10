@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 concept Printable {
     all_of {
         char* to_string(Self self);
@@ -13,6 +16,6 @@ Paper proves Printable with_proof {
 };
 int main() {
     Paper p = {"Im Paper i think"};
-    `qout("%s", p.to_string());
+    IO::qout("%s", p.to_string());
     return 0;
 }

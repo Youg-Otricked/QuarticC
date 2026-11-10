@@ -1,4 +1,8 @@
 // TODO: SSO
+namespace Exported {
+    #include <IO, std>
+}
+
 struct StringView {
     char *data;
     addr_t length;
@@ -329,6 +333,6 @@ String toString<T(numeric:)>(T value) {
 int main() {
     String s = "hello, world!";
     defer s._destroy();
-    `qout("%cs", s);
+    IO::qout("s", s.c_str());
     return 0;
 }

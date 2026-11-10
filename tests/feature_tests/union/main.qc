@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 type Union1 = int | string;
 struct Big {
     Union1 un;
@@ -11,10 +14,10 @@ int main() {
     Big b = Big{un1, 1223, "hello"};
     Union2 u = b;
     match (un1) {
-        int(i) => `qout("It's an int. %i\n", i);
-        default => `qout("No\n");
+        int(i) => IO::qout("It's an int. %i\n", i);
+        default => IO::qout("No\n");
     }
-    `qout("%i %i", un1 as int, (u as Big).idx);
+    IO::qout("%i %i", un1 as int, (u as Big).idx);
     GU<double> g = 123;
     g = 0.023;
     panic "crash";

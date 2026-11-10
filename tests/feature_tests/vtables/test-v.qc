@@ -1,3 +1,6 @@
+namespace Exported {
+    #include <IO, std>
+}
 class NoVtable {
     NoVtable() {}
     void no_virtual_methods() {
@@ -35,10 +38,10 @@ class G<T> : B {
 int main() {
     B b = B();
     B *p = &b;
-    `qout("%i, %d\n", p->getNum(), p->getDoub());
+    IO::qout("%i, %d\n", p->getNum(), p->getDoub());
     *p = C();
-    `qout("%i, %d\n", p->getNum(), p->getDoub());
+    IO::qout("%i, %d\n", p->getNum(), p->getDoub());
     *p = G<int>();
-    `qout("%d\n", p->getDoub());
+    IO::qout("%d\n", p->getDoub());
     return 0;
 }

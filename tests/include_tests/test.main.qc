@@ -1,8 +1,9 @@
 namespace Exported {
     #include<ImImportant, ImUnimportant::IsImportant, ./test.a.qc>
+    #include<IO, std>
 }
 int main() {
-    `qout("%i, %i", ImImportant::x, ImImportant::add(123, 321));
+    IO::qout("%i, %i", ImImportant::x, ImImportant::add(123, 321));
     ImImportant::C im_a_thing = ImImportant::C();
-    `qout("%i", ImUnimportant::IsImportant::uh);
+    IO::qout("%i", ImUnimportant::IsImportant::uh);
 }
