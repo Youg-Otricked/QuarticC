@@ -2263,6 +2263,7 @@ class LLVMCompiler {
         llvm::Value* baseAddr = emitLValue(*prop.base);
         if (!baseAddr) {
             llvm::Value* rval = emitExpr(*prop.base);
+            if (!rval) return nullptr;
             baseAddr = createEntryAlloca("temp_lval_base", rval->getType());
             builder->CreateStore(rval, baseAddr);
         }
@@ -2668,12 +2669,29 @@ class LLVMCompiler {
         return v;
     }
     std::vector<llvm::Value*> emitAdaptedArgs(const std::list<AnyNode>& argNodes, llvm::FunctionType* fnTy,
-                                              const std::vector<std::string>& paramTypeStrings) {
+                                              const std::vector<std::string>& paramTypeStrings, const std::string& lastVarName = "") {
         std::vector<llvm::Value*> args;
         size_t i = 0;
+        bool isCVarArgs = false;
         for (auto it = argNodes.begin(); it != argNodes.end(); ++it, ++i) {
             AnyNode& argNode = const_cast<AnyNode&>(*it);
             llvm::Value* v = nullptr;
+            if (i < paramTypeStrings.size() && paramTypeStrings[i] == "..." && lastVarName == "<varadic>") isCVarArgs = true;
+            if (isCVarArgs) {
+                llvm::Value* defVal = emitExpr(argNode);
+                if (!defVal) {
+                    cg_error(get_pos(argNode), "failed to evaluate default parameter", "QC-S168");
+                    continue;
+                }
+                if (defVal->getType()->isIntegerTy() && defVal->getType()->getIntegerBitWidth() < 32) {
+                    defVal = builder->CreateSExt(defVal, builder->getInt32Ty());
+                } else if (defVal->getType()->isFloatTy()) {
+                    defVal = builder->CreateFPExt(defVal, builder->getFloatTy());
+                }
+                if (defVal->getType()->isArrayTy()) { defVal = decayArrayToPointer(defVal); }
+                args.push_back(defVal);
+                continue;
+            }
             if (i < paramTypeStrings.size() && paramTypeStrings[i].ends_with("&")) {
                 v = emitLValue(argNode);
                 if (!v) {
@@ -2691,9 +2709,8 @@ class LLVMCompiler {
                 llvm::Type* paramTy = fnTy->getParamType(i);
                 v = adaptArgumentForParam(v, argNode, paramTy, i);
                 if (!v) return {};
-            } else {
             }
-            if (v->getType()->isArrayTy() && i < fnTy->getNumParams() && fnTy->getParamType(i)->isPointerTy()) { v = decayArrayToPointer(v); }
+            if (v->getType()->isArrayTy()) { v = decayArrayToPointer(v); }
             args.push_back(v);
         }
         return args;

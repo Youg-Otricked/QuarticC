@@ -288,9 +288,12 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             if (line_end == std::string::npos) line_end = source.size();
             std::string directiveText = trim(source.substr(directive_pos + keyword_len, line_end - directive_pos - keyword_len));
             bool condition;
-            if (isIfdef) condition = definitions.count(directiveText) > 0;
-            else if (isIfndef) condition = definitions.count(directiveText) == 0;
-            else condition = evalIf(directiveText);
+            if (isIfdef)
+                condition = definitions.count(directiveText) > 0;
+            else if (isIfndef)
+                condition = definitions.count(directiveText) == 0;
+            else
+                condition = evalIf(directiveText);
             MatchResult m = findMatch(source, line_end < source.size() ? line_end + 1 : line_end);
             if (m.endif_pos == std::string::npos) { throw std::runtime_error("unterminated #if/#ifdef/#ifndef — missing #endif"); }
             size_t body_start = line_end < source.size() ? line_end + 1 : line_end;
@@ -627,10 +630,13 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             pos++;
         }
     }
+    std::unordered_set<std::string> emitted, skipped;
     std::vector<std::string> translated;
     translated.reserve(to_c_include.size());
     for (std::string& c_header : to_c_include) {
         TranslateCtx context{.header = c_header, .args = c_args};
+        context.emitted = &emitted;
+        context.skipped = &skipped;
         Translator translator(&context);
         translator.fci = fci;
         int result = translator.translate_header();
@@ -640,11 +646,8 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         }
         translated.push_back(std::move(translator.result_file));
     }
-    size_t total_size = result2.size();
-    for (const auto& s : translated) total_size += s.size();
     std::string output;
-    output.reserve(total_size);
-    for (auto it = translated.rbegin(); it != translated.rend(); ++it) output += *it;
+    for (const auto& s : translated) output += s;
     output += result2;
     if (!to_c_include.empty()) {
         first_pass = false;

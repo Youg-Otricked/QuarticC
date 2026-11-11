@@ -9,24 +9,29 @@ struct TranslateCtx {
     std::string header;
     std::vector<std::string> args;
     std::vector<Error*> errors;
+    std::unordered_set<std::string>* emitted = nullptr;
+    std::unordered_set<std::string>* skipped = nullptr;
 };
 class Translator {
   public:
+    std::unordered_map<std::string, std::string> macro_values;
     explicit Translator(TranslateCtx* ctx) : ctx(ctx) {}
+    bool speculative = false;
+    bool poisoned = false;
     int translate_header();
     std::string result_file;
     int indent_level = 0;
     bool fci = false;
     bool inside_loop_header = false;
+    bool mark_decl_emitted(const std::string& n) { return ctx->emitted->insert(n).second; }
+
   private:
     TranslateCtx* ctx;
     static CXChildVisitResult visit_trampoline(CXCursor c, CXCursor parent, CXClientData data);
     CXChildVisitResult visit(CXCursor c, bool indent_braces = true);
     CXChildVisitResult visit_expr(CXCursor c);
     void append_indentation() {
-        for (int i = 0; !inside_loop_header && i < indent_level; ++i) {
-            result_file += "    ";
-        }
+        for (int i = 0; !inside_loop_header && i < indent_level; ++i) { result_file += "    "; }
     }
     void onCall(CXCursor c);
     void onCast(CXCursor c);

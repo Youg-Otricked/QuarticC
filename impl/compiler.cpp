@@ -1658,6 +1658,10 @@ llvm::FunctionType* LLVMCompiler::llvmFuncTypeForHelper(const std::vector<Token>
                 } else {
                     paramTypes.push_back(llvmTypeFor(resolveTypeName(toType, false)));
                 }
+                if (!paramTypes.back()) {
+                    cg_error(p.type.pos, "invalid type", "QC-FUN0");
+                    return nullptr;
+                }
                 if (module->getDataLayout().getTypeAllocSize(paramTypes.back()) > 16) {
                     warn("large-by-value", p.type.pos, "large type " + toType + " passed by value", "QC-W019");
                 }
@@ -2794,7 +2798,11 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             llvm::AllocaInst* structAlloc = createEntryAlloca(name, structTy);
             llvm::Value* zeroVal = llvm::ConstantAggregateZero::get(structTy);
             if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
-            builder->CreateStore(zeroVal, structAlloc, isVolatile);
+            if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(structAlloc)) {
+                gv->setInitializer(llvm::cast<llvm::Constant>(zeroVal));
+            } else {
+                builder->CreateStore(zeroVal, structAlloc, isVolatile);
+            }
             locals[fullName] = structAlloc;
             varTypes[fullName] = qcType;
             volatileVars[fullName] = isVolatile;
@@ -2838,7 +2846,11 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             if (config.debug_symbols) insertDebugVar(structAlloc, debugVar, location);
 
             llvm::Value* zeroVal = llvm::ConstantAggregateZero::get(structTy);
-            builder->CreateStore(zeroVal, structAlloc, isVolatile);
+            if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(structAlloc)) {
+                gv->setInitializer(llvm::cast<llvm::Constant>(zeroVal));
+            } else {
+                builder->CreateStore(zeroVal, structAlloc, isVolatile);
+            }
             locals[fullName] = structAlloc;
             varTypes[fullName] = qcType;
             volatileVars[fullName] = isVolatile;
@@ -3183,7 +3195,16 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
     llvm::Type* destTy = getPointeeType(fullName);
     llvm::Value* rhs = emitExpr((*va)->value_node);
     if (!rhs) {
-        cg_error((*va)->var_name_tok.pos, "failed to compile initializer for '" + name + "'", "QC-S147");
+        if (destTy->isAggregateType() && destTy->isSized()) {
+            llvm::Constant* zeroInit = llvm::ConstantAggregateZero::get(destTy);
+            if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(alloc)) {
+                gv->setInitializer(zeroInit);
+            } else {
+                builder->CreateStore(zeroInit, alloc);
+            }
+        } else {
+            cg_error((*va)->var_name_tok.pos, "failed to compile initializer for '" + name + "'", "QC-S147");
+        }
         return nullptr;
     }
 
@@ -3566,10 +3587,6 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
                     } else if (srcTy->isIntegerTy() && destTy->isIntegerTy()) {
                         unsigned srcBits = srcTy->getIntegerBitWidth();
                         unsigned destBits = destTy->getIntegerBitWidth();
-                        if ((srcBits == 1 || srcBits == 2) && (destBits != srcBits)) {
-                            cg_error((*asn)->op_tok.pos, "cannot convert bool/qbool to other integer types", "QC-T038");
-                            return nullptr;
-                        }
                         if (srcBits < destBits) {
                             warn("implicit-extend", get_pos(*asn), "implicit extension in assignment", "QC-W012");
                             rhsVal = builder->CreateSExt(rhsVal, destTy, "sext");
@@ -3708,10 +3725,6 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
             } else if (srcTy->isIntegerTy() && destTy->isIntegerTy()) {
                 unsigned srcBits = srcTy->getIntegerBitWidth();
                 unsigned destBits = destTy->getIntegerBitWidth();
-                if ((srcBits == 1 || srcBits == 2) && (destBits != srcBits)) {
-                    cg_error((*asn)->op_tok.pos, "cannot convert bool/qbool to other integer types", "QC-T038");
-                    return nullptr;
-                }
 
                 if (srcBits < destBits) {
                     warn("implicit-extend", get_pos(*asn), "implicit extension in assignment", "QC-W012");
@@ -3769,10 +3782,6 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
             } else if (srcTy->isIntegerTy() && destTy->isIntegerTy()) {
                 unsigned srcBits = srcTy->getIntegerBitWidth();
                 unsigned destBits = destTy->getIntegerBitWidth();
-                if ((srcBits == 1 || srcBits == 2) && (destBits != srcBits)) {
-                    cg_error((*asn)->op_tok.pos, "cannot convert bool/qbool to other integer types", "QC-T038");
-                    return nullptr;
-                }
 
                 if (srcBits < destBits) {
                     warn("implicit-extend", get_pos(*asn), "implicit extension in assignment", "QC-W012");
@@ -5619,7 +5628,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
             lastVarName = p.name.value;
         }
     }
-    std::vector<llvm::Value*> args = emitAdaptedArgs(call.arg_nodes, fnTy, paramTypeStrings);
+    std::vector<llvm::Value*> args = emitAdaptedArgs(call.arg_nodes, fnTy, paramTypeStrings, lastVarName);
     if (call.arg_nodes.size() < args.size()) {
         cg_error(get_pos(&call),
                  "too few arguments to function: got " + std::to_string(call.arg_nodes.size()) + ", expected " + std::to_string(args.size()),
@@ -5675,7 +5684,8 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
 
         for (auto& param : fnDef->params) {
             if (paramIdx >= args.size()) {
-                if (param.default_value.has_value()) {
+                if (param.name.value == "<varadic>") {
+                } else if (param.default_value.has_value()) {
                     AnyNode& defaultRef = const_cast<AnyNode&>(param.default_value.value());
                     llvm::Value* defVal = adaptArgumentForParam(emitExpr(defaultRef), defaultRef, fnTy->getParamType(paramIdx), paramIdx);
                     if (!defVal) {
@@ -5692,6 +5702,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
         }
     }
     llvm::Type* retTy = fnTy->getReturnType();
+    if (!fnTy) return nullptr;
     auto* callInst = builder->CreateCall(fnTy, calleeVal, args, retTy->isVoidTy() ? "" : "calltmp");
     return retTy->isVoidTy() ? nullptr : callInst;
 }
@@ -6595,6 +6606,7 @@ llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {
         return currentTarget;
     }
     llvm::FunctionType* fTy = llvmFuncTypeFor(fn.return_types, fn.params);
+    if (!fTy) return nullptr;
     llvm::GlobalValue::LinkageTypes linkage = llvm::Function::ExternalLinkage;
     auto* func = module->getFunction(name);
     functionSignatures[name] = {fTy, {}};

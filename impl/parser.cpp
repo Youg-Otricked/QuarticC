@@ -1756,6 +1756,7 @@ Prs Parser::atom() {
         this->advance();
         return res.success(NullptrNode(tok.pos));
     } else if (tok.type == TokenType::IDENTIFIER) {
+        size_t old_index = this->index;
         std::string name = tok.value;
         Position pos = tok.pos;
         this->advance();
@@ -1833,10 +1834,7 @@ Prs Parser::atom() {
                         if (depth > 128) {
                             res.failure(
                                 new InvalidSyntaxError("QC-G002: Generic nesting exceeds maximum depth of 128.\n\nNote: While expanding:\n    " +
-                                                           name.substr(0, 120) + "..." +
-                                                           "\n\nNote: We opened the box and there was another box. And another. Please stop. The "
-                                                           "compiler is not a Matryoshka doll. It has feelings too.",
-                                                       pos));
+                                                           name.substr(0, 120) + "...", pos));
                             return res.to_prs();
                         }
                     } else if (this->current_tok.type == TokenType::MORE) {
@@ -1917,10 +1915,7 @@ Prs Parser::atom() {
                     depth++;
                     if (depth > 128) {
                         res.failure(new InvalidSyntaxError("QC-G002: Generic nesting exceeds maximum depth of 128.\n\nNote: While expanding:\n    " +
-                                                               name.substr(0, 120) + "..." +
-                                                               "\n\nNote: We opened the box and there was another box. And another. Please stop. The "
-                                                               "compiler is not a Matryoshka doll. It has feelings too.",
-                                                           pos));
+                                                           name.substr(0, 120) + "...", pos));
                         return res.to_prs();
                     }
                 } else if (this->current_tok.type == TokenType::MORE) {
@@ -2613,6 +2608,9 @@ Prs Parser::atom() {
             if (res.error) return res.to_prs();
         }
         if (is_known_type(name) && std::holds_alternative<VarAccessNode*>(base)) {
+            this->index = old_index;
+            this->current_tok = this->tokens[this->index];
+            name = this->parseTypeString();
             AnyNode node = TypeValueNode(Token(TokenType::KEYWORD, name, tok.pos));
             return res.success(modifiers.empty() ? node : new ModifierNode(modifiers, node));
         }

@@ -627,41 +627,51 @@ void Translator::onCompound(CXCursor c, bool indent = true) {
     result_file += "}\n";
 }
 void Translator::onFunction(CXCursor c) {
-    append_indentation();
     CXString nameStr = clang_getCursorSpelling(c);
     const char* name = clang_getCString(nameStr);
+    std::string fname = name ? name : "";
+    clang_disposeString(nameStr);
+    if (!mark_decl_emitted("fn:" + fname)) return;
     CXType fn_type = clang_getCursorType(c);
     CXType ret_type = clang_getResultType(fn_type);
-    result_file += translateType(ret_type) + " " + (name ? name : "") + "(";
+    speculative = true;
+    poisoned = false;
+    std::string sig = translateType(ret_type) + " " + fname + "(";
     int n = clang_Cursor_getNumArguments(c);
     for (int i = 0; i < n; ++i) {
         CXCursor arg = clang_Cursor_getArgument(c, i);
         CXString argNameStr = clang_getCursorSpelling(arg);
         const char* argName = clang_getCString(argNameStr);
+        std::string argNameCopy = (argName && *argName) ? argName : "arg" + std::to_string(i);
+        clang_disposeString(argNameStr);
         CXType argTy = clang_getArgType(fn_type, i);
         if (argTy.kind == CXType_Invalid) argTy = clang_getCursorType(arg);
-        result_file += translateType(argTy);
-        result_file += " ";
-        if (argName && *argName)
-            result_file += argName;
-        else
-            result_file += "arg" + std::to_string(i);
-        if (i + 1 < n) result_file += ", ";
-        clang_disposeString(argNameStr);
+        sig += translateType(argTy);
+        sig += " " + argNameCopy;
+        if (i + 1 < n) sig += ", ";
     }
-    if (clang_isFunctionTypeVariadic(fn_type) && std::string(name ? name : "") != "main") {
-        if (n > 0) result_file += ", ";
-        result_file += "...";
+    if (clang_isFunctionTypeVariadic(fn_type) && fname != "main") {
+        if (n > 0) sig += ", ";
+        sig += "...";
     }
-    result_file += ")";
-    if (clang_isCursorDefinition(c)) {
+    sig += ")";
+    speculative = false;
+    bool is_def = clang_isCursorDefinition(c);
+    if (poisoned) {
+        poisoned = false;
+        if (is_def) { error("function '" + fname + "' uses an unsupported type"); }
+        (*ctx->skipped).insert(fname);
+        return;
+    }
+    append_indentation();
+    result_file += sig;
+    if (is_def) {
         result_file += " ";
         clang_visitChildren(c, visit_trampoline, this);
     } else {
         result_file += ";\n";
         append_indentation();
     }
-    clang_disposeString(nameStr);
 }
 
 void Translator::onRecord(CXCursor c, const std::string& name_override) {
@@ -671,9 +681,11 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
     bool is_union = kind == CXCursor_UnionDecl;
     std::string name = name_override;
     if (name.empty()) name = isAnon(c) ? anonName(c) : str(clang_getCursorSpelling(c));
+    if (!mark_decl_emitted("struct:" + name)) return;
     if (!mark_type_emitted(name)) return;
     CXType type = clang_getCursorType(c);
     long long size = clang_Type_getSizeOf(type);
+    long long align = clang_Type_getAlignOf(type);
     if (clang_Cursor_isNull(def) && !clang_isCursorDefinition(c)) {
         result_file += "struct " + name + ";\n";
         append_indentation();
@@ -691,38 +703,66 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
         else if (bt.kind == CXType_Enum)
             onEnum(d, anonName(d));
     }
-    result_file += is_union ? "union " : "struct ";
-    result_file += name + " {\n";
-    indent_level++;
     struct Context {
         Translator* self;
-        std::string* output;
+        std::vector<std::string>* lines;
+        bool is_union;
         int anon_fields = 0;
+        int pad_count = 0;
+        long long cursor = 0;
+        bool skipped_bits = false;
     };
-    Context ctx{this, &result_file};
+    std::vector<std::string> lines;
+    Context ctx{this, &lines, is_union};
+    bool prevSpec = speculative, prevPoison = poisoned;
+    speculative = true;
+    poisoned = false;
     clang_visitChildren(
         c,
         [](CXCursor child, CXCursor, CXClientData data) {
             if (clang_getCursorKind(child) != CXCursor_FieldDecl) return CXChildVisit_Continue;
             auto* ctx = static_cast<Context*>(data);
+            if (clang_Cursor_isBitField(child)) {
+                ctx->skipped_bits = true;
+                return CXChildVisit_Continue;
+            }
+            CXType field_type = clang_getCursorType(child);
+            long long off = clang_Cursor_getOffsetOfField(child);
+            if (!ctx->is_union && ctx->skipped_bits && off > ctx->cursor) {
+                ctx->lines->push_back("char[" + std::to_string((off - ctx->cursor) / 8) + "] __pad_" + std::to_string(ctx->pad_count++) + ";");
+            }
+            ctx->skipped_bits = false;
             CXString field_spelling = clang_getCursorSpelling(child);
             const char* field_name = clang_getCString(field_spelling);
-            CXType field_type = clang_getCursorType(child);
-            ctx->self->append_indentation();
-            *ctx->output += ctx->self->translateType(field_type);
-            *ctx->output += " ";
             std::string fname = field_name ? field_name : "";
-            if (fname.empty()) fname = "__anonymous_field_" + std::to_string(ctx->anon_fields++);
-            *ctx->output += fname;
-            if (clang_Cursor_isBitField(child)) {
-                int width = clang_getFieldDeclBitWidth(child);
-                *ctx->output += " : " + std::to_string(width);
-            }
-            *ctx->output += ";\n";
             clang_disposeString(field_spelling);
+            if (fname.empty()) fname = "__anonymous_field_" + std::to_string(ctx->anon_fields++);
+            ctx->lines->push_back(ctx->self->translateType(field_type) + " " + fname + ";");
+            long long fsz = clang_Type_getSizeOf(field_type);
+            if (!ctx->is_union && off >= 0 && fsz >= 0) ctx->cursor = off + fsz * 8;
             return CXChildVisit_Continue;
         },
         &ctx);
+    if (!is_union && ctx.skipped_bits && size * 8 > ctx.cursor) {
+        lines.push_back("char[" + std::to_string((size * 8 - ctx.cursor) / 8) + "] __pad_" + std::to_string(ctx.pad_count++) + ";");
+    }
+    bool bad = poisoned;
+    speculative = prevSpec;
+    poisoned = prevPoison;
+    if ((bad || lines.empty()) && size > 0) {
+        lines.clear();
+        if (align == 8 && size % 8 == 0)
+            lines.push_back("long int[" + std::to_string(size / 8) + "] __opaque;");
+        else
+            lines.push_back("char[" + std::to_string(size) + "] __opaque;");
+    }
+    result_file += is_union ? "union " : "struct ";
+    result_file += name + " {\n";
+    indent_level++;
+    for (const std::string& l : lines) {
+        append_indentation();
+        result_file += l + "\n";
+    }
     indent_level--;
     append_indentation();
     result_file += "};\n";
@@ -734,6 +774,7 @@ void Translator::onEnum(CXCursor c, const std::string& name_override) {
     if (name.empty()) name = isAnon(c) ? anonName(c) : str(clang_getCursorSpelling(c));
     clang_disposeString(spelling);
     CXType underlying = clang_getEnumDeclIntegerType(c);
+    if (!mark_decl_emitted("enum:" + name)) return;
     if (!mark_type_emitted(name)) return;
     result_file += "enum " + name + " {\n";
     clang_visitChildren(
@@ -755,34 +796,60 @@ void Translator::onEnum(CXCursor c, const std::string& name_override) {
 }
 void Translator::onTypedef(CXCursor c) {
     CXString name_str = clang_getCursorSpelling(c);
-    std::string name = clang_getCString(name_str);
+    const char* cn = clang_getCString(name_str);
+    std::string name = cn ? cn : "";
     clang_disposeString(name_str);
+    const std::string key = "td:" + name;
+    if ((*ctx->emitted).count(key)) return;
     CXType underlying = clang_getTypedefDeclUnderlyingType(c);
     CXCursor underlyingDecl = clang_getTypeDeclaration(underlying);
-    CXString underlyingNameStr = clang_getCursorSpelling(underlyingDecl);
-    std::string underlyingName = clang_getCString(underlyingNameStr);
-    clang_disposeString(underlyingNameStr);
-    if (name == underlyingName) { return; }
+    CXString un = clang_getCursorSpelling(underlyingDecl);
+    const char* ucn = clang_getCString(un);
+    std::string underlyingName = ucn ? ucn : "";
+    clang_disposeString(un);
+    if (name == underlyingName) return;
     switch (underlying.kind) {
-    case CXType_Enum: {
+    case CXType_Enum:
+        (*ctx->emitted).insert(key);
         onEnum(underlyingDecl, name);
         return;
-    }
-    case CXType_Record: {
+    case CXType_Record:
+        (*ctx->emitted).insert(key);
         if (!underlyingName.empty()) {
+            onRecord(underlyingDecl);
             result_file += "type " + name + " = " + underlyingName + ";\n";
         } else {
             onRecord(underlyingDecl, name);
         }
         return;
+    default: {
+        bool prevSpec = speculative, prevPoison = poisoned;
+        speculative = true;
+        poisoned = false;
+        std::string ty = translateType(underlying);
+        bool bad = poisoned;
+        speculative = prevSpec;
+        poisoned = prevPoison;
+        if (bad) {
+            (*ctx->skipped).insert(name);
+            return;
+        }
+        if (!(*ctx->emitted).insert(key).second) return;
+        result_file += "type " + name + " = " + ty + ";\n";
+        return;
     }
-    default: result_file += "type " + name + " = " + translateType(underlying) + ";\n"; return;
     }
 }
 void Translator::onVar(CXCursor c) {
     append_indentation();
     CXType type = clang_getCursorType(c);
     CXString name = clang_getCursorSpelling(c);
+    if (!mark_decl_emitted(std::string("var:") + clang_getCString(name))) {
+        clang_disposeString(name);
+        return;
+    }
+    bool is_extern = clang_Cursor_getStorageClass(c) == CX_SC_Extern && !clang_isCursorDefinition(c);
+    if (is_extern) result_file += "foreign:\n";
     result_file += translateType(type) + " " + clang_getCString(name);
     CXCursor init = clang_Cursor_getVarDeclInitializer(c);
     if (!clang_Cursor_isNull(init)) {
@@ -790,39 +857,82 @@ void Translator::onVar(CXCursor c) {
         visit_expr(init);
     }
     result_file += ";\n";
+    if (is_extern) result_file += ":foreign\n";
     clang_disposeString(name);
 }
 
 void Translator::onMacro(CXCursor c) {
+    std::string name = str(clang_getCursorSpelling(c));
+    if (macro_values.count(name)) return;
     if (clang_Cursor_isMacroFunctionLike(c)) return;
     CXTranslationUnit tu = clang_Cursor_getTranslationUnit(c);
-    CXSourceRange range = clang_getCursorExtent(c);
     CXToken* tokens = nullptr;
-    unsigned numTokens = 0;
-    clang_tokenize(tu, range, &tokens, &numTokens);
-    if (numTokens != 2) {
-        clang_disposeTokens(tu, tokens, numTokens);
-        return;
+    unsigned n = 0;
+    clang_tokenize(tu, clang_getCursorExtent(c), &tokens, &n);
+    std::vector<std::string> t;
+    std::vector<CXTokenKind> k;
+    for (unsigned i = 1; i < n; ++i) {
+        t.push_back(str(clang_getTokenSpelling(tu, tokens[i])));
+        k.push_back(clang_getTokenKind(tokens[i]));
     }
-    CXTokenKind valueKind = clang_getTokenKind(tokens[1]);
-    CXString valueStr = clang_getTokenSpelling(tu, tokens[1]);
-    const char* valueText = clang_getCString(valueStr);
-    bool isSimpleConstant = (valueKind == CXToken_Literal);
-    if (valueKind == CXToken_Identifier && valueText) {
-        std::string s(valueText);
-        if (s == "NULL" || s == "nullptr" || s == "true" || s == "false") {
-            if (s == "NULL") valueText = "nullptr";
-            isSimpleConstant = true;
+    clang_disposeTokens(tu, tokens, n);
+    if (t.empty()) return;
+    auto outerParens = [&]() {
+        if (t.size() < 2 || t.front() != "(" || t.back() != ")") return false;
+        int d = 0;
+        for (size_t i = 0; i < t.size(); ++i) {
+            if (t[i] == "(")
+                d++;
+            else if (t[i] == ")" && --d == 0 && i + 1 < t.size())
+                return false;
+        }
+        return true;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        if (outerParens()) {
+            t.erase(t.begin());
+            k.erase(k.begin());
+            t.pop_back();
+            k.pop_back();
+            changed = true;
+        } else if (t.size() >= 4 && t[0] == "(" && t[2] == ")" && k[1] == CXToken_Identifier) {
+            t.erase(t.begin(), t.begin() + 3);
+            k.erase(k.begin(), k.begin() + 3);
+            changed = true;
         }
     }
-    if (isSimpleConstant && valueText) {
-        CXString nameStr = clang_getCursorSpelling(c);
-        const char* name = clang_getCString(nameStr);
-        result_file += std::string("#define ") + (name ? name : "") + " " + valueText + "\n";
-        clang_disposeString(nameStr);
+    std::string value;
+    if (t.size() == 1 && k[0] == CXToken_Literal)
+        value = t[0];
+    else if (t.size() == 2 && t[0] == "-" && k[1] == CXToken_Literal)
+        value = "-" + t[1];
+    else if (t.size() == 1 && k[0] == CXToken_Identifier) {
+        if (t[0] == "NULL" || t[0] == "nullptr")
+            value = "nullptr";
+        else if (t[0] == "true" || t[0] == "false")
+            value = t[0];
+        else if (auto it = macro_values.find(t[0]); it != macro_values.end())
+            value = it->second;
     }
-    clang_disposeString(valueStr);
-    clang_disposeTokens(tu, tokens, numTokens);
+    if (value.empty()) {
+        size_t i = 0;
+        std::string prefix;
+        if (!t.empty() && (t[0] == "*" || t[0] == "&")) {
+            prefix = t[0];
+            i = 1;
+        }
+        if (i < t.size() && k[i] == CXToken_Identifier && t[i] != name) {
+            const std::string& id = t[i];
+            bool call = (t.size() == i + 3 && t[i + 1] == "(" && t[i + 2] == ")");
+            bool bare = (t.size() == i + 1);
+            bool ok = (call && prefix != "&") || (bare && !prefix.empty());
+            if (ok && !macro_values.count(id)) value = "(" + prefix + id + (call ? "()" : "") + ")";
+        }
+    }
+    if (value.empty()) return;
+    macro_values[name] = value;
+    result_file += "#define " + name + " " + value + "\n";
 }
 std::string Translator::translateType(CXType t) {
     switch (t.kind) {
@@ -845,22 +955,9 @@ std::string Translator::translateType(CXType t) {
     case CXType_LongDouble: return "long double";
     case CXType_Pointer: {
         CXType pointee = clang_getPointeeType(t);
+        CXType canon = clang_getCanonicalType(pointee);
+        if (canon.kind == CXType_FunctionProto || canon.kind == CXType_FunctionNoProto) return translateType(canon);
         std::string base = translateType(pointee);
-        if (pointee.kind == CXType_FunctionProto || pointee.kind == CXType_FunctionNoProto) {
-            std::string out = "fn(";
-            int n = clang_getNumArgTypes(pointee);
-            for (int i = 0; i < n; ++i) {
-                if (i) out += ", ";
-                out += translateType(clang_getArgType(pointee, i));
-            }
-            if (clang_isFunctionTypeVariadic(pointee)) {
-                if (n) out += ", ";
-                out += "...";
-            }
-            CXType result = clang_getResultType(pointee);
-
-            return out + ") -> " + translateType(result);
-        }
         if (clang_isConstQualifiedType(pointee)) return "const " + base + "*";
         return base + "*";
     }
@@ -874,9 +971,8 @@ std::string Translator::translateType(CXType t) {
         return translateType(elem) + "[]";
     }
     case CXType_FunctionProto: {
-        CXType result = clang_getResultType(t);
         int n = clang_getNumArgTypes(t);
-        std::string out = translateType(result) + "(";
+        std::string out = "fn(";
         for (int i = 0; i < n; ++i) {
             if (i) out += ", ";
             out += translateType(clang_getArgType(t, i));
@@ -885,14 +981,12 @@ std::string Translator::translateType(CXType t) {
             if (n) out += ", ";
             out += "...";
         }
-        return out + ")";
+        return out + ") -> " + translateType(clang_getResultType(t));
     }
-    case CXType_FunctionNoProto: {
-        CXType result = clang_getResultType(t);
-        return translateType(result) + "(?)";
-    }
+    case CXType_FunctionNoProto: return "fn() -> " + translateType(clang_getResultType(t));
     case CXType_Record: {
         CXCursor decl = clang_getTypeDeclaration(t);
+        onRecord(decl);
         if (isAnon(decl)) return anonName(decl);
         return str(clang_getCursorSpelling(decl));
     }
@@ -903,9 +997,18 @@ std::string Translator::translateType(CXType t) {
     }
     case CXType_Typedef: {
         CXCursor decl = clang_getTypeDeclaration(t);
-        CXString name = clang_getCursorSpelling(decl);
-        std::string result = clang_getCString(name) ? clang_getCString(name) : "";
-        clang_disposeString(name);
+        CXString nameStr = clang_getCursorSpelling(decl);
+        const char* cname = clang_getCString(nameStr);
+        std::string result = cname ? cname : "";
+        clang_disposeString(nameStr);
+        onTypedef(decl);
+        if ((*ctx->skipped).count(result)) {
+            if (speculative) {
+                poisoned = true;
+                return "unknown";
+            }
+            error("type '" + result + "' uses an unsupported type");
+        }
         return result;
     }
     case CXType_Elaborated: {
@@ -917,7 +1020,15 @@ std::string Translator::translateType(CXType t) {
         CXType value = clang_Type_getValueType(t);
         return "atomic " + translateType(value);
     }
-    default: error("unsupported type: " + str(clang_getTypeKindSpelling(t.kind))); // you don't need i128
+    default: {
+        CXType canon = clang_getCanonicalType(t);
+        if (canon.kind != t.kind) return translateType(canon);
+        if (speculative) {
+            poisoned = true;
+            return "unknown";
+        }
+        error("unsupported type: " + str(clang_getTypeKindSpelling(t.kind)) + " (" + str(clang_getTypeSpelling(t)) + ")");
+    }
     }
     return "unknown";
 }

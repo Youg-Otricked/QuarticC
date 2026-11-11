@@ -38,8 +38,8 @@ class Parser {
             .contains(name.value);
     }
     bool is_primitive_type(std::string& name) {
-        return std::unordered_set<std::string>({"void", "int", "double", "float", "byte", "nibble", "addr_t", "char", "bool", "qbool",
-                                                "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
+        return std::unordered_set<std::string>(
+                   {"void", "int", "double", "float", "byte", "nibble", "addr_t", "char", "bool", "qbool", "ai64u_t", "ai64_t", "i32u_t", "i16u_t"})
                    .contains(name) ||
                (name.starts_with("(") && name.ends_with(")"));
     }
@@ -76,9 +76,10 @@ class Parser {
         std::string base = base_type_name(name);
         if (base.ends_with("&")) { base.pop_back(); }
         while (base.ends_with("*")) base.pop_back();
-        while (base.ends_with("[]")) {
-            name.pop_back();
-            base.pop_back();
+        while (base.ends_with("]")) {
+            size_t open = base.rfind('[');
+            if (open == std::string::npos) break;
+            base.erase(open);
         }
         if (user_types.count(base)) return base;
         for (GenericType ty : current_generics) {
@@ -119,6 +120,7 @@ class Parser {
         return Token(TokenType::IDENTIFIER, qualified, start_pos);
     }
     UserTypeInfo* find_type(std::string name) {
+        if (name.ends_with("]") || name.ends_with("&") || name.ends_with("*")) return nullptr;
         if (is_known_type(base_type_name(name))) {
             for (GenericType ty : current_generics) {
                 if (ty.name == base_type_name(get_known_type(name))) { return nullptr; }
