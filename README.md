@@ -90,8 +90,7 @@ Development toward future critical versions may begin before the current
 critical version is complete. Multiple critical generations may therefore
 be in development simultaneously.
 
-Minor (Mi) is always a single decimal digit (0-9). Once a minor version reaches 9, the next release increments the moderate version instead.
-Modern versioning places a p before patch and allows Mi to grow beyond 9.
+Modern versioning places a p before patch and allows Mi to grow beyond 9. Versions below x1.5.2 have digit one past the second . be Mi and the rest be patch.
 Unlike semantic versioning, QuarticC versions describe the scale and category of language evolution rather than API compatibility.
 
 # Development Status
@@ -959,6 +958,31 @@ File proves Printable;
 
 The `Self` arguments are explicit for non-class methods added through concepts. This is to emphasize _structs are not classes, and should stick to being POD_. Concepts only allow methods on structs because it's better for DRY than having 50 functions with similar names.
 
+# Patterns
+
+Patterns allow you to extend pattern matching with custom behavior for your types, such as:
+
+```qc
+pattern Process {
+    Idle;
+    Running(int time);
+    Stopped(int code);
+}
+class Proc {
+    string command;
+    int run_time;
+    int exit_code;
+    ...
+}
+Proc fits Process(p) {
+    Idle if (p->run_time == 0 && p->exit_code == -1);
+    Running(p->run_time) if (p->exit_code == -1);
+    Stopped(p->exit_code) if (p->exit_code >= 0);
+}
+```
+
+Now match on Proc checks that fits statement to determine the branch.
+
 ## Simple File Example
 
 ```qc
@@ -1055,11 +1079,10 @@ Src can be found in the bench<...> files in the project root.
 |           | C^4 (`qc`) | 2,156.53 KB     | 2.11 MB       | 90.6            |
 |           | _Delta_    | _-44.6% memory_ | —             | _-39.9% faults_ |
 | `-O2`     | Clang C++  | 3,898.58 KB     | 3.81 MB       | 150.8           |
-|           | C^4 (`qc`) |
+|           | C^4 (`qc`) |                 |               |                 |
 
 ## Known Limitations
 
-&& and || do not short-circuit on unions.
 Volatile does not exist on structs or class fields, and does not work on property accesses. In general, volatile is not 100%.
 
 ## Standard Library Namespaces:
@@ -1076,6 +1099,7 @@ OSInterop
 Unordered
 String
 Owned
+IO
 ```
 
 Made by [Luca Fazio](https://github.com/Youg-Otricked)
