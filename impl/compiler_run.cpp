@@ -156,7 +156,6 @@ int main(int argc, char* argv[]) {
         The 4th Evolution of C
         More Powerful Than Explosives
         0.5 is todays 1.0 (deprecations still happen).
-        Maybe #stable is 2.0
         github.com/Youg-Otricked/QuarticC
         )" << RESET << std::endl;
             return 0;

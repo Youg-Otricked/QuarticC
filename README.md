@@ -80,7 +80,7 @@ Critical versions represent the largest generational milestones in QuarticC's de
 
 v = Interpreter
 x = Compiler (Current)
-f = Feature-complete compiler
+f = Feature-complete (equivelent to 1.0 in semver) 
 s = Self-hosted compiler
 
 Critical versions are intentionally rare and denote architectural milestones,
@@ -96,7 +96,6 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 # Development Status
 
 Current Version: x1.5.2p1 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
-Next Version: x1.5.3 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
 
