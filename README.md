@@ -80,7 +80,7 @@ Critical versions represent the largest generational milestones in QuarticC's de
 
 v = Interpreter
 x = Compiler (Current)
-f = Feature-complete compiler
+f = Feature-complete (equivelent to 1.0 in semver)
 s = Self-hosted compiler
 
 Critical versions are intentionally rare and denote architectural milestones,
@@ -96,7 +96,6 @@ Unlike semantic versioning, QuarticC versions describe the scale and category of
 # Development Status
 
 Current Version: x1.5.2p1 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
-Next Version: x1.5.3 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
 
@@ -150,10 +149,9 @@ Large amounts of intrinsic functions. Assume no intrinsics that are c-backed oth
 |                     | Union Types (TypeScript-style)                                | Done    |
 |                     | Advanced OOP & Operator Overloading                           | Done    |
 |                     | Manual Memory Management                                      | Done    |
-| **System**          | F-Strings (Python-style interpolation)                        | Done    |
-|                     | Random Number Generation                                      | Done    |
 |                     | Stdlib Part 1 & 2                                             | Done    |
-| **Future**          | Stdlib Part 3                                                 | Planned |
+|                     | Stdlib Part 3                                                 | Done    |
+|                     | Stdlib Part 4                                                 | Planned |
 |                     | Inline ASM                                                    | Done    |
 |                     | Generics                                                      | Done    |
 |                     | Classes                                                       | Done    |
@@ -165,7 +163,7 @@ Large amounts of intrinsic functions. Assume no intrinsics that are c-backed oth
 |                     | Extern                                                        | Done    |
 |                     | Bitwise Logic                                                 | Done    |
 |                     | Really fancy operator overloads                               | Done    |
-|                     | Try/Catch and `throw`                                         | Done    |
+|                     | Try/Catch                                                     | Done    |
 |                     | Error message quality and helpfulness upgrade                 | Done    |
 
 See the full list of remaining features in the [roadmap](https://github.com/Youg-Otricked/QuarticC/blob/master/notes/roadmap.md).
