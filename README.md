@@ -196,7 +196,7 @@ feat::partial Partiallly finished, similar to todo, but active work/50% done. Fi
 remove        Delete a feature. More narrow clean
 rev           Revision on previous commit/todo/partial, not done yet
 oops          Forgot to add to previous commit
-change        An actual change, not a improvment or a new feature. e.g. changing a syntax
+change        An actual change, not a improvment or a new feature. e.g. changing a syntax. Can have an additional too, such as change(x, y)
 ```
 
 For example:
