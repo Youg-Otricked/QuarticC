@@ -1729,7 +1729,8 @@ Prs Parser::atom() {
     if (tok.type == TokenType::LBRACKET) return this->array_literal();
     if (tok.type == TokenType::INT || tok.type == TokenType::FLOAT || tok.type == TokenType::DOUBLE || tok.type == TokenType::ADDR_T ||
         tok.type == TokenType::BYTE || tok.type == TokenType::LONG_INT || tok.type == TokenType::SHORT_INT || tok.type == TokenType::LONG_DOUBLE ||
-        tok.type == TokenType::NIBBLE) {
+        tok.type == TokenType::NIBBLE || tok.type == TokenType::I32U_T || tok.type == TokenType::I16U_T || tok.type == TokenType::AI64U_T ||
+        tok.type == TokenType::AI64_T) {
         this->advance();
         return res.success(NumberNode(tok));
     } else if (tok.type == TokenType::STRING) {
@@ -1806,10 +1807,12 @@ Prs Parser::atom() {
                             break;
                         }
                     }
-                    if (!(std::unordered_set<TokenType>(
-                              {TokenType::COMMA, TokenType::KEYWORD, TokenType::IDENTIFIER, TokenType::STRING, TokenType::INT, TokenType::DOUBLE,
-                               TokenType::FLOAT, TokenType::CHAR, TokenType::ADDR_T, TokenType::BOOL, TokenType::QBOOL, TokenType::LONG_INT,
-                               TokenType::SHORT_INT, TokenType::LONG_DOUBLE, TokenType::LESS, TokenType::MORE, TokenType::BYTE, TokenType::NIBBLE})
+                    if (!(std::unordered_set<TokenType>({TokenType::COMMA,     TokenType::KEYWORD,     TokenType::IDENTIFIER, TokenType::STRING,
+                                                         TokenType::INT,       TokenType::DOUBLE,      TokenType::FLOAT,      TokenType::CHAR,
+                                                         TokenType::ADDR_T,    TokenType::BOOL,        TokenType::QBOOL,      TokenType::LONG_INT,
+                                                         TokenType::SHORT_INT, TokenType::LONG_DOUBLE, TokenType::LESS,       TokenType::MORE,
+                                                         TokenType::BYTE,      TokenType::NIBBLE,      TokenType::AI64U_T,    TokenType::AI64_T,
+                                                         TokenType::I32U_T,    TokenType::I16U_T})
                               .contains(this->current_tok.type))) {
                         this->index = oldId;
                         name = oldName;
@@ -1834,7 +1837,8 @@ Prs Parser::atom() {
                         if (depth > 128) {
                             res.failure(
                                 new InvalidSyntaxError("QC-G002: Generic nesting exceeds maximum depth of 128.\n\nNote: While expanding:\n    " +
-                                                           name.substr(0, 120) + "...", pos));
+                                                           name.substr(0, 120) + "...",
+                                                       pos));
                             return res.to_prs();
                         }
                     } else if (this->current_tok.type == TokenType::MORE) {
@@ -1890,10 +1894,12 @@ Prs Parser::atom() {
                         break;
                     }
                 }
-                if (!(std::unordered_set<TokenType>({TokenType::COMMA, TokenType::KEYWORD, TokenType::IDENTIFIER, TokenType::STRING, TokenType::INT,
-                                                     TokenType::DOUBLE, TokenType::FLOAT, TokenType::CHAR, TokenType::ADDR_T, TokenType::BOOL,
-                                                     TokenType::QBOOL, TokenType::LONG_INT, TokenType::SHORT_INT, TokenType::LONG_DOUBLE,
-                                                     TokenType::LESS, TokenType::MORE, TokenType::BYTE, TokenType::NIBBLE})
+                if (!(std::unordered_set<TokenType>({TokenType::COMMA,     TokenType::KEYWORD,     TokenType::IDENTIFIER, TokenType::STRING,
+                                                     TokenType::INT,       TokenType::DOUBLE,      TokenType::FLOAT,      TokenType::CHAR,
+                                                     TokenType::ADDR_T,    TokenType::BOOL,        TokenType::QBOOL,      TokenType::LONG_INT,
+                                                     TokenType::SHORT_INT, TokenType::LONG_DOUBLE, TokenType::LESS,       TokenType::MORE,
+                                                     TokenType::BYTE,      TokenType::NIBBLE,      TokenType::AI64U_T,    TokenType::AI64_T,
+                                                     TokenType::I32U_T,    TokenType::I16U_T})
                           .contains(this->current_tok.type))) {
                     this->index = oldId;
                     name = oldName;
@@ -1915,7 +1921,8 @@ Prs Parser::atom() {
                     depth++;
                     if (depth > 128) {
                         res.failure(new InvalidSyntaxError("QC-G002: Generic nesting exceeds maximum depth of 128.\n\nNote: While expanding:\n    " +
-                                                           name.substr(0, 120) + "...", pos));
+                                                               name.substr(0, 120) + "...",
+                                                           pos));
                         return res.to_prs();
                     }
                 } else if (this->current_tok.type == TokenType::MORE) {
@@ -2061,11 +2068,12 @@ Prs Parser::atom() {
                                 break;
                             }
                         }
-                        if (!(std::unordered_set<TokenType>({TokenType::COMMA, TokenType::KEYWORD, TokenType::IDENTIFIER, TokenType::STRING,
-                                                             TokenType::INT, TokenType::DOUBLE, TokenType::FLOAT, TokenType::CHAR, TokenType::ADDR_T,
-                                                             TokenType::BOOL, TokenType::QBOOL, TokenType::LONG_INT, TokenType::SHORT_INT,
-                                                             TokenType::LONG_DOUBLE, TokenType::LESS, TokenType::MORE, TokenType::BYTE,
-                                                             TokenType::NIBBLE})
+                        if (!(std::unordered_set<TokenType>({TokenType::COMMA,     TokenType::KEYWORD,     TokenType::IDENTIFIER, TokenType::STRING,
+                                                             TokenType::INT,       TokenType::DOUBLE,      TokenType::FLOAT,      TokenType::CHAR,
+                                                             TokenType::ADDR_T,    TokenType::BOOL,        TokenType::QBOOL,      TokenType::LONG_INT,
+                                                             TokenType::SHORT_INT, TokenType::LONG_DOUBLE, TokenType::LESS,       TokenType::MORE,
+                                                             TokenType::BYTE,      TokenType::NIBBLE,      TokenType::AI64U_T,    TokenType::AI64_T,
+                                                             TokenType::I32U_T,    TokenType::I16U_T})
                                   .contains(this->current_tok.type))) {
                             this->index = oldId;
                             property_name.value = oldName;
@@ -2088,9 +2096,7 @@ Prs Parser::atom() {
                             if (depth > 128) {
                                 res.failure(
                                     new InvalidSyntaxError("QC-G002: Generic nesting exceeds maximum depth of 128.\n\nNote: While expanding:\n    " +
-                                                               property_name.value.substr(0, 120) + "..." +
-                                                               "\n\nNote: We opened the box and there was another box. And another. Please stop. The "
-                                                               "compiler is not a Matryoshka doll. It has feelings too.",
+                                                               property_name.value.substr(0, 120) + "...",
                                                            this->current_tok.pos));
                                 return res.to_prs();
                             }
@@ -2195,11 +2201,12 @@ Prs Parser::atom() {
                                 break;
                             }
                         }
-                        if (!(std::unordered_set<TokenType>({TokenType::COMMA, TokenType::KEYWORD, TokenType::IDENTIFIER, TokenType::STRING,
-                                                             TokenType::INT, TokenType::DOUBLE, TokenType::FLOAT, TokenType::CHAR, TokenType::ADDR_T,
-                                                             TokenType::BOOL, TokenType::QBOOL, TokenType::LONG_INT, TokenType::SHORT_INT,
-                                                             TokenType::LONG_DOUBLE, TokenType::LESS, TokenType::MORE, TokenType::BYTE,
-                                                             TokenType::NIBBLE})
+                        if (!(std::unordered_set<TokenType>({TokenType::COMMA,     TokenType::KEYWORD,     TokenType::IDENTIFIER, TokenType::STRING,
+                                                             TokenType::INT,       TokenType::DOUBLE,      TokenType::FLOAT,      TokenType::CHAR,
+                                                             TokenType::ADDR_T,    TokenType::BOOL,        TokenType::QBOOL,      TokenType::LONG_INT,
+                                                             TokenType::SHORT_INT, TokenType::LONG_DOUBLE, TokenType::LESS,       TokenType::MORE,
+                                                             TokenType::BYTE,      TokenType::NIBBLE,      TokenType::AI64U_T,    TokenType::AI64_T,
+                                                             TokenType::I32U_T,    TokenType::I16U_T})
                                   .contains(this->current_tok.type))) {
                             this->index = oldId;
                             property_name.value = oldName;
@@ -2362,11 +2369,12 @@ Prs Parser::atom() {
                                     break;
                                 }
                             }
-                            if (!(std::unordered_set<TokenType>({TokenType::COMMA, TokenType::KEYWORD, TokenType::IDENTIFIER, TokenType::STRING,
-                                                                 TokenType::INT, TokenType::DOUBLE, TokenType::FLOAT, TokenType::CHAR,
-                                                                 TokenType::ADDR_T, TokenType::BOOL, TokenType::QBOOL, TokenType::LONG_INT,
-                                                                 TokenType::SHORT_INT, TokenType::LONG_DOUBLE, TokenType::LESS, TokenType::MORE,
-                                                                 TokenType::BYTE, TokenType::NIBBLE})
+                            if (!(std::unordered_set<TokenType>(
+                                      {TokenType::COMMA,  TokenType::KEYWORD,  TokenType::IDENTIFIER, TokenType::STRING,      TokenType::INT,
+                                       TokenType::DOUBLE, TokenType::FLOAT,    TokenType::CHAR,       TokenType::ADDR_T,      TokenType::BOOL,
+                                       TokenType::QBOOL,  TokenType::LONG_INT, TokenType::SHORT_INT,  TokenType::LONG_DOUBLE, TokenType::LESS,
+                                       TokenType::MORE,   TokenType::BYTE,     TokenType::NIBBLE,     TokenType::AI64U_T,     TokenType::AI64_T,
+                                       TokenType::I32U_T, TokenType::I16U_T})
                                       .contains(this->current_tok.type))) {
                                 this->index = oldId;
                                 property_name.value = oldName;
@@ -2389,9 +2397,7 @@ Prs Parser::atom() {
                                 if (depth > 128) {
                                     res.failure(new InvalidSyntaxError(
                                         "QC-G002: Generic nesting exceeds maximum depth of 128.\n\nNote: While expanding:\n    " +
-                                            property_name.value.substr(0, 120) + "..." +
-                                            "\n\nNote: We opened the box and there was another box. And another. Please stop. The "
-                                            "compiler is not a Matryoshka doll. It has feelings too.",
+                                            property_name.value.substr(0, 120) + "...",
                                         this->current_tok.pos));
                                     return res.to_prs();
                                 }
@@ -2496,11 +2502,12 @@ Prs Parser::atom() {
                                     break;
                                 }
                             }
-                            if (!(std::unordered_set<TokenType>({TokenType::COMMA, TokenType::KEYWORD, TokenType::IDENTIFIER, TokenType::STRING,
-                                                                 TokenType::INT, TokenType::DOUBLE, TokenType::FLOAT, TokenType::CHAR,
-                                                                 TokenType::ADDR_T, TokenType::BOOL, TokenType::QBOOL, TokenType::LONG_INT,
-                                                                 TokenType::SHORT_INT, TokenType::LONG_DOUBLE, TokenType::LESS, TokenType::MORE,
-                                                                 TokenType::BYTE, TokenType::NIBBLE})
+                            if (!(std::unordered_set<TokenType>(
+                                      {TokenType::COMMA,  TokenType::KEYWORD,  TokenType::IDENTIFIER, TokenType::STRING,      TokenType::INT,
+                                       TokenType::DOUBLE, TokenType::FLOAT,    TokenType::CHAR,       TokenType::ADDR_T,      TokenType::BOOL,
+                                       TokenType::QBOOL,  TokenType::LONG_INT, TokenType::SHORT_INT,  TokenType::LONG_DOUBLE, TokenType::LESS,
+                                       TokenType::MORE,   TokenType::BYTE,     TokenType::NIBBLE,     TokenType::AI64U_T,     TokenType::AI64_T,
+                                       TokenType::I32U_T, TokenType::I16U_T})
                                       .contains(this->current_tok.type))) {
                                 this->index = oldId;
                                 property_name.value = oldName;
@@ -2674,9 +2681,34 @@ Prs Parser::atom() {
                     return res2.success(new ArrayLiteralNode(elements, start_pos, ty->tok.value));
                 }
             }
-            while (this->current_tok.type == TokenType::DOT) {
+            while (this->current_tok.type == TokenType::ARROW || this->current_tok.type == TokenType::DOT ||
+                   this->current_tok.type == TokenType::LBRACKET || this->current_tok.type == TokenType::LPAREN) {
+                if (this->current_tok.type == TokenType::LPAREN) {
+                    base = res.reg(this->call(base));
+                    if (res.error) return res.to_prs();
+                    continue;
+                }
+                if (this->current_tok.type == TokenType::LBRACKET) {
+                    std::vector<AnyNode> indices;
+                    while (this->current_tok.type == TokenType::LBRACKET) {
+                        this->advance();
+                        AnyNode index = res.reg(this->text_unops());
+                        if (res.error) return res.to_prs();
+                        if (this->current_tok.type != TokenType::RBRACKET) {
+                            res.failure(new InvalidSyntaxError("QC-S049: Expected ']'", this->current_tok.pos));
+                            return res.to_prs();
+                        }
+                        this->advance();
+                        indices.push_back(index);
+                    }
+                    base = new ArrayAccessNode(base, indices);
+                    continue;
+                }
+                if (this->current_tok.type == TokenType::ARROW) {
+                    Token arrow = this->current_tok;
+                    base = new UnaryOpNode(Token(TokenType::MUL, "*", arrow.pos), base);
+                }
                 this->advance();
-
                 if (this->current_tok.type != TokenType::IDENTIFIER && this->current_tok.type != TokenType::INT) {
                     res.failure(new InvalidSyntaxError("QC-S053: Expected property or method name after '.'", this->current_tok.pos));
                     return res.to_prs();
@@ -2715,11 +2747,12 @@ Prs Parser::atom() {
                                 break;
                             }
                         }
-                        if (!(std::unordered_set<TokenType>({TokenType::COMMA, TokenType::KEYWORD, TokenType::IDENTIFIER, TokenType::STRING,
-                                                             TokenType::INT, TokenType::DOUBLE, TokenType::FLOAT, TokenType::CHAR, TokenType::ADDR_T,
-                                                             TokenType::BOOL, TokenType::QBOOL, TokenType::LONG_INT, TokenType::SHORT_INT,
-                                                             TokenType::LONG_DOUBLE, TokenType::LESS, TokenType::MORE, TokenType::BYTE,
-                                                             TokenType::NIBBLE})
+                        if (!(std::unordered_set<TokenType>({TokenType::COMMA,     TokenType::KEYWORD,     TokenType::IDENTIFIER, TokenType::STRING,
+                                                             TokenType::INT,       TokenType::DOUBLE,      TokenType::FLOAT,      TokenType::CHAR,
+                                                             TokenType::ADDR_T,    TokenType::BOOL,        TokenType::QBOOL,      TokenType::LONG_INT,
+                                                             TokenType::SHORT_INT, TokenType::LONG_DOUBLE, TokenType::LESS,       TokenType::MORE,
+                                                             TokenType::BYTE,      TokenType::NIBBLE,      TokenType::AI64U_T,    TokenType::AI64_T,
+                                                             TokenType::I32U_T,    TokenType::I16U_T})
                                   .contains(this->current_tok.type))) {
                             this->index = oldId;
                             property_name.value = oldName;
@@ -2816,60 +2849,17 @@ Prs Parser::atom() {
                     base = new PropertyAccessNode(base, base_name_tok, property_name);
                 }
             }
-
+            if (this->current_tok.type == TokenType::INCREMENT || this->current_tok.type == TokenType::DECREMENT) {
+                Token op = this->current_tok;
+                this->advance();
+                AnyNode value_node = new UnaryOpNode(op, base, true);
+                return res.success(value_node);
+            }
             return res.success(modifiers.empty() ? base : new ModifierNode(modifiers, base));
         } else {
             res.failure(new InvalidSyntaxError("QC-S050: Expected ')'", this->current_tok.pos));
             return res.to_prs();
         }
-    } else if (tok.type == TokenType::FSTRING) {
-        this->advance();
-
-        std::vector<std::string> parts;
-        std::vector<std::string> exprs;
-        std::string current = "";
-        bool in_expr = false;
-
-        for (char c : tok.value) {
-            if (c == '\x01') {
-                if (in_expr)
-                    exprs.push_back(current);
-                else
-                    parts.push_back(current);
-                current = "";
-                in_expr = !in_expr;
-            } else {
-                current += c;
-            }
-        }
-
-        if (!current.empty()) {
-            if (in_expr)
-                exprs.push_back(current);
-            else
-                parts.push_back(current);
-        }
-
-        if (parts.empty()) parts.push_back("");
-
-        AnyNode result = StringNode(Token(TokenType::STRING, parts[0], tok.pos));
-
-        for (size_t i = 0; i < exprs.size(); ++i) {
-            Lexer expr_lexer(exprs[i], "<fstring>");
-            auto expr_tokens = expr_lexer.make_tokens();
-            Parser expr_parser(expr_tokens.Tkns);
-            AnyNode expr_node = res.reg(expr_parser.logical_or());
-            if (res.error) return res.to_prs();
-
-            result = new BinOpNode(result, Token(TokenType::PLUS, "+", tok.pos), expr_node, true);
-
-            if (i + 1 < parts.size()) {
-                result = new BinOpNode(result, Token(TokenType::PLUS, "+", tok.pos), StringNode(Token(TokenType::STRING, parts[i + 1], tok.pos)),
-                                       true);
-            }
-        }
-
-        return res.success(result);
     } else if (tok.type == TokenType::KEYWORD && tok.value == "fn") {
         this->advance();
 
@@ -2944,11 +2934,11 @@ Prs Parser::factor() {
     ParseResult res;
     Token tok = this->current_tok;
 
-    if (tok.type == TokenType::PLUS || tok.type == TokenType::MINUS || tok.type == TokenType::BITWISE_NOT || tok.type == TokenType::NOT ||
-        tok.type == TokenType::QNOT || tok.type == TokenType::AMPERSAND || tok.type == TokenType::MUL) {
+    if (tok.type == TokenType::MINUS || tok.type == TokenType::BITWISE_NOT || tok.type == TokenType::NOT || tok.type == TokenType::QNOT ||
+        tok.type == TokenType::AMPERSAND || tok.type == TokenType::MUL) {
 
         this->advance();
-        AnyNode factor_node = res.reg(this->text_unops());
+        AnyNode factor_node = res.reg(this->factor());
         if (res.error) return res.to_prs();
         return res.success(new UnaryOpNode(tok, factor_node));
     }
@@ -4597,7 +4587,8 @@ Prs Parser::statement() {
             return tt == TokenType::STRING || tt == TokenType::IDENTIFIER || tt == TokenType::KEYWORD || tt == TokenType::INT ||
                    tt == TokenType::NIBBLE || tt == TokenType::FLOAT || tt == TokenType::DOUBLE || tt == TokenType::ADDR_T || tt == TokenType::BOOL ||
                    tt == TokenType::QBOOL || tt == TokenType::CHAR || tt == TokenType::LONG_INT || tt == TokenType::SHORT_INT ||
-                   tt == TokenType::LONG_DOUBLE || tt == TokenType::BYTE || tt == TokenType::LPAREN;
+                   tt == TokenType::LONG_DOUBLE || tt == TokenType::BYTE || tt == TokenType::LPAREN || tt == TokenType::AI64U_T ||
+                   tt == TokenType::AI64_T || tt == TokenType::I32U_T || tt == TokenType::I16U_T;
         };
 
         if (!is_type_or_literal_token(this->current_tok.type)) {
@@ -5056,8 +5047,20 @@ Prs Parser::statement() {
             this->advance();
         }
         Position type_pos = this->current_tok.pos;
-        std::string type_str = parseTypeString();
-        if (type_str.empty()) return res.to_prs();
+        std::string type_str;
+        if (this->current_tok.type != TokenType::LPAREN || looks_like_tuple_type()) {
+            type_str = parseTypeString();
+            if (type_str.empty()) return res.to_prs();
+        } else {
+            AnyNode node = res.reg(this->assignment_expr());
+            if (res.error) return res.to_prs();
+            if (this->current_tok.type != TokenType::SEMICOLON) {
+                res.failure(new MissingSemicolonError(this->current_tok.pos));
+                return res.to_prs();
+            }
+            this->advance();
+            return res.success(modifiers.empty() ? node : new ModifierNode(modifiers, node));
+        }
         Token type_tok(TokenType::KEYWORD, type_str, type_pos);
         if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "fits") {
             FitsNode result = {};

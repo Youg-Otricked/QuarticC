@@ -22,7 +22,6 @@ class Lexer {
     Ler make_tokens();
     Token make_identifier();
     Token make_number();
-    Token make_fstring();
     Token make_raw_string();
 };
 #endif

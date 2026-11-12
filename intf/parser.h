@@ -198,6 +198,52 @@ class Parser {
     Parameter parse_parameter(bool type_only);
     bool in_extern = false;
     bool in_foreign = false;
+    bool looks_like_tuple_type() {
+        if (this->current_tok.type != TokenType::LPAREN) return false;
+        size_t i = this->index;
+        int depth = 0;
+        bool first_tok = false;
+        for (; i < tokens.size(); i++) {
+            TokenType t = tokens[i].type;
+            if (first_tok) {
+                if (t != TokenType::IDENTIFIER && t != TokenType::KEYWORD && t != TokenType::LPAREN) return false;
+                first_tok = false;
+            }
+            if (t == TokenType::LPAREN) {
+                depth++;
+                first_tok = true;
+            } else if (t == TokenType::COMMA) {
+                first_tok = true;
+            } else if (t == TokenType::RPAREN) {
+                if (--depth == 0) break;
+            } else if (t == TokenType::EOFT) {
+                return false;
+            }
+        }
+        if (i >= tokens.size()) return false;
+        i++;
+        while (i < tokens.size()) {
+            TokenType t = tokens[i].type;
+            if (t == TokenType::AMPERSAND || t == TokenType::MUL) {
+                i++;
+                continue;
+            }
+            if (t == TokenType::LBRACKET) {
+                size_t j = i + 1;
+                if (j < tokens.size() && tokens[j].type == TokenType::INT) j++;
+                if (j < tokens.size() && tokens[j].type == TokenType::RBRACKET) {
+                    i = j + 1;
+                    continue;
+                }
+                return false;
+            }
+            break;
+        }
+        if (i >= tokens.size()) return false;
+        const Token& n = tokens[i];
+        return n.type == TokenType::IDENTIFIER || (n.type == TokenType::KEYWORD && (n.value == "fits" || n.value == "proves")) ||
+               n.type == TokenType::LBRACE;
+    }
     std::string parseNoGenericString() {
         std::string type = "";
         if (this->current_tok.type == TokenType::LPAREN) {

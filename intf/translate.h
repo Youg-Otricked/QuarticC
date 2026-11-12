@@ -45,6 +45,7 @@ class Translator {
     void onDeclRef(CXCursor c);
     void onMemberRef(CXCursor c);
     void onDecl(CXCursor c);
+    void onAnonEnum(CXCursor c);
     void onCompound(CXCursor c, bool indent);
     void onFunction(CXCursor c);
     void onRecord(CXCursor c, const std::string& name_override = "");

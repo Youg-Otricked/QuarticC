@@ -3195,15 +3195,21 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
     llvm::Type* destTy = getPointeeType(fullName);
     llvm::Value* rhs = emitExpr((*va)->value_node);
     if (!rhs) {
-        if (destTy->isAggregateType() && destTy->isSized()) {
-            llvm::Constant* zeroInit = llvm::ConstantAggregateZero::get(destTy);
+        if (destTy->isSized()) {
             if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(alloc)) {
-                gv->setInitializer(zeroInit);
+                gv->setInitializer(llvm::Constant::getNullValue(destTy));
             } else {
-                builder->CreateStore(zeroInit, alloc);
+                const llvm::DataLayout& dl = module->getDataLayout();
+                uint64_t sizeInBytes = dl.getTypeAllocSize(destTy);
+                if (destTy->isAggregateType() && sizeInBytes > 64) {
+                    llvm::Align align = dl.getABITypeAlign(destTy);
+                    if (auto* allocaInst = llvm::dyn_cast<llvm::AllocaInst>(alloc)) { align = allocaInst->getAlign(); }
+                    builder->CreateMemSetInline(alloc, align, builder->getInt8(0), builder->getInt64(sizeInBytes));
+                } else {
+                    llvm::Constant* zeroInit = llvm::Constant::getNullValue(destTy);
+                    builder->CreateStore(zeroInit, alloc);
+                }
             }
-        } else {
-            cg_error((*va)->var_name_tok.pos, "failed to compile initializer for '" + name + "'", "QC-S147");
         }
         return nullptr;
     }
@@ -3446,27 +3452,42 @@ llvm::Value* LLVMCompiler::emitAssignExpr(AssignExprNode* const* asn) {
     }
     if (ArrayLiteralNode* destructure = safe_get<ArrayLiteralNode>((*asn)->target)) {
         if (destructure->type.starts_with("(") && destructure->type.ends_with(")")) {
-            llvm::Value* tup = emitExpr((*asn)->value);
-            if (!tup) return nullptr;
+            llvm::Type* tupleType = llvmTypeFor(getExpressionType((*asn)->value));
             llvm::StructType* st;
-            if (st = llvm::dyn_cast<llvm::StructType>(tup->getType()); !st || !st->isLiteral()) {
-                if (findMethodOverload(st->getName().str(), "operator{}", {}) != nullptr) {
-                    tup = emitVirtualOrDirectCall(st->getName().str(), "operator{}", tup, {});
-                    if (st = llvm::dyn_cast<llvm::StructType>(tup->getType()); !st || !st->isLiteral()) {
+            llvm::Value* tup = nullptr;
+            if (tupleType) {
+                if (st = llvm::dyn_cast<llvm::StructType>(tupleType); !st || !st->isLiteral()) {
+                    if (findMethodOverload(st->getName().str(), "operator{}", {}) != nullptr) {
+                        llvm::Value* thisPtr = makeThisPtr((*asn)->value);
+                        if (!thisPtr) {
+                            cg_error(get_pos(*asn), "Failed to emit base of operator{}", "QC-S252");
+                            return nullptr;
+                        }
+                        tup = emitVirtualOrDirectCall(st->getName().str(), "operator{}", thisPtr, {});
+                        if (st = llvm::dyn_cast<llvm::StructType>(tup->getType()); !st || !st->isLiteral()) {
+                            cg_error(get_pos(destructure), "can only destructure tuples.", "QC-TPL2");
+                            return nullptr;
+                        }
+                    } else if (module->getFunction((st->getName().str() + "_operator{}")) != nullptr) {
+                        llvm::Value* thisPtr = makeThisPtr((*asn)->value);
+                        if (!thisPtr) {
+                            cg_error(get_pos(*asn), "Failed to emit base of operator{}", "QC-S252");
+                            return nullptr;
+                        }
+                        tup = emitMethodCall(module->getFunction((st->getName().str() + "_operator{}")), thisPtr, {}, "operator{}");
+                        if (st = llvm::dyn_cast<llvm::StructType>(tup->getType()); !st || !st->isLiteral()) {
+                            cg_error(get_pos(destructure), "can only destructure tuples.", "QC-TPL2");
+                            return nullptr;
+                        }
+                    } else {
                         cg_error(get_pos(destructure), "can only destructure tuples.", "QC-TPL2");
                         return nullptr;
                     }
-                } else if (module->getFunction((st->getName().str() + "_operator{}")) != nullptr) {
-                    tup = emitMethodCall(module->getFunction((st->getName().str() + "_operator{}")), tup, {}, "operator{}");
-                    if (st = llvm::dyn_cast<llvm::StructType>(tup->getType()); !st || !st->isLiteral()) {
-                        cg_error(get_pos(destructure), "can only destructure tuples.", "QC-TPL2");
-                        return nullptr;
-                    }
-                } else {
-                    cg_error(get_pos(destructure), "can only destructure tuples.", "QC-TPL2");
-                    return nullptr;
                 }
+            } else {
+                tup = emitExpr((*asn)->value);
             }
+            if (!tup) return nullptr;
             if (st->getNumElements() != destructure->elements.size()) {
                 cg_error(get_pos(*asn), "destructure element count must equal number of elements in tuple.", "QC-TPL3");
                 cg_note(get_pos(*asn),
@@ -4392,6 +4413,10 @@ llvm::Value* LLVMCompiler::emitArrLit(ArrayLiteralNode* const* arrLit, std::stri
     for (auto* v : allElements) {
         if (auto* constVal = llvm::dyn_cast<llvm::Constant>(v)) {
             constElems.push_back(constVal);
+            if (v->getType() != elemTy) {
+                cg_error(get_pos(*arrLit), "all elements in array must be of same type", "QC-S166");
+                return nullptr;
+            }
         } else {
             allConst = false;
             break;
@@ -6326,6 +6351,25 @@ llvm::Value* LLVMCompiler::emitExpr(const AnyNode& node) {
             intptr_t v = std::stoi(text);
             return builder->getInt16(static_cast<int16_t>(v));
         }
+        case TokenType::I16U_T: {
+            uint64_t v = std::stoull(text, nullptr, 0);
+            return builder->getInt16(static_cast<uint16_t>(v));
+        }
+        case TokenType::I32U_T: {
+            uint64_t v = std::stoull(text, nullptr, 0);
+            return builder->getInt32(static_cast<uint32_t>(v));
+        }
+        case TokenType::AI64_T: {
+            int64_t v;
+            try {
+                v = std::stoll(text, nullptr, 0);
+            } catch (const std::out_of_range&) { v = static_cast<int64_t>(std::stoull(text, nullptr, 0)); }
+            return builder->getInt64(static_cast<uint64_t>(v));
+        }
+        case TokenType::AI64U_T: {
+            uint64_t v = std::stoull(text, nullptr, 0);
+            return builder->getInt64(v);
+        }
         case TokenType::ADDR_T: {
             llvm::APInt value(getPtrSize(), text, 10);
             return llvm::ConstantInt::get(builder->getContext(), value);
@@ -6497,13 +6541,18 @@ llvm::Value* LLVMCompiler::getCollectionLength(llvm::Value* collVal, AnyNode& co
 llvm::AllocaInst* LLVMCompiler::createEntryAlloca(const std::string& name, llvm::Type* ty) {
     if (!currentFunction) {
         llvm::Constant* initVal = llvm::Constant::getNullValue(ty);
-
         llvm::GlobalVariable* gv = new llvm::GlobalVariable(*module, ty, false, llvm::GlobalValue::WeakODRLinkage, initVal, name);
         return reinterpret_cast<llvm::AllocaInst*>(gv);
     }
     llvm::IRBuilder<> tmp(&currentFunction->getEntryBlock(), currentFunction->getEntryBlock().begin());
     llvm::AllocaInst* alloc = tmp.CreateAlloca(ty, nullptr, name);
-    builder->CreateMemSetInline(alloc, llvm::MaybeAlign(), builder->getInt8(0), builder->getInt64(module->getDataLayout().getTypeAllocSize(ty)));
+    const llvm::DataLayout& dl = module->getDataLayout();
+    uint64_t sizeInBytes = dl.getTypeAllocSize(ty);
+    if (ty->isAggregateType() && sizeInBytes > 64) {
+        builder->CreateMemSetInline(alloc, alloc->getAlign(), builder->getInt8(0), builder->getInt64(sizeInBytes));
+    } else {
+        builder->CreateStore(llvm::Constant::getNullValue(ty), alloc);
+    }
     return alloc;
 }
 llvm::Function* LLVMCompiler::emitFuncDef(FuncDefNode& fn) {

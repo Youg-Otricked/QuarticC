@@ -1638,9 +1638,17 @@ class LLVMCompiler {
                 return Token(TokenType::LONG_INT, std::to_string(val), start_pos);
             } else if (current_char == 'i') {
                 advance();
+                if (current_char == 'u') {
+                    advance();
+                    return Token(TokenType::I32U_T, std::to_string(val), start_pos);
+                }
                 return Token(TokenType::INT, std::to_string(val), start_pos);
             } else if (current_char == 's') {
                 advance();
+                if (current_char == 'u') {
+                    advance();
+                    return Token(TokenType::I16U_T, std::to_string(val), start_pos);
+                }
                 return Token(TokenType::SHORT_INT, std::to_string(val), start_pos);
             } else if (current_char == 'y') {
                 advance();
@@ -1648,6 +1656,16 @@ class LLVMCompiler {
             } else if (current_char == 'n') {
                 advance();
                 return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
+            }
+            if (current_char == 'a') {
+                advance();
+                if (current_char == 's') {
+                    advance();
+                    return Token(TokenType::AI64_T, std::to_string(val), start_pos);
+                } else if (current_char == 'u') {
+                    advance();
+                    return Token(TokenType::AI64U_T, std::to_string(val), start_pos);
+                }
             }
             if (current_char == 'u') {
                 advance();
@@ -1667,9 +1685,17 @@ class LLVMCompiler {
                 return Token(TokenType::LONG_INT, std::to_string(val), start_pos);
             } else if (current_char == 'i') {
                 advance();
+                if (current_char == 'u') {
+                    advance();
+                    return Token(TokenType::I32U_T, std::to_string(val), start_pos);
+                }
                 return Token(TokenType::INT, std::to_string(val), start_pos);
             } else if (current_char == 's') {
                 advance();
+                if (current_char == 'u') {
+                    advance();
+                    return Token(TokenType::I16U_T, std::to_string(val), start_pos);
+                }
                 return Token(TokenType::SHORT_INT, std::to_string(val), start_pos);
             } else if (current_char == 'y') {
                 advance();
@@ -1677,6 +1703,16 @@ class LLVMCompiler {
             } else if (current_char == 'n') {
                 advance();
                 return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
+            }
+            if (current_char == 'a') {
+                advance();
+                if (current_char == 's') {
+                    advance();
+                    return Token(TokenType::AI64_T, std::to_string(val), start_pos);
+                } else if (current_char == 'u') {
+                    advance();
+                    return Token(TokenType::AI64U_T, std::to_string(val), start_pos);
+                }
             }
             if (current_char == 'u') {
                 advance();
@@ -1696,9 +1732,17 @@ class LLVMCompiler {
                 return Token(TokenType::LONG_INT, std::to_string(val), start_pos);
             } else if (current_char == 'i') {
                 advance();
+                if (current_char == 'u') {
+                    advance();
+                    return Token(TokenType::I32U_T, std::to_string(val), start_pos);
+                }
                 return Token(TokenType::INT, std::to_string(val), start_pos);
             } else if (current_char == 's') {
                 advance();
+                if (current_char == 'u') {
+                    advance();
+                    return Token(TokenType::I16U_T, std::to_string(val), start_pos);
+                }
                 return Token(TokenType::SHORT_INT, std::to_string(val), start_pos);
             } else if (current_char == 'y') {
                 advance();
@@ -1707,6 +1751,16 @@ class LLVMCompiler {
                 advance();
                 return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
             }
+            if (current_char == 'a') {
+                advance();
+                if (current_char == 's') {
+                    advance();
+                    return Token(TokenType::AI64_T, std::to_string(val), start_pos);
+                } else if (current_char == 'u') {
+                    advance();
+                    return Token(TokenType::AI64U_T, std::to_string(val), start_pos);
+                }
+            }
             if (current_char == 'u') {
                 advance();
                 if (current_char == 'l') advance();
@@ -1714,7 +1768,7 @@ class LLVMCompiler {
             }
             return Token(TokenType::ADDR_T, std::to_string(val), start_pos);
         } else {
-            while (current_char != '\0' && isCharInSet(current_char, "1234567890flsaynu'")) {
+            while (current_char != '\0' && isCharInSet(current_char, "1234567890flsaynui'")) {
                 if (current_char == 'l') {
                     is_long = true;
                     advance();
@@ -1722,10 +1776,21 @@ class LLVMCompiler {
                 } else if (current_char == 's') {
                     is_short = true;
                     advance();
+                    if (current_char == 'u') {
+                        advance();
+                        is_nibble = true;
+                    }
                     break;
                 } else if (current_char == 'a' || current_char == 'u') {
                     is_addrt = true;
                     advance();
+                    if (current_char == 's') {
+                        advance();
+                        is_long = true;
+                    } else if (current_char == 'u') {
+                        advance();
+                        is_nibble = true;
+                    }
                     if (current_char == 'l') advance();
                     if (current_char == 'l') advance();
                     break;
@@ -1736,6 +1801,15 @@ class LLVMCompiler {
                 } else if (current_char == 'n') {
                     advance();
                     is_nibble = true;
+                    break;
+                } else if (current_char == 'i') {
+                    advance();
+                    if (current_char == 'u') {
+                        advance();
+                        is_nibble = true;
+                        is_short = true;
+                        is_long = true;
+                    }
                     break;
                 } else if (current_char == '\'') {
                     if (num.empty() || !std::isdigit(static_cast<unsigned char>(text[index + 1]))) {
@@ -1748,6 +1822,10 @@ class LLVMCompiler {
                 }
             }
         }
+        if (is_short && is_long && is_nibble) return Token(TokenType::I32U_T, num, start_pos);
+        if (is_short && is_nibble) return Token(TokenType::I16U_T, num, start_pos);
+        if (is_addrt && is_long) return Token(TokenType::AI64_T, num, start_pos);
+        if (is_addrt && is_nibble) return Token(TokenType::AI64U_T, num, start_pos);
         if (is_byte) return Token(TokenType::BYTE, num, start_pos);
         if (is_nibble) return Token(TokenType::NIBBLE, num, start_pos);
         if (is_addrt) return Token(TokenType::ADDR_T, num, start_pos);
@@ -2257,6 +2335,27 @@ class LLVMCompiler {
         llvm::Type* pointeeTy = llvmTypeFor(qcType);
         if (!pointeeTy || pointeeTy->isVoidTy()) return val;
         return builder->CreateLoad(pointeeTy, val, "deref_ref");
+    }
+    llvm::Value* makeThisPtr(AnyNode& node) {
+        llvm::Value* baseVal = emitLValue(node, true);
+        if (!baseVal) {
+            cg_error(get_pos(node), "Failed to emit this ptr", "QC-S252");
+            return nullptr;
+        }
+        llvm::Type* baseTy = baseVal->getType();
+        llvm::Value* thisPtr = baseVal;
+        std::string exprTy = resolveTypeName(getExpressionType(node, false), false);
+        if (auto* sTy = llvm::dyn_cast<llvm::StructType>(baseVal->getType())) {
+            thisPtr = createEntryAlloca("temp_this", sTy);
+            builder->CreateStore(baseVal, thisPtr);
+        } else {
+            if (!baseVal->getType()->isPointerTy()) {
+                llvm::AllocaInst* alloc = createEntryAlloca("base_ptr", baseTy);
+                builder->CreateStore(alloc, baseVal);
+                thisPtr = alloc;
+            }
+        }
+        return thisPtr;
     }
     llvm::Value* emitPropertyAddress(PropertyAccessNode& prop, bool fallback = false) {
         std::string propName = prop.property_name.value;

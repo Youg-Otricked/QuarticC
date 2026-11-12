@@ -67,9 +67,17 @@ Token Lexer::make_number() {
             return Token(TokenType::LONG_INT, std::to_string(val), start_pos);
         } else if (this->current_char == 'i') {
             this->advance();
+            if (this->current_char == 'u') {
+                this->advance();
+                return Token(TokenType::I32U_T, std::to_string(val), start_pos);
+            }
             return Token(TokenType::INT, std::to_string(val), start_pos);
         } else if (this->current_char == 's') {
             this->advance();
+            if (this->current_char == 'u') {
+                this->advance();
+                return Token(TokenType::I16U_T, std::to_string(val), start_pos);
+            }
             return Token(TokenType::SHORT_INT, std::to_string(val), start_pos);
         } else if (this->current_char == 'y') {
             this->advance();
@@ -77,6 +85,16 @@ Token Lexer::make_number() {
         } else if (this->current_char == 'n') {
             this->advance();
             return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
+        }
+        if (this->current_char == 'a') {
+            this->advance();
+            if (this->current_char == 's') {
+                this->advance();
+                return Token(TokenType::AI64_T, std::to_string(val), start_pos);
+            } else if (this->current_char == 'u') {
+                this->advance();
+                return Token(TokenType::AI64U_T, std::to_string(val), start_pos);
+            }
         }
         if (this->current_char == 'u') {
             this->advance();
@@ -96,9 +114,17 @@ Token Lexer::make_number() {
             return Token(TokenType::LONG_INT, std::to_string(val), start_pos);
         } else if (this->current_char == 'i') {
             this->advance();
+            if (this->current_char == 'u') {
+                this->advance();
+                return Token(TokenType::I32U_T, std::to_string(val), start_pos);
+            }
             return Token(TokenType::INT, std::to_string(val), start_pos);
         } else if (this->current_char == 's') {
             this->advance();
+            if (this->current_char == 'u') {
+                this->advance();
+                return Token(TokenType::I16U_T, std::to_string(val), start_pos);
+            }
             return Token(TokenType::SHORT_INT, std::to_string(val), start_pos);
         } else if (this->current_char == 'y') {
             this->advance();
@@ -106,6 +132,16 @@ Token Lexer::make_number() {
         } else if (this->current_char == 'n') {
             this->advance();
             return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
+        }
+        if (this->current_char == 'a') {
+            this->advance();
+            if (this->current_char == 's') {
+                this->advance();
+                return Token(TokenType::AI64_T, std::to_string(val), start_pos);
+            } else if (this->current_char == 'u') {
+                this->advance();
+                return Token(TokenType::AI64U_T, std::to_string(val), start_pos);
+            }
         }
         if (this->current_char == 'u') {
             this->advance();
@@ -125,9 +161,17 @@ Token Lexer::make_number() {
             return Token(TokenType::LONG_INT, std::to_string(val), start_pos);
         } else if (this->current_char == 'i') {
             this->advance();
+            if (this->current_char == 'u') {
+                this->advance();
+                return Token(TokenType::I32U_T, std::to_string(val), start_pos);
+            }
             return Token(TokenType::INT, std::to_string(val), start_pos);
         } else if (this->current_char == 's') {
             this->advance();
+            if (this->current_char == 'u') {
+                this->advance();
+                return Token(TokenType::I16U_T, std::to_string(val), start_pos);
+            }
             return Token(TokenType::SHORT_INT, std::to_string(val), start_pos);
         } else if (this->current_char == 'y') {
             this->advance();
@@ -136,6 +180,16 @@ Token Lexer::make_number() {
             this->advance();
             return Token(TokenType::NIBBLE, std::to_string(val), start_pos);
         }
+        if (this->current_char == 'a') {
+            this->advance();
+            if (this->current_char == 's') {
+                this->advance();
+                return Token(TokenType::AI64_T, std::to_string(val), start_pos);
+            } else if (this->current_char == 'u') {
+                this->advance();
+                return Token(TokenType::AI64U_T, std::to_string(val), start_pos);
+            }
+        }
         if (this->current_char == 'u') {
             this->advance();
             if (this->current_char == 'l') this->advance();
@@ -143,7 +197,7 @@ Token Lexer::make_number() {
         }
         return Token(TokenType::ADDR_T, std::to_string(val), start_pos);
     } else {
-        while (this->current_char != '\0' && isCharInSet(this->current_char, DIGITS + ".flsaynu'")) {
+        while (this->current_char != '\0' && isCharInSet(this->current_char, DIGITS + ".flsaynui'")) {
             if (this->current_char == '.') {
                 if (dot_count == 1 || is_hex || is_binary || is_octal) {
                     this->advance();
@@ -163,10 +217,21 @@ Token Lexer::make_number() {
             } else if (this->current_char == 's') {
                 is_short = true;
                 this->advance();
+                if (this->current_char == 'u') {
+                    this->advance();
+                    is_nibble = true;
+                }
                 break;
             } else if (this->current_char == 'a' || this->current_char == 'u') {
                 is_addrt = true;
                 this->advance();
+                if (this->current_char == 's') {
+                    this->advance();
+                    is_long = true;
+                } else if (this->current_char == 'u') {
+                    this->advance();
+                    is_nibble = true;
+                }
                 if (this->current_char == 'l') this->advance();
                 if (this->current_char == 'l') this->advance();
                 break;
@@ -177,6 +242,15 @@ Token Lexer::make_number() {
             } else if (this->current_char == 'n') {
                 this->advance();
                 is_nibble = true;
+                break;
+            } else if (this->current_char == 'i') {
+                this->advance();
+                if (this->current_char == 'u') {
+                    this->advance();
+                    is_nibble = true;
+                    is_short = true;
+                    is_long = true;
+                }
                 break;
             } else if (this->current_char == '\'') {
                 if (num.empty() || !std::isdigit(static_cast<unsigned char>(this->text[this->pos.index + 1]))) {
@@ -194,6 +268,10 @@ Token Lexer::make_number() {
         if (is_long) return Token(TokenType::LONG_DOUBLE, num, start_pos);
         return Token(TokenType::DOUBLE, num, start_pos);
     }
+    if (is_short && is_long && is_nibble) return Token(TokenType::I32U_T, num, start_pos);
+    if (is_short && is_nibble) return Token(TokenType::I16U_T, num, start_pos);
+    if (is_addrt && is_long) return Token(TokenType::AI64_T, num, start_pos);
+    if (is_addrt && is_nibble) return Token(TokenType::AI64U_T, num, start_pos);
     if (is_byte) return Token(TokenType::BYTE, num, start_pos);
     if (is_nibble) return Token(TokenType::NIBBLE, num, start_pos);
     if (is_addrt) return Token(TokenType::ADDR_T, num, start_pos);
@@ -209,8 +287,8 @@ Token Lexer::make_identifier() {
         this->advance();
     }
     if (
-        /* primitives */ id == "int" || id == "float" || id == "double" || id == "bool" || id == "qbool" || id == "char" ||
-        id == "ai64u_t" || id == "ai64_t" || id == "i32u_t" || id == "i16u_t" ||
+        /* primitives */ id == "int" || id == "float" || id == "double" || id == "bool" || id == "qbool" || id == "char" || id == "ai64u_t" ||
+        id == "ai64_t" || id == "i32u_t" || id == "i16u_t" ||
         /* storage modifiers */ id == "long" || id == "short" || id == "const" || id == "atomic" ||
         /* switch */ id == "case" || id == "switch" || id == "default" || id == "match" ||
         /* if else */ id == "if" || id == "else" ||
@@ -377,120 +455,6 @@ Token Lexer::make_char() {
 
     return Token(TokenType::CHAR, val, start_pos);
 }
-Token Lexer::make_fstring() {
-    Position start_pos = this->pos.copy();
-    this->advance();
-
-    std::vector<std::string> parts;
-    std::vector<std::string> exprs;
-
-    std::string current = "";
-    bool escape = false;
-
-    while (this->current_char != '\0' && (this->current_char != '"' || escape)) {
-        if (escape) {
-            switch (this->current_char) {
-            case 'e': current += '\x1B'; break;
-            case 'a': current += '\a'; break;
-            case 'b': current += '\b'; break;
-            case 't': current += '\t'; break;
-            case 'n': current += '\n'; break;
-            case 'v': current += '\v'; break;
-            case 'f': current += '\f'; break;
-            case 'r': current += '\r'; break;
-            case '\\': current += '\\'; break;
-            case '"': current += '"'; break;
-            case 'x': {
-                escape = false;
-                this->advance();
-                if (!std::isxdigit(this->current_char)) { throw IllegalCharError("QC-IC02: Expected hex digit after \\x", this->pos); }
-                std::string hex = "";
-                while (std::isxdigit(this->current_char) && hex.size() < 2) {
-                    hex += this->current_char;
-                    this->advance();
-                }
-                if (hex.size() != 2) { throw IllegalCharError("QC-IC02: Expected two hex digits after \\x", this->pos); }
-                current += static_cast<char>(std::stoi(hex, nullptr, 16));
-                continue;
-            }
-            default:
-                escape = false;
-                if (this->current_char >= '0' && this->current_char <= '7') {
-                    std::string octal;
-                    for (int i = 0; i < 3 && this->current_char >= '0' && this->current_char <= '7'; ++i) {
-                        octal += this->current_char;
-                        this->advance();
-                    }
-                    current += static_cast<char>(std::stoi(octal, nullptr, 8));
-                    continue;
-                }
-                current += this->current_char;
-                break;
-            }
-            escape = false;
-            this->advance();
-            continue;
-        }
-
-        if (this->current_char == '\\') {
-            escape = true;
-            this->advance();
-            continue;
-        }
-
-        if (this->current_char == '{' && this->text[this->pos.index + 1] == '{') {
-            current += '{';
-            this->advance();
-            this->advance();
-            continue;
-        }
-
-        if (this->current_char == '}' && this->text[this->pos.index + 1] == '}') {
-            current += '}';
-            this->advance();
-            this->advance();
-            continue;
-        }
-
-        if (this->current_char == '{') {
-            parts.push_back(current);
-            current = "";
-            this->advance();
-
-            std::string expr = "";
-            int brace_depth = 1;
-
-            while (this->current_char != '\0' && brace_depth > 0) {
-                if (this->current_char == '{')
-                    brace_depth++;
-                else if (this->current_char == '}')
-                    brace_depth--;
-
-                if (brace_depth > 0) expr += this->current_char;
-
-                this->advance();
-            }
-
-            if (brace_depth != 0) throw IllegalCharError("QC-IC02: Unclosed brace in f-string", this->pos);
-
-            exprs.push_back(expr);
-        } else {
-            current += this->current_char;
-            this->advance();
-        }
-    }
-
-    parts.push_back(current);
-
-    if (this->current_char != '"') throw IllegalCharError("QC-IC02: Unterminated f-string", this->pos);
-    this->advance();
-    std::string encoded = "";
-    for (size_t i = 0; i < parts.size(); i++) {
-        encoded += parts[i];
-        if (i < exprs.size()) encoded += "\x01" + exprs[i] + "\x01";
-    }
-    return Token(TokenType::FSTRING, encoded, start_pos);
-}
 Token Lexer::make_raw_string() {
     Position start_pos = this->pos.copy();
     std::string start_delim = "\"";
@@ -551,10 +515,6 @@ Ler Lexer::make_tokens() {
             continue;
         } else if (isCharInSet(this->current_char, DIGITS)) {
             tokens.push_back(this->make_number());
-            continue;
-        } else if (this->current_char == 'f' && this->text[this->pos.index + 1] == '"') {
-            this->advance();
-            tokens.push_back(this->make_fstring());
             continue;
         } else if (this->current_char == 'R' && this->text[this->pos.index + 1] == '"') {
             this->advance();

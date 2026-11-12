@@ -380,6 +380,21 @@ void Translator::onLiteral(CXCursor c) {
     }
     clang_disposeTokens(tu, tokens, numTokens);
 }
+void Translator::onAnonEnum(CXCursor c) {
+    clang_visitChildren(
+        c,
+        [](CXCursor child, CXCursor, CXClientData data) {
+            if (clang_getCursorKind(child) != CXCursor_EnumConstantDecl) return CXChildVisit_Continue;
+            auto* self = static_cast<Translator*>(data);
+            std::string name = str(clang_getCursorSpelling(child));
+            if (self->macro_values.count(name)) return CXChildVisit_Continue;
+            std::string value = std::to_string(clang_getEnumConstantDeclValue(child));
+            self->macro_values[name] = value;
+            self->result_file += "const int " + name + " = " + value + ";\n";
+            return CXChildVisit_Continue;
+        },
+        this);
+}
 CXChildVisitResult Translator::visit(CXCursor c, bool indent_braces) {
     if (!fci)
         if (!clang_Location_isFromMainFile(clang_getCursorLocation(c))) return CXChildVisit_Continue;
@@ -391,7 +406,7 @@ CXChildVisitResult Translator::visit(CXCursor c, bool indent_braces) {
         onRecord(c);
         break;
     case CXCursor_EnumDecl:
-        if (isAnon(c)) break;
+        if (isAnon(c)) onAnonEnum(c);
         onEnum(c);
         break;
     case CXCursor_TypedefDecl: onTypedef(c); break;
