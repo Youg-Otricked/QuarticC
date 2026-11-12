@@ -53,9 +53,10 @@ int test_defer_in_loops() {
 int test_nested_scopes() {
     Counter::order_sum = 0;
     defer Counter::add_order(4);
-    if (true) {
+    for (;;) {
         defer Counter::add_order(2);
         defer Counter::add_order(1);
+        break;
     }
     defer Counter::add_order(3);
     return 0;
@@ -66,7 +67,8 @@ class TestRunner {
         test_defer_on_return();
         if (Counter::order_sum != 12) return 102;
         if (test_defer_in_loops() != 0) return 103;
-        if (test_nested_scopes() != 0) return 104;
+        Counter::order_sum = 0;
+        if (test_nested_scopes() != 0 || Counter::order_sum != 1234) return 104;
         return 0;
     }
 }

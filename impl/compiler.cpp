@@ -5166,15 +5166,27 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 auto trIt = std::next(condIt);
                 auto flIt = std::next(trIt);
                 llvm::Value* cond = emitExpr(*condIt);
-                llvm::Value* is_tr = emitExpr(*trIt);
-                llvm::Value* is_fl = emitExpr(*flIt);
-                if (!cond || !is_tr || !is_fl) return nullptr;
+                if (!cond) return nullptr;
                 cond = toTruthiness(cond, get_pos(*condIt));
                 if (!cond) return nullptr;
                 if (!cond->getType()->isIntegerTy(1)) {
                     cg_error((*varAccess)->var_name_tok.pos, "arg 1 must be a boolean: " + funcName, "QC-S216");
                     return nullptr;
                 }
+                llvm::Function* fn = builder->GetInsertBlock()->getParent();
+                llvm::BasicBlock* thenBB  = llvm::BasicBlock::Create(context, "ternary.true", fn);
+                llvm::BasicBlock* elseBB  = llvm::BasicBlock::Create(context, "ternary.false");
+                llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(context, "ternary.end");
+                builder->CreateCondBr(cond, thenBB, elseBB);
+                builder->SetInsertPoint(thenBB);
+                llvm::Value* is_tr = emitExpr(*trIt);
+                if (!is_tr) return nullptr;
+                llvm::BasicBlock* thenEndBB = builder->GetInsertBlock();
+                fn->insert(fn->end(), elseBB);
+                builder->SetInsertPoint(elseBB);
+                llvm::Value* is_fl = emitExpr(*flIt);
+                if (!is_fl) return nullptr;
+                llvm::BasicBlock* elseEndBB = builder->GetInsertBlock();
                 llvm::Type* trTy = is_tr->getType();
                 llvm::Type* flTy = is_fl->getType();
                 if (trTy != flTy) {
@@ -5183,14 +5195,32 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                         unsigned flBits = flTy->getIntegerBitWidth();
                         unsigned commonBits = std::max(trBits, flBits);
                         llvm::Type* commonTy = llvm::IntegerType::get(context, commonBits);
-                        if (trTy != commonTy) { is_tr = builder->CreateSExt(is_tr, commonTy, "ternary_tr_promote"); }
-                        if (flTy != commonTy) { is_fl = builder->CreateSExt(is_fl, commonTy, "ternary_fl_promote"); }
+                        if (trTy != commonTy) {
+                            builder->SetInsertPoint(thenEndBB);
+                            is_tr = builder->CreateSExt(is_tr, commonTy, "ternary_tr_promote");
+                        }
+                        if (flTy != commonTy) {
+                            builder->SetInsertPoint(elseEndBB);
+                            is_fl = builder->CreateSExt(is_fl, commonTy, "ternary_fl_promote");
+                        }
                     } else {
                         cg_error((*varAccess)->var_name_tok.pos, "arg 2 and 3 must have compatible types: " + funcName, "QC-T046");
                         return nullptr;
                     }
                 }
-                return builder->CreateSelect(cond, is_tr, is_fl, "select_val");
+                builder->SetInsertPoint(thenEndBB);
+                builder->CreateBr(mergeBB);
+                builder->SetInsertPoint(elseEndBB);
+                builder->CreateBr(mergeBB);
+                fn->insert(fn->end(), mergeBB);
+                builder->SetInsertPoint(mergeBB);
+                if (is_tr->getType()->isVoidTy()) {
+                    return nullptr;
+                }
+                llvm::PHINode* phi = builder->CreatePHI(is_tr->getType(), 2, "ternary_val");
+                phi->addIncoming(is_tr, thenEndBB);
+                phi->addIncoming(is_fl, elseEndBB);
+                return phi;
             }
             if (funcName == "`inline" && !call.arg_nodes.empty()) {
                 StringNode* data = std::get_if<StringNode>(&call.arg_nodes.front());
@@ -7172,7 +7202,7 @@ void LLVMCompiler::emitWhile(WhileNode* while_node) {
     setDebugLocation(while_node->getPos());
 
     size_t outerDepth = defersStack.size();
-    loopStack.push_back(outerDepth);
+    loopStack.push_back(outerDepth + 1);
     enterScope();
     llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "while.cond", currentFunction);
     llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "while.body", currentFunction);
@@ -7210,7 +7240,7 @@ void LLVMCompiler::emitWhile(WhileNode* while_node) {
 void LLVMCompiler::emitFor(ForNode* for_node) {
     setDebugLocation(for_node->getPos());
     size_t outerDepth = defersStack.size();
-    loopStack.push_back(outerDepth);
+    loopStack.push_back(outerDepth + 1);
     enterScope();
     if (for_node->init.has_value()) { emitStmt(for_node->init.value()); }
     llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "for.cond", currentFunction);
@@ -7613,7 +7643,7 @@ void LLVMCompiler::emitForeach(ForeachNode* foreach) {
     setDebugLocation(foreach->getPos());
 
     size_t outerDepth = defersStack.size();
-    loopStack.push_back(outerDepth);
+    loopStack.push_back(outerDepth + 1);
     std::string elemName = foreach->elem_name.value;
     std::string iterName = "__foreach_i_" + elemName;
     llvm::Value* lengthVal = nullptr;
