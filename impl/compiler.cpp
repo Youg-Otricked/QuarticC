@@ -5728,6 +5728,29 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
     }
     llvm::Type* retTy = fnTy->getReturnType();
     if (!fnTy) return nullptr;
+    unsigned paramIdx = 0;
+    unsigned numParams = fnTy->getNumParams();
+    for (llvm::Value *arg : args) {
+        if (!arg) {
+            cg_error(get_pos(&call), "call validation failed: failed to emit arg", "QC-CAL3");
+            return nullptr;
+        }
+        if (fnTy->isVarArg() && paramIdx >= numParams) {
+            continue;
+        }
+        if (paramIdx >= numParams || arg->getType() != fnTy->getParamType(paramIdx)) {
+            Position pos = paramIdx < call.arg_nodes.size() ? get_pos(*std::next(call.arg_nodes.begin(), paramIdx)) : get_pos(&call);
+            cg_error(pos, paramIdx >= numParams ?
+                "call validation failed: too many arguments (" + std::to_string(args.size()) + " vs " + std::to_string(numParams) + ")" :
+                "call validation failed: arg " + std::to_string(paramIdx + 1) + " is of invalid type", "QC-CAL3");
+            return nullptr;
+        }
+        paramIdx++;
+    }
+    if (paramIdx < numParams) {
+        cg_error(get_pos(&call), "call validation failed: too few arguments (" + std::to_string(paramIdx) + " vs " + std::to_string(numParams) + ")", "QC-CAL3");
+        return nullptr;
+    }
     auto* callInst = builder->CreateCall(fnTy, calleeVal, args, retTy->isVoidTy() ? "" : "calltmp");
     return retTy->isVoidTy() ? nullptr : callInst;
 }

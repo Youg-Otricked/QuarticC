@@ -90,12 +90,12 @@ Development toward future critical versions may begin before the current
 critical version is complete. Multiple critical generations may therefore
 be in development simultaneously.
 
-Modern versioning places a p before patch and allows Mi to grow beyond 9. Versions below x1.5.2p1 have digit one past the second . be Mi and the rest be patch.
+Modern versioning places a p before patch and allows Mi to grow beyond 9. Versions below x1.5.2p2 have digit one past the second . be Mi and the rest be patch.
 Unlike semantic versioning, QuarticC versions describe the scale and category of language evolution rather than API compatibility.
 
 # Development Status
 
-Current Version: x1.5.2p1 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
+Current Version: x1.5.2p2 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
 
@@ -195,6 +195,7 @@ remove        Delete a feature. More narrow clean
 rev           Revision on previous commit/todo/partial, not done yet
 oops          Forgot to add to previous commit
 change        An actual change, not a improvment or a new feature. e.g. changing a syntax. Can have an additional too, such as change(x, y)
+feat::minor   Minor feature / QOL improvment, not neccesarily a full featutre
 ```
 
 For example:
