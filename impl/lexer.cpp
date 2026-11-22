@@ -318,7 +318,8 @@ Token Lexer::make_identifier() {
         /* raw unions */ id == "union" ||
         /* goto */ id == "goto" || id == "jmp" ||
         /* patterns */ id == "pattern" || id == "fits" ||
-        /* panic */ id == "panic") {
+        /* panic */ id == "panic" ||
+        /* stmt values */ id == "returning") {
         return Token(TokenType::KEYWORD, id, start_pos);
     }
     if (id == "true" || id == "false") { return Token(TokenType::BOOL, id, start_pos); }

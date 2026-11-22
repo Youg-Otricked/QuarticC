@@ -474,6 +474,8 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
     llvm::StructType* classTy = getOrCreateStructType(mangled_class_name);
     classTypes[mangled_class_name] = classTy;
     inProgressGenerics.insert(mangled_class_name);
+    std::string old_class_name = currentClassName;
+    currentClassName = mangled_class_name;
     llvm::IRBuilderBase::InsertPointGuard guard(*builder);
     llvm::BasicBlock::iterator savedPoint = builder->GetInsertPoint();
     auto oldGenericTypes = this->currentGenericTypes;
@@ -909,6 +911,7 @@ llvm::StructType* LLVMCompiler::generateGenericClass(std::string className, User
     this->currentGenericTypeStrings = oldGenericTypeStrings;
     currentNonTypeGenericValues = oldNonTypeGenerics;
     inProgressGenerics.erase(mangled_class_name);
+    currentClassName = old_class_name;
     return classTy;
 }
 llvm::StructType* LLVMCompiler::generateGenericStruct(std::string structName, UserTypeInfo structInfo, std::vector<std::string> genericParams) {
@@ -5174,8 +5177,8 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                     return nullptr;
                 }
                 llvm::Function* fn = builder->GetInsertBlock()->getParent();
-                llvm::BasicBlock* thenBB  = llvm::BasicBlock::Create(context, "ternary.true", fn);
-                llvm::BasicBlock* elseBB  = llvm::BasicBlock::Create(context, "ternary.false");
+                llvm::BasicBlock* thenBB = llvm::BasicBlock::Create(context, "ternary.true", fn);
+                llvm::BasicBlock* elseBB = llvm::BasicBlock::Create(context, "ternary.false");
                 llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(context, "ternary.end");
                 builder->CreateCondBr(cond, thenBB, elseBB);
                 builder->SetInsertPoint(thenBB);
@@ -5214,9 +5217,7 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 builder->CreateBr(mergeBB);
                 fn->insert(fn->end(), mergeBB);
                 builder->SetInsertPoint(mergeBB);
-                if (is_tr->getType()->isVoidTy()) {
-                    return nullptr;
-                }
+                if (is_tr->getType()->isVoidTy()) { return nullptr; }
                 llvm::PHINode* phi = builder->CreatePHI(is_tr->getType(), 2, "ternary_val");
                 phi->addIncoming(is_tr, thenEndBB);
                 phi->addIncoming(is_fl, elseEndBB);
@@ -5760,25 +5761,26 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
     if (!fnTy) return nullptr;
     unsigned paramIdx = 0;
     unsigned numParams = fnTy->getNumParams();
-    for (llvm::Value *arg : args) {
+    for (llvm::Value* arg : args) {
         if (!arg) {
             cg_error(get_pos(&call), "call validation failed: failed to emit arg", "QC-CAL3");
             return nullptr;
         }
-        if (fnTy->isVarArg() && paramIdx >= numParams) {
-            continue;
-        }
+        if (fnTy->isVarArg() && paramIdx >= numParams) { continue; }
         if (paramIdx >= numParams || arg->getType() != fnTy->getParamType(paramIdx)) {
             Position pos = paramIdx < call.arg_nodes.size() ? get_pos(*std::next(call.arg_nodes.begin(), paramIdx)) : get_pos(&call);
-            cg_error(pos, paramIdx >= numParams ?
-                "call validation failed: too many arguments (" + std::to_string(args.size()) + " vs " + std::to_string(numParams) + ")" :
-                "call validation failed: arg " + std::to_string(paramIdx + 1) + " is of invalid type", "QC-CAL3");
+            cg_error(pos,
+                     paramIdx >= numParams
+                         ? "call validation failed: too many arguments (" + std::to_string(args.size()) + " vs " + std::to_string(numParams) + ")"
+                         : "call validation failed: arg " + std::to_string(paramIdx + 1) + " is of invalid type",
+                     "QC-CAL3");
             return nullptr;
         }
         paramIdx++;
     }
     if (paramIdx < numParams) {
-        cg_error(get_pos(&call), "call validation failed: too few arguments (" + std::to_string(paramIdx) + " vs " + std::to_string(numParams) + ")", "QC-CAL3");
+        cg_error(get_pos(&call), "call validation failed: too few arguments (" + std::to_string(paramIdx) + " vs " + std::to_string(numParams) + ")",
+                 "QC-CAL3");
         return nullptr;
     }
     auto* callInst = builder->CreateCall(fnTy, calleeVal, args, retTy->isVoidTy() ? "" : "calltmp");
@@ -6036,7 +6038,7 @@ llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
                 return nullptr;
             }
             auto [fieldOwnerClass, fieldAccess] = getFieldOwner(baseTypeName(className), propName);
-            if (!canAccessField(currentClassName, fieldOwnerClass, fieldAccess)) {
+            if (!canAccessField(baseTypeName(currentClassName), fieldOwnerClass, fieldAccess)) {
                 cg_error(get_pos(*propAccess), "cannot access " + fieldAccess + " field " + propName, "QC-S248");
                 return nullptr;
             }
@@ -6363,8 +6365,8 @@ llvm::Value* LLVMCompiler::emitFieldAssign(FieldAssignNode* const* fieldAssign) 
                 return nullptr;
             }
 
-            auto [fieldOwnerClass, fieldAccess] = getFieldOwner(currentClassName, fieldName);
-            if (!canAccessField(currentClassName, fieldOwnerClass, fieldAccess)) {
+            auto [fieldOwnerClass, fieldAccess] = getFieldOwner(baseTypeName(currentClassName), fieldName);
+            if (!canAccessField(baseTypeName(currentClassName), fieldOwnerClass, fieldAccess)) {
                 cg_error(get_pos(*varAccess), "cannot access " + fieldAccess + " field", "QC-S256");
                 return nullptr;
             }
@@ -6507,14 +6509,16 @@ llvm::Value* LLVMCompiler::emitExpr(const AnyNode& node) {
         return emitPropAcc(propAccess);
     } else if (auto methodCall = std::get_if<MethodCallNode*>(&node)) {
         return emitMthdCall(methodCall);
-    } else if (auto spread = std::get_if<SpreadNode*>(&node)) {
-        cg_error(get_pos(*spread),
-                 "spread operator can only be used in array "
-                 "literals",
-                 "QC-S254");
-        return nullptr;
     } else if (auto fieldAssign = std::get_if<FieldAssignNode*>(&node)) {
         return emitFieldAssign(fieldAssign);
+    } else if (auto while_node = safe_get<WhileNode>(node)) {
+        return emitWhile(while_node);
+    } else if (auto for_node = safe_get<ForNode>(node)) {
+        return emitFor(for_node);
+    } else if (auto foreach = safe_get<ForeachNode>(node)) {
+        return emitForeach(foreach);
+    } else if (auto match_node = safe_get<MatchNode>(node)) {
+        return emitMatch(match_node);
     } else if (auto ref = safe_get<RefVarDeclNode>(node)) {
         setDebugLocation(ref->getPos());
         std::string fullName = (getCurrentNamespace().empty() ? "" : getCurrentNamespace() + "::") + ref->var_name_tok.value;
@@ -6575,21 +6579,6 @@ int LLVMCompiler::findUnionVariantTag(const std::string& unionName, AnyNode& val
     }
 
     return -1;
-}
-llvm::Value* LLVMCompiler::getCollectionLength(llvm::Value* collVal, AnyNode& collExpr) {
-    if (auto varAccess = std::get_if<VarAccessNode*>(&collExpr)) {
-        std::string collName = (*varAccess)->var_name_tok.value;
-        llvm::Value* locAlloc = getVarAddress(collName);
-        if (locAlloc) {
-            llvm::Type* allocTy = getPointeeType(collName);
-
-            if (allocTy && allocTy->isArrayTy()) { return builder->getInt32(allocTy->getArrayNumElements()); }
-        }
-    }
-
-    if (auto arrLit = std::get_if<ArrayLiteralNode*>(&collExpr)) { return builder->getInt32((*arrLit)->elements.size()); }
-    cg_error(get_pos(collExpr), "cannot determine collection length for spread", "QC-S260");
-    return nullptr;
 }
 llvm::AllocaInst* LLVMCompiler::createEntryAlloca(const std::string& name, llvm::Type* ty) {
     if (!currentFunction) {
@@ -7198,19 +7187,26 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
         builder->SetInsertPoint(mergeBB);
     }
 }
-void LLVMCompiler::emitWhile(WhileNode* while_node) {
+llvm::Value* LLVMCompiler::emitWhile(WhileNode* while_node) {
     setDebugLocation(while_node->getPos());
-
     size_t outerDepth = defersStack.size();
     loopStack.push_back(outerDepth + 1);
     enterScope();
+    llvm::PHINode* oldPHI = currentMergeValue;
+    currentMergeValue = nullptr;
+    llvm::BasicBlock* mergeBB = nullptr;
     llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "while.cond", currentFunction);
     llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "while.body", currentFunction);
     llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "while.end", currentFunction);
     llvm::BasicBlock* oldBreakBB = currentBreakBB;
     llvm::BasicBlock* oldContinueBB = currentContinueBB;
-    currentBreakBB = endBB;
     currentContinueBB = condBB;
+    if (!while_node->returning_type.empty()) {
+        mergeBB = llvm::BasicBlock::Create(context, "while.merge", currentFunction);
+        currentMergeValue = llvm::PHINode::Create(llvmTypeFor(while_node->returning_type), 2, "while.return.merge", mergeBB);
+        currentValueBreakBB = mergeBB;
+    }
+    currentBreakBB = endBB;
     if (while_node->is_dowhile) {
         builder->CreateBr(bodyBB);
     } else {
@@ -7218,10 +7214,10 @@ void LLVMCompiler::emitWhile(WhileNode* while_node) {
     }
     builder->SetInsertPoint(condBB);
     llvm::Value* cond = emitExpr(while_node->condition);
-    if (!cond) return;
+    if (!cond) return nullptr;
     cond = normalizeValue(cond, while_node->condition);
     cond = toTruthiness(cond, get_pos(while_node->condition));
-    if (!cond) return;
+    if (!cond) return nullptr;
     builder->CreateCondBr(cond, bodyBB, endBB);
     builder->SetInsertPoint(bodyBB);
     emitStmt(while_node->body);
@@ -7233,31 +7229,61 @@ void LLVMCompiler::emitWhile(WhileNode* while_node) {
     }
     currentBreakBB = oldBreakBB;
     currentContinueBB = oldContinueBB;
-    exitScope();
-    loopStack.pop_back();
+    llvm::PHINode* old = currentMergeValue;
+    currentMergeValue = oldPHI;
     builder->SetInsertPoint(endBB);
+    if (!while_node->returning_type.empty()) {
+        llvm::Value* defaultVal = emitExpr(while_node->default_value);
+        if (!defaultVal) return nullptr;
+        if (defaultVal->getType() != old->getType()) {
+            defaultVal = castValue(defaultVal, old->getType(), getExpressionType(while_node->default_value));
+        }
+        if (defaultVal->getType() != old->getType()) {
+            cg_error(get_pos(while_node->default_value), "default value type must be the same as loop returning type", "QC-RLP2");
+            return nullptr;
+        }
+        old->addIncoming(defaultVal, endBB);
+        builder->CreateBr(mergeBB);
+        builder->SetInsertPoint(bodyBB);
+        exitScope();
+        builder->SetInsertPoint(mergeBB);
+    } else {
+        builder->SetInsertPoint(bodyBB);
+        exitScope();
+        builder->SetInsertPoint(endBB);
+    }
+    loopStack.pop_back();
+    return old;
 }
-void LLVMCompiler::emitFor(ForNode* for_node) {
+llvm::Value* LLVMCompiler::emitFor(ForNode* for_node) {
     setDebugLocation(for_node->getPos());
     size_t outerDepth = defersStack.size();
     loopStack.push_back(outerDepth + 1);
     enterScope();
+    llvm::PHINode* oldPHI = currentMergeValue;
+    currentMergeValue = nullptr;
     if (for_node->init.has_value()) { emitStmt(for_node->init.value()); }
+    llvm::BasicBlock* mergeBB = nullptr;
     llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "for.cond", currentFunction);
     llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "for.body", currentFunction);
     llvm::BasicBlock* incBB = llvm::BasicBlock::Create(context, "for.inc", currentFunction);
     llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "for.end", currentFunction);
     llvm::BasicBlock* oldBreakBB = currentBreakBB;
     llvm::BasicBlock* oldContinueBB = currentContinueBB;
+    if (!for_node->returning_type.empty()) {
+        mergeBB = llvm::BasicBlock::Create(context, "for.merge", currentFunction);
+        currentMergeValue = llvm::PHINode::Create(llvmTypeFor(for_node->returning_type), 2, "for.return.merge", mergeBB);
+        currentValueBreakBB = mergeBB;
+    }
     currentBreakBB = endBB;
     currentContinueBB = incBB;
     builder->CreateBr(condBB);
     builder->SetInsertPoint(condBB);
     llvm::Value* cond = emitExpr(for_node->condition);
-    if (!cond) return;
+    if (!cond) return nullptr;
     cond = normalizeValue(cond, for_node->condition);
     cond = toTruthiness(cond, get_pos(for_node->condition));
-    if (!cond) return;
+    if (!cond) return nullptr;
     builder->CreateCondBr(cond, bodyBB, endBB);
     builder->SetInsertPoint(bodyBB);
     emitStmt(for_node->body);
@@ -7270,9 +7296,31 @@ void LLVMCompiler::emitFor(ForNode* for_node) {
     builder->CreateBr(condBB);
     currentBreakBB = oldBreakBB;
     currentContinueBB = oldContinueBB;
-    exitScope();
-    loopStack.pop_back();
+    llvm::PHINode* old = currentMergeValue;
+    currentMergeValue = oldPHI;
     builder->SetInsertPoint(endBB);
+    if (!for_node->returning_type.empty()) {
+        llvm::Value* defaultVal = emitExpr(for_node->default_value);
+        if (!defaultVal) return nullptr;
+        if (defaultVal->getType() != old->getType()) {
+            defaultVal = castValue(defaultVal, old->getType(), getExpressionType(for_node->default_value));
+        }
+        if (defaultVal->getType() != old->getType()) {
+            cg_error(get_pos(for_node->default_value), "default value type must be the same as loop returning type", "QC-RLP2");
+            return nullptr;
+        }
+        old->addIncoming(defaultVal, endBB);
+        builder->CreateBr(mergeBB);
+        builder->SetInsertPoint(incBB);
+        exitScope();
+        builder->SetInsertPoint(mergeBB);
+    } else {
+        builder->SetInsertPoint(incBB);
+        exitScope();
+        builder->SetInsertPoint(endBB);
+    }
+    loopStack.pop_back();
+    return old;
 }
 void LLVMCompiler::emitSwitch(SwitchNode* switch_node) {
     setDebugLocation(switch_node->getPos());
@@ -7639,7 +7687,7 @@ void LLVMCompiler::emitArrAssign(ArrayAssignNode* arrAssign) {
     }
     return;
 }
-void LLVMCompiler::emitForeach(ForeachNode* foreach) {
+llvm::Value* LLVMCompiler::emitForeach(ForeachNode* foreach) {
     setDebugLocation(foreach->getPos());
 
     size_t outerDepth = defersStack.size();
@@ -7705,7 +7753,7 @@ void LLVMCompiler::emitForeach(ForeachNode* foreach) {
     std::string iterTypeName = "";
     llvm::Type* iterLLVMTy = nullptr;
     llvm::Value* iterLoaded = nullptr;
-    if (!collVal) return;
+    if (!collVal) return nullptr;
     if (isIterator) {
         auto baseInfo = userTypes.find(baseTypeName(collTypeName));
         auto info = baseInfo->second;
@@ -7768,6 +7816,15 @@ void LLVMCompiler::emitForeach(ForeachNode* foreach) {
         currentContinueBB = condBB;
     else
         currentContinueBB = incBB;
+    llvm::PHINode* oldPHI = currentMergeValue;
+    currentMergeValue = nullptr;
+    llvm::BasicBlock* mergeBB = nullptr;
+    if (!foreach->returning_type.empty()) {
+        mergeBB = llvm::BasicBlock::Create(context, "foreach.merge", currentFunction);
+        currentMergeValue = llvm::PHINode::Create(llvmTypeFor(foreach->returning_type), 2, "foreach.return.merge", mergeBB);
+        currentValueBreakBB = mergeBB;
+    }
+
     if (!builder->GetInsertBlock()->hasTerminator()) { builder->CreateBr(condBB); }
     builder->SetInsertPoint(condBB);
     if (isArray) {
@@ -7820,22 +7877,37 @@ void LLVMCompiler::emitForeach(ForeachNode* foreach) {
         }
     }
     builder->SetInsertPoint(endBB);
-    exitScope();
-    loopStack.pop_back();
-    locals.erase(iterName);
-    locals.erase(elemName);
     currentBreakBB = savedBreakBB;
     currentContinueBB = savedContinueBB;
-    return;
+    llvm::PHINode* old = currentMergeValue;
+    currentMergeValue = oldPHI;
+    if (!foreach->returning_type.empty()) {
+        llvm::Value* defaultVal = emitExpr(foreach->default_value);
+        if (!defaultVal) return nullptr;
+        if (defaultVal->getType() != old->getType()) {
+            defaultVal = castValue(defaultVal, old->getType(), getExpressionType(foreach->default_value));
+        }
+        if (defaultVal->getType() != old->getType()) {
+            cg_error(get_pos(foreach->default_value), "default value type must be the same as loop returning type", "QC-RLP2");
+            return nullptr;
+        }
+        old->addIncoming(defaultVal, endBB);
+        builder->CreateBr(mergeBB);
+        builder->SetInsertPoint(mergeBB);
+    }
+    exitScope();
+    locals.erase(iterName);
+    locals.erase(elemName);
+    return old;
 }
-void LLVMCompiler::emitMatch(MatchNode* match_node) {
+llvm::Value* LLVMCompiler::emitMatch(MatchNode* match_node) {
     setDebugLocation(match_node->getPos());
     size_t outerDepth = defersStack.size();
     enterScope();
     llvm::Value* matchVal = emitExpr(match_node->value);
     if (!matchVal) {
         exitScope();
-        return;
+        return nullptr;
     }
     std::string match_value_type = resolveTypeName(getExpressionType(match_node->value, false), false);
     llvm::Type* matchTy = matchVal->getType();
@@ -7862,25 +7934,25 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
             match_node->sections.size() != userTypes.at(baseTypeName(resolveTypeName(enumName))).enumEntries.size()) {
             cg_error(get_pos(match_node), "match must have a case for every enum member, or have a default branch", "QC-MCH1");
             exitScope();
-            return;
+            return nullptr;
         }
     } else if (!unionName.empty()) {
         if (std::ranges::none_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; }) &&
             match_node->sections.size() != userTypes.at(baseTypeName(resolveTypeName(unionName))).members.size()) {
             cg_error(get_pos(match_node), "match must have a case for every union member, or have a default branch", "QC-MCH1");
             exitScope();
-            return;
+            return nullptr;
         }
     } else if (!isFits && !std::ranges::any_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; })) {
         cg_error(get_pos(match_node), "match must have a default branch for non-enum values.", "QC-MCH1");
         cg_help(get_pos(match_node), "if you know it is impossible for any other value to be here, use `default => unreachable;`");
         exitScope();
-        return;
+        return nullptr;
     }
     if (std::ranges::count_if(match_node->sections, [](const MatchNode::Section& s) { return s.is_default; }) > 1) {
         cg_error(get_pos(match_node), "match has more than one default branch", "QC-MCH7");
         exitScope();
-        return;
+        return nullptr;
     }
     if (isFits) {
         std::vector<std::string> candidates;
@@ -7891,12 +7963,12 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
             if (cname.empty()) {
                 cg_error(get_pos(match_node), "cannot use a integer case on a pattern type", "QC-MCH9");
                 exitScope();
-                return;
+                return nullptr;
             }
             if (!patternValues.count(cname)) {
                 cg_error(get_pos(match_node), "no such case " + cname, "QC-MCH8");
                 exitScope();
-                return;
+                return nullptr;
             }
             std::vector<std::string> found;
             size_t pos = cname.find(".");
@@ -7908,37 +7980,37 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
             cg_error(get_pos(match_node), candidates.empty() ? "cannot use match on non enum non integer types" : "ambiguous pattern for these cases",
                      "QC-MCH2");
             exitScope();
-            return;
+            return nullptr;
         }
         pattern = candidates[0];
         if (std::ranges::none_of(match_node->sections, [](const MatchNode::Section& node) { return node.is_default; }) &&
             match_node->sections.size() != userTypes.at(baseTypeName(resolveTypeName(unionName))).patternInfo.patterns.size()) {
             cg_error(get_pos(match_node), "match must have a case for every pattern member, or have a default branch", "QC-MCH1");
             exitScope();
-            return;
+            return nullptr;
         }
         auto ptIt = patternTypes.find(pattern);
         if (ptIt == patternTypes.end()) {
             cg_error(get_pos(match_node), "no pattern type for '" + pattern + "'", "QC-MCH3");
             exitScope();
-            return;
+            return nullptr;
         }
         resTy = ptIt->second;
         fitsFn = module->getFunction("__user_qc_fits_" + match_value_type + "_" + pattern);
         if (!fitsFn) {
             cg_error(get_pos(match_node), "no such fits for pattern '" + pattern + "' and type '" + match_value_type + "'", "QC-MCH5");
             exitScope();
-            return;
+            return nullptr;
         }
         if (!fitsFn) {
             cg_error(get_pos(match_node), "no `fits " + pattern + "` found (is it declared before this match?)", "QC-MCH5");
             exitScope();
-            return;
+            return nullptr;
         }
         if (fitsFn->getReturnType() != resTy) {
             cg_error(get_pos(match_node), "fits function return type doesn't match pattern '" + pattern + "'", "QC-MCH5");
             exitScope();
-            return;
+            return nullptr;
         }
         std::unordered_set<int> seen;
         for (size_t i = 0; i < match_node->sections.size(); i++) {
@@ -7950,18 +8022,18 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
             if (it == patternValues.end()) {
                 cg_error(get_pos(match_node), "pattern '" + pattern + "' has no field '" + cname + "'", "QC-MCH3");
                 exitScope();
-                return;
+                return nullptr;
             }
             fieldIdxs[i] = it->second.first;
             if (!seen.insert(fieldIdxs[i]).second) {
                 cg_error(get_pos(match_node), "duplicate case '" + cname + "'", "QC-MCH7");
                 exitScope();
-                return;
+                return nullptr;
             }
             if (!s.enum_case.second.empty() && !s.struct_case.second.empty()) {
                 cg_error(get_pos(match_node), "cannot bind tags and struct fields in the same case", "QC-MCH6");
                 exitScope();
-                return;
+                return nullptr;
             }
             bindNames[i] = s.enum_case.second;
             for (auto& [member, bindName] : s.struct_case.second) bindNames[i].push_back(bindName);
@@ -7970,20 +8042,26 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
                 if (!names.insert(nme).second) {
                     cg_error(get_pos(match_node), "'" + nme + "' is bound more than once in case '" + cname + "'", "QC-MCH6");
                     exitScope();
-                    return;
+                    return nullptr;
                 }
             }
             if (bindNames[i].size() + 1 >= resTy->getNumElements() + (bindNames[i].empty() ? 1 : 0) &&
                 bindNames[i].size() + 1 > resTy->getNumElements() - 0) {
                 cg_error(get_pos(match_node), "case '" + cname + "' binds more values than pattern '" + pattern + "' can hold", "QC-MCH6");
                 exitScope();
-                return;
+                return nullptr;
             }
         }
     }
     llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "match.end", currentFunction);
     std::vector<llvm::BasicBlock*> sectionBlocks;
     llvm::BasicBlock* defaultBB = nullptr;
+    llvm::PHINode* oldPHI = currentMergeValue;
+    currentMergeValue = nullptr;
+    if (!match_node->returning_type.empty()) {
+        currentMergeValue = llvm::PHINode::Create(builder->getInt32Ty(), 2, "match.return.merge", endBB);
+        currentValueBreakBB = endBB;
+    }
     for (auto& section : match_node->sections) {
         llvm::BasicBlock* bb = llvm::BasicBlock::Create(context, "match.case", currentFunction);
         sectionBlocks.push_back(bb);
@@ -8012,7 +8090,7 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
             if (!caseVal) {
                 cg_error(get_pos(section.normal_case.expr), "Failed to emit case value", "QC-S278");
                 exitScope();
-                return;
+                return nullptr;
             }
             if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(caseVal)) { matchInst->addCase(constInt, sectionBlocks[i]); }
         }
@@ -8026,13 +8104,13 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
                 if (section.union_case.first.empty()) {
                     cg_error(get_pos(match_node), "non-union case in union match", "QC-MCH4");
                     exitScope();
-                    return;
+                    return nullptr;
                 }
                 std::string resolved = resolveTypeName(section.union_case.first, false);
                 if (unionContainsType(llvmTypeFor(resolved), unionName) == -1) {
                     cg_error(get_pos(match_node), "no such type in union " + unionName + ": " + section.union_case.first, "QC-MCH3");
                     exitScope();
-                    return;
+                    return nullptr;
                 }
                 idx = unionContainsType(llvmTypeFor(resolved), unionName);
             } else {
@@ -8044,7 +8122,7 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
                 if (enumMemberInfo.find(member_name) == enumMemberInfo.end()) {
                     cg_error(get_pos(match_node), "unknown enum member: " + member_name, "QC-MCH3");
                     exitScope();
-                    return;
+                    return nullptr;
                 }
                 idx = std::stoull(enumMemberInfo[member_name].first);
             }
@@ -8082,7 +8160,7 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
                 } else {
                     typeName = types[k];
                 }
-                if (typeName.empty()) return;
+                if (typeName.empty()) return nullptr;
                 std::string fullName = getCurrentNamespace().empty() ? names[k] : getCurrentNamespace() + "::" + names[k];
                 varTypes[fullName] = resolveTypeName(typeName, false);
                 llvm::Type* ty = llvmTypeFor(resolveTypeName(typeName));
@@ -8096,7 +8174,18 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
                 volatileVars[fullName] = false;
             }
         }
-        emitStmt(match_node->sections[i].body);
+        llvm::Value* val = nullptr;
+        emitStmt(match_node->sections[i].body, &val);
+        if (val) {
+            if (val->getType() != currentMergeValue->getType()) {
+                val = castValue(val, currentMergeValue->getType());
+            }
+            if (val->getType() != currentMergeValue->getType()) {
+                cg_error(get_pos(match_node), "match value type must be the same as match returning type", "QC-RLP2");
+                return nullptr;
+            }
+            currentMergeValue->addIncoming(val, builder->GetInsertBlock());
+        }
         exitScope();
         if (!builder->GetInsertBlock()->hasTerminator()) {
             if (i + 1 == sectionBlocks.size()) emitDefersDownTo(outerDepth + 1);
@@ -8106,6 +8195,9 @@ void LLVMCompiler::emitMatch(MatchNode* match_node) {
     currentBreakBB = oldBreakBB;
     exitScope();
     builder->SetInsertPoint(endBB);
+    llvm::PHINode* old = currentMergeValue;
+    currentMergeValue = oldPHI;
+    return old;
 }
 void LLVMCompiler::emitFits(FitsNode* fits) {
     std::string mangled_name = "__user_qc_fits_" + fits->type.value + "_" + fits->pattern;
@@ -8245,6 +8337,17 @@ void LLVMCompiler::emitFits(FitsNode* fits) {
     builder->SetCurrentDebugLocation(oldDebugLoc);
 }
 void LLVMCompiler::emitStmt(AnyNode node, llvm::Value** stmt_out) {
+    if (builder->GetInsertBlock() == nullptr) {
+        if (!(std::holds_alternative<NumberNode>(node) || std::holds_alternative<StringNode>(node) || std::holds_alternative<CharNode>(node) ||
+              std::holds_alternative<BoolNode>(node) || std::holds_alternative<QBoolNode>(node) || std::holds_alternative<NullptrNode>(node) ||
+              std::holds_alternative<VarAssignNode*>(node) || std::holds_alternative<FuncDefNode*>(node) ||
+              std::holds_alternative<TupleValueNode*>(node) || std::holds_alternative<ArrayDeclNode*>(node) ||
+              std::holds_alternative<ArrayLiteralNode*>(node) || std::holds_alternative<NamespaceNode*>(node) ||
+              std::holds_alternative<TypeValueNode>(node) || std::holds_alternative<FitsNode>(node) || std::holds_alternative<std::monostate>(node))) {
+            cg_error(get_pos(node), "invalid node type for a global statement", "QC-GLBL");
+            return;
+        }
+    }
     if (builder->GetInsertBlock() && builder->GetInsertBlock()->hasTerminator()) {
         warn("unreachable-code", get_pos(node), "attempted to emit into terminated basic block (unreachable code)", "QC-W001");
         return;
@@ -8258,12 +8361,31 @@ void LLVMCompiler::emitStmt(AnyNode node, llvm::Value** stmt_out) {
     } else if (auto if_node = safe_get<IfNode>(node)) {
         emitIf(if_node);
     } else if (auto while_node = safe_get<WhileNode>(node)) {
-        emitWhile(while_node);
-    } else if (std::holds_alternative<BreakNode*>(node)) {
+        llvm::Value* out = emitWhile(while_node);
+        if (stmt_out && out) *stmt_out = out;
+        return;
+    } else if (auto brek = safe_get<BreakNode>(node)) {
         if (currentBreakBB) {
             setDebugLocation(get_pos(node));
             if (!loopStack.empty()) emitDefersDownTo(loopStack.back());
-            builder->CreateBr(currentBreakBB);
+            if (brek->value.index() != 0) {
+                if (!currentMergeValue || !currentValueBreakBB) {
+                    cg_error(get_pos(node), "break with value outside of a returning loop", "QC-RLP1");
+                    return;
+                }
+                llvm::Value* val = emitExpr(brek->value);
+                if (!val) return;
+                if (val->getType() != currentMergeValue->getType()) {
+                    val = castValue(val, currentMergeValue->getType(), getExpressionType(brek->value));
+                }
+                if (val->getType() != currentMergeValue->getType()) {
+                    cg_error(get_pos(node), "break value type must be the same as loop returning type", "QC-RLP2");
+                    return;
+                }
+                currentMergeValue->addIncoming(val, builder->GetInsertBlock());
+                builder->CreateBr(currentValueBreakBB);
+            } else
+                builder->CreateBr(currentBreakBB);
         } else {
             cg_error(get_pos(node), "break outside of loop/switch", "QC-S269");
         }
@@ -8280,7 +8402,9 @@ void LLVMCompiler::emitStmt(AnyNode node, llvm::Value** stmt_out) {
             cg_error(get_pos(node), "continue outside of loop", "QC-S270");
         }
     } else if (auto for_node = safe_get<ForNode>(node)) {
-        emitFor(for_node);
+        llvm::Value* out = emitFor(for_node);
+        if (stmt_out && out) *stmt_out = out;
+        return;
     } else if (auto switch_node = safe_get<SwitchNode>(node)) {
         emitSwitch(switch_node);
     } else if (auto qif_node = safe_get<QIfNode>(node)) {
@@ -8292,7 +8416,9 @@ void LLVMCompiler::emitStmt(AnyNode node, llvm::Value** stmt_out) {
     } else if (auto arrAssign = safe_get<ArrayAssignNode>(node)) {
         emitArrAssign(arrAssign);
     } else if (auto foreach = safe_get<ForeachNode>(node)) {
-        emitForeach(foreach);
+        llvm::Value* out = emitForeach(foreach);
+        if (stmt_out && out) *stmt_out = out;
+        return;
     } else if (auto stmts = safe_get<StatementsNode>(node)) {
         setDebugLocation(get_pos(node));
         if (stmts->is_scoped) enterScope();
@@ -8324,7 +8450,9 @@ void LLVMCompiler::emitStmt(AnyNode node, llvm::Value** stmt_out) {
         defers.push_back(defer->block);
         return;
     } else if (auto match_node = safe_get<MatchNode>(node)) {
-        emitMatch(match_node);
+        llvm::Value* out = emitMatch(match_node);
+        if (stmt_out && out) *stmt_out = out;
+        return;
     } else if (LabelNode* label = std::get_if<LabelNode>(&node)) {
         setDebugLocation(label->getPos());
         llvm::BasicBlock* block = resolveLabel(label->name.value).second.first;

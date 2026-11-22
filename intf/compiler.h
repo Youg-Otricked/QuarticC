@@ -413,6 +413,8 @@ class LLVMCompiler {
     std::vector<CTError> errors;
     llvm::BasicBlock* currentBreakBB = nullptr;
     llvm::BasicBlock* currentContinueBB = nullptr;
+    llvm::BasicBlock* currentValueBreakBB = nullptr;
+    llvm::PHINode* currentMergeValue = nullptr;
     std::unordered_map<std::string, std::vector<size_t>> genericMethodIndices;
     bool isEnumType(llvm::Type* ty, std::string* outName = nullptr) {
         auto* st = llvm::dyn_cast<llvm::StructType>(ty);
@@ -1016,7 +1018,6 @@ class LLVMCompiler {
             }
         }
     }
-    llvm::Value* getCollectionLength(llvm::Value* collVal, AnyNode& collExpr);
     template <typename MapType> auto findInStack(std::vector<MapType>& stack, const std::string& key) {
         if (stack.empty()) {
             cg_error(Position(Position::INVALID_FILE_ID, 0, 0, 0), "Stack is empty", "QC-S282");
@@ -1082,6 +1083,14 @@ class LLVMCompiler {
                 return elemType + "[]";
             }
             return "int[]";
+        } else if (auto while_node = safe_get<WhileNode>(node)) {
+            return resolveTypeName(while_node->returning_type);
+        } else if (auto for_node = safe_get<ForNode>(node)) {
+            return resolveTypeName(for_node->returning_type);
+        } else if (auto foreach = safe_get<ForeachNode>(node)) {
+            return resolveTypeName(foreach->returning_type);
+        } else if (auto match_node = safe_get<MatchNode>(node)) {
+            return resolveTypeName(match_node->returning_type);
         } else if (auto unaryOp = std::get_if<UnaryOpNode*>(&node)) {
             std::string type = getExpressionType((*unaryOp)->node, strip);
             if ((*unaryOp)->op_tok.type == TokenType::MUL) {
@@ -2410,7 +2419,7 @@ class LLVMCompiler {
                 return nullptr;
             }
             auto [fieldOwnerClass, fieldAccess] = getFieldOwner(baseTypeName(typeName), propName);
-            if (!canAccessField(currentClassName, fieldOwnerClass, fieldAccess)) {
+            if (!canAccessField(baseTypeName(currentClassName), fieldOwnerClass, fieldAccess)) {
                 cg_error(prop.property_name.pos, "cannot access " + fieldAccess + " field " + propName, "QC-S248");
                 return nullptr;
             }
@@ -6037,9 +6046,9 @@ class LLVMCompiler {
     [[gnu::noinline]]
     void emitIf(IfNode* if_node);
     [[gnu::noinline]]
-    void emitFor(ForNode* for_node);
+    llvm::Value* emitFor(ForNode* for_node);
     [[gnu::noinline]]
-    void emitWhile(WhileNode* while_node);
+    llvm::Value* emitWhile(WhileNode* while_node);
     [[gnu::noinline]]
     void emitSwitch(SwitchNode* switch_node);
     [[gnu::noinline]]
@@ -6051,9 +6060,9 @@ class LLVMCompiler {
     [[gnu::noinline]]
     void emitArrDecl(ArrayDeclNode* arrDecl);
     [[gnu::noinline]]
-    void emitForeach(ForeachNode* foreach);
+    llvm::Value* emitForeach(ForeachNode* foreach);
     [[gnu::noinline]]
-    void emitMatch(MatchNode* match_node);
+    llvm::Value* emitMatch(MatchNode* match_node);
     [[gnu::noinline]]
     void emitFits(FitsNode* fits);
     void emitStmt(AnyNode node, llvm::Value** stmt_out = nullptr);

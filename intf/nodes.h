@@ -33,7 +33,6 @@ class ArrayLiteralNode;
 class ArrayAccessNode;
 class MethodCallNode;
 class PropertyAccessNode;
-class SpreadNode;
 class NamespaceNode;
 class ForeachNode;
 class QBoolNode;
@@ -56,9 +55,9 @@ class TryNode;
 using AnyNode = std::variant<std::monostate, NumberNode, StringNode, CharNode, BoolNode, QBoolNode, RefVarDeclNode*, NullptrNode, BinOpNode*,
                              UnaryOpNode*, VarAccessNode*, VarAssignNode*, AssignExprNode*, IfNode*, QIfNode*, StatementsNode*, SwitchNode*,
                              QSwitchNode*, BreakNode*, UnreachableNode*, WhileNode*, ForNode*, ContinueNode*, CallNode*, FuncDefNode*, ReturnNode*,
-                             CatchNode*, TryNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*,
-                             PropertyAccessNode*, SpreadNode*, ForeachNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*,
-                             TypeValueNode, DeferNode*, ModifierNode*, MatchNode*, TupleValueNode*, LabelNode, GotoNode, FitsNode>;
+                             CatchNode*, TryNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*,
+                             MethodCallNode*, PropertyAccessNode*, ForeachNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*,
+                             NamespaceNode*, TypeValueNode, DeferNode*, ModifierNode*, MatchNode*, TupleValueNode*, LabelNode, GotoNode, FitsNode>;
 struct GenericType {
     std::string name;
     bool isVariadic = false;
@@ -145,7 +144,7 @@ class FitsNode {
         std::string name;
         std::vector<AnyNode> tag_exprs;
         std::vector<std::pair<std::string, AnyNode>> struct_fields;
-        AnyNode *condition;
+        AnyNode* condition;
     };
     std::vector<Case> cases;
     FitsNode(Token type, std::string pattern, Token name, std::vector<Case> cases) : type(type), pattern(pattern), name(name), cases(cases) {};
@@ -491,6 +490,7 @@ class SwitchNode {
         std::vector<CaseLabel> cases;
         bool is_default = false;
         StatementsNode* body;
+    
     };
     std::vector<Section> sections;
     Position getPos() { return get_pos(value); }
@@ -499,6 +499,7 @@ class SwitchNode {
 class MatchNode {
   public:
     bool is_enum;
+    std::string returning_type;
     AnyNode value;
     struct Section {
         std::pair<std::string, std::vector<std::string>> enum_case;
@@ -530,7 +531,8 @@ class QSwitchNode {
 class BreakNode {
   public:
     Token tok;
-    BreakNode(Token t) : tok(t) {}
+    AnyNode value;
+    BreakNode(Token t, AnyNode value = std::monostate{}) : value(value), tok(t) {}
     std::string print() { return "(break)"; }
     Position getPos() { return tok.pos; }
 };
@@ -548,20 +550,26 @@ class WhileNode {
     StatementsNode* body;
     bool is_dowhile = false;
     Position getPos() { return get_pos(condition); }
-    WhileNode(AnyNode cond, StatementsNode* b, bool isdowhile = false) : condition(cond), body(b), is_dowhile(isdowhile) {}
+    WhileNode(AnyNode cond, StatementsNode* b, bool isdowhile = false, std::string returning_type = "", AnyNode default_value = std::monostate{})
+        : returning_type(returning_type), default_value(default_value), condition(cond), body(b), is_dowhile(isdowhile) {}
 
+    AnyNode default_value;
+    std::string returning_type;
     std::string print() { return "(while " + printAny(condition) + " " + body->print() + ")"; }
 };
 class ForNode {
   public:
     std::optional<AnyNode> init;
     AnyNode condition;
+    std::string returning_type;
     std::optional<AnyNode> update;
     StatementsNode* body;
 
     Position getPos() { return get_pos(condition); }
-    ForNode(std::optional<AnyNode> i, AnyNode cond, std::optional<AnyNode> u, StatementsNode* b) : init(i), condition(cond), update(u), body(b) {}
-
+    ForNode(std::optional<AnyNode> i, AnyNode cond, std::optional<AnyNode> u, StatementsNode* b, std::string returning_type = "",
+            AnyNode default_value = std::monostate{})
+        : returning_type(returning_type), default_value(default_value), init(i), condition(cond), update(u), body(b) {}
+    AnyNode default_value;
     std::string print() {
         std::string res = "(for ";
         if (this->init.has_value()) { res += "init=" + printAny(this->init.value()) + "; "; }
@@ -785,14 +793,6 @@ class PropertyAccessNode {
     Position getPos() { return property_name.pos; }
     std::string print() { return printAny(*base) + "." + property_name.value; }
 };
-class SpreadNode {
-  public:
-    AnyNode expr;
-    Position getPos() { return get_pos(expr); }
-    SpreadNode(AnyNode expression) : expr(expression) {}
-
-    std::string print() { return "@" + printAny(expr); }
-};
 class ForeachNode {
   public:
     Token elem_type;
@@ -800,8 +800,10 @@ class ForeachNode {
     AnyNode collection;
     AnyNode body;
     Position getPos() { return elem_name.pos; }
-    ForeachNode(Token type, Token name, AnyNode coll, AnyNode body_stmt) : elem_type(type), elem_name(name), collection(coll), body(body_stmt) {}
-
+    ForeachNode(Token type, Token name, AnyNode coll, AnyNode body_stmt, std::string returning_type = "", AnyNode default_value = std::monostate{}) : returning_type(returning_type),
+            default_value(default_value),  elem_type(type), elem_name(name), collection(coll), body(body_stmt) {}
+    std::string returning_type;
+    AnyNode default_value;
     std::string print() { return "foreach (" + elem_type.value + " " + elem_name.value + " in ...)"; }
 };
 class FieldAssignNode {
@@ -834,9 +836,9 @@ class NamespaceNode {
 class ParseResult;
 using Prs = std::variant<std::monostate, ParseResult, NumberNode, StringNode, CharNode, BoolNode, BinOpNode*, Error*, UnaryOpNode*, VarAccessNode*,
                          VarAssignNode*, AssignExprNode*, StatementsNode*, IfNode*, BreakNode*, UnreachableNode*, SwitchNode*, MatchNode*, WhileNode*,
-                         ForNode*, ContinueNode*, CallNode*, FuncDefNode*, CatchNode*, TryNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*, ArrayDeclNode*,
-                         ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, SpreadNode*, ForeachNode*, QBoolNode,
-                         QIfNode*, QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, RefVarDeclNode*,
+                         ForNode*, ContinueNode*, CallNode*, FuncDefNode*, CatchNode*, TryNode*, ReturnNode*, MultiReturnNode*, MultiVarDeclNode*,
+                         ArrayDeclNode*, ArrayLiteralNode*, ArrayAccessNode*, MethodCallNode*, PropertyAccessNode*, ForeachNode*,
+                         QBoolNode, QIfNode*, QSwitchNode*, ArrayAssignNode*, FieldAssignNode*, MapLiteralNode*, NamespaceNode*, RefVarDeclNode*,
                          NullptrNode, TypeValueNode, DeferNode*, ModifierNode*, TupleValueNode*, LabelNode, GotoNode, FitsNode>;
 class ParseResult {
   public:

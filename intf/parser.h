@@ -187,6 +187,7 @@ class Parser {
     Prs statement();
     Prs loop_stmt();
     Prs dowhile_stmt();
+    Prs foreach_stmt(); 
     Prs while_stmt();
     Prs for_stmt();
     Prs array_literal();

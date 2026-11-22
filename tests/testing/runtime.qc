@@ -1,6 +1,56 @@
 #nomain
 extern:
 ///////////////////
+// PANIC /////////
+/////////////////
+void __qc_panic(char* msg, char* file, int line) {
+    `inline(R"(
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, $0r
+    mov rdx, $1r
+    syscall
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, $2r
+    mov rdx, $3r
+    syscall
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, $4r
+    mov rdx, $5r
+    syscall
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, $6r
+    mov rdx, $7r
+    syscall
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, $8r
+    mov rdx, $9r
+    syscall
+    sub rsp, 8
+    mov qword [rsp], 0x20
+    mov rax, 14
+    mov rdi, 1
+    mov rsi, rsp
+    xor rdx, rdx
+    mov r10, 8
+    syscall
+    add rsp, 8
+    mov rax, 39
+    syscall
+    mov rdi, rax
+    mov rax, 186
+    syscall
+    mov rsi, rax
+    mov rdx, 6
+    mov rax, 234
+    syscall
+    )", "panic: ", 7, msg, strlen(msg), " (", 2, file, strlen(file), ")", 1, "~{memory, rdi, rax, rcx, r11, r10, rdx, rcx}");
+} 
+///////////////////
 // VARIADICS /////
 /////////////////
 struct qc_variadic {
@@ -478,7 +528,7 @@ long int qc_read(int fd, char *buffer, long int size) {
     )", n, fd, buffer, size, "~{rax}~{rdi}~{rsi}~{rdx}");
     return n;
 }
-long int qc_write(int fd, string data) {
+long int qc_write(int fd, char *data) {
     long int n = 0l;
     `inline(R"(
         mov rax, 1
@@ -487,7 +537,7 @@ long int qc_write(int fd, string data) {
         mov rdx, $3r
         syscall
         mov $0=r, rax
-    )", n, fd, data, `len(data), "~{rax}~{rdi}~{rsi}~{rdx}~{rcx}~{r11}");
+    )", n, fd, data, strlen(data), "~{rax}~{rdi}~{rsi}~{rdx}~{rcx}~{r11}");
     return n;
 }
 :extern

@@ -90,12 +90,12 @@ Development toward future critical versions may begin before the current
 critical version is complete. Multiple critical generations may therefore
 be in development simultaneously.
 
-Modern versioning places a p before patch and allows Mi to grow beyond 9. Versions below x1.5.2p2 have digit one past the second . be Mi and the rest be patch.
+Modern versioning places a p before patch and allows Mi to grow beyond 9. Versions below x1.5.3 have digit one past the second . be Mi and the rest be patch.
 Unlike semantic versioning, QuarticC versions describe the scale and category of language evolution rather than API compatibility.
 
 # Development Status
 
-Current Version: x1.5.2p2 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
+Current Version: x1.5.3 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
 
@@ -110,7 +110,7 @@ Moderate
 └─ Deprecations
 
 Minor
-└─ Deprecated IO, moved to stdlib.
+└─ Returning Stmts 
 
 Patch
 └─ N/A
@@ -982,6 +982,31 @@ Proc fits Process(p) {
 
 Now match on Proc checks that fits statement to determine the branch.
 
+## Statement Expressions
+
+Match, For, While, Do-While, Loop, and Foreach statements can be used as expressions. Here's some examples:
+
+```qc
+int x = match (my_union) returning int {
+    int (i) => 123;
+    default => -1;
+};
+```
+
+```qc
+int z = while (true) returning int {
+    break 123; // produces 123
+}((fn () -> int { unreachable; })()); // default expression
+```
+
+```qc
+int y = for ((int, int) {sum, i} = (0, 1); i < 11; i++) returning int {
+    sum += i;
+}(i); // default expression for if no value break is hit. Must be provided. (Does not exist on match as it is exhaustive)
+```
+
+Example one would be equivelent to `int x = 123` or `int x = -1` depending on my_union, two would be equivelent to `int z = 123`, and example three would be `int y = 55`.
+
 ## Simple File Example
 
 ```qc
@@ -997,10 +1022,6 @@ int main() {
 ```
 
 ---
-
-## Self Hosted Runtime
-
-There is currently an unknown bug with the self-hosted runtime.
 
 # Benchmarks
 

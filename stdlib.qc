@@ -1171,6 +1171,39 @@ namespace String {
         bool _eval() {
             return !this->isEmpty();
         }
+        Str operator+(char *other) {
+            addr_t length = 0;
+            while (other[length] != '\0') {
+                length++;
+            }
+            char *data_2 = `malloc((sizeof char) * (this->length + length + 1));
+            for (addr_t i = 0; i < this->length; i++) {
+                data_2[i] = this->data[i];
+            }
+            for (addr_t i = 0; i < length; i++) {
+                data_2[i + this->length] = other[i];
+            }
+            data_2[this->length + length] = '\0';
+            return Str(data_2, this->length + length);
+        }
+        Str operator+=(char *other) {
+            addr_t length = 0;
+            while (other[length] != '\0') {
+                length++;
+            }
+            addr_t new_length = this->length + length;
+            this->data = `realloc(
+                this->data,
+                (sizeof char) * (new_length + 1)
+            );
+            for (addr_t i = 0; i < length; i++) {
+                this->data[this->length + i] = other[i];
+            }
+            this->length = new_length;
+            this->capacity = new_length + 1;
+            this->data[this->length] = '\0';
+            return *this;
+        }
         Str operator+(Str other) {
             char *data_2 = `malloc((sizeof char) * (this->length + other.length + 1));
             for (addr_t i = 0; i < this->length; i++) {

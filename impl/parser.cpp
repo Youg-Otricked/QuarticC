@@ -977,7 +977,12 @@ Prs Parser::match_stmt() {
         res.failure(new InvalidSyntaxError("QC-S021: Expected ')' after match expression", current_tok.pos));
         return res.to_prs();
     }
+    std::string return_type;
     this->advance();
+    if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "returning") {
+        this->advance();
+        return_type = this->parseTypeString();
+    }
     if (current_tok.type != TokenType::LBRACE) {
         res.failure(new InvalidSyntaxError("QC-S022: Expected '{' after match(...)", current_tok.pos));
         return res.to_prs();
@@ -1105,6 +1110,7 @@ Prs Parser::match_stmt() {
     this->advance();
     auto mch = new MatchNode();
     mch->value = value;
+    mch->returning_type = return_type;
     mch->sections = sections;
     mch->is_enum = is_enum;
     return res.success(mch);
@@ -1301,9 +1307,30 @@ Prs Parser::loop_stmt() {
     }
     this->advance();
     Position& cond_pos = this->current_tok.pos;
+    std::string return_type;
+    this->advance();
+    if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "returning") {
+        this->advance();
+        return_type = this->parseTypeString();
+    }
     StatementsNode* body;
-    if (!this->parse_block_into(body, res)) return res.to_prs();
-    auto wn = new WhileNode(BoolNode(Token(TokenType::BOOL, "true", cond_pos)), body);
+    if (!parse_block_into(body, res)) return res.to_prs();
+    AnyNode default_node;
+    if (this->current_tok.type == TokenType::LPAREN) {
+        this->advance();
+        default_node = res.reg(this->text_unops());
+        if (res.error) return res.to_prs();
+        if (this->current_tok.type != TokenType::RPAREN) {
+            res.failure(new InvalidSyntaxError("QC-S303: Missing ) in fallback of returning loop", this->current_tok.pos));
+            return res.to_prs();
+        }
+        this->advance();
+    }
+    if (default_node.index() == 0 && !return_type.empty()) {
+        res.failure(new InvalidSyntaxError("QC-S304: Missing fallback in returning loop", this->current_tok.pos));
+        return res.to_prs();
+    }
+    auto wn = new WhileNode(BoolNode(Token(TokenType::BOOL, "true", cond_pos)), body, false, return_type, default_node);
     return res.success(wn);
 }
 Prs Parser::dowhile_stmt() {
@@ -1331,43 +1358,78 @@ Prs Parser::dowhile_stmt() {
         res.failure(new InvalidSyntaxError("QC-S034: Expected ')' after while condition", current_tok.pos));
         return res.to_prs();
     }
+    std::string return_type;
     this->advance();
+    if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "returning") {
+        this->advance();
+        return_type = this->parseTypeString();
+    }
+    AnyNode default_node;
+    if (this->current_tok.type == TokenType::LPAREN) {
+        this->advance();
+        default_node = res.reg(this->text_unops());
+        if (res.error) return res.to_prs();
+        if (this->current_tok.type != TokenType::RPAREN) {
+            res.failure(new InvalidSyntaxError("QC-S303: Missing ) in fallback of returning loop", this->current_tok.pos));
+            return res.to_prs();
+        }
+        this->advance();
+    }
+    if (default_node.index() == 0 && !return_type.empty()) {
+        res.failure(new InvalidSyntaxError("QC-S304: Missing fallback in returning loop", this->current_tok.pos));
+        return res.to_prs();
+    }
     if (current_tok.type != TokenType::SEMICOLON) {
         res.failure(new MissingSemicolonError(this->current_tok.pos));
         return res.to_prs();
     }
     this->advance();
-    auto wn = new WhileNode(cond, body, true);
+    auto wn = new WhileNode(cond, body, true, return_type, default_node);
     return res.success(wn);
 }
 
 Prs Parser::while_stmt() {
     ParseResult res;
     if (!(current_tok.type == TokenType::KEYWORD && current_tok.value == "while")) {
-        res.failure(new InvalidSyntaxError("QC-S032: Expected 'while'", current_tok.pos));
+        res.failure(new InvalidSyntaxError("QC-S032: Expected 'while'", this->current_tok.pos));
         return res.to_prs();
     }
-    advance();
-
-    if (current_tok.type != TokenType::LPAREN) {
-        res.failure(new InvalidSyntaxError("QC-S033: Expected '(' after 'while'", current_tok.pos));
+    this->advance();
+    if (this->current_tok.type != TokenType::LPAREN) {
+        res.failure(new InvalidSyntaxError("QC-S033: Expected '(' after 'while'", this->current_tok.pos));
         return res.to_prs();
     }
-    advance();
-
+    this->advance();
     AnyNode cond = res.reg(this->text_unops());
     if (res.error) return res.to_prs();
-
-    if (current_tok.type != TokenType::RPAREN) {
-        res.failure(new InvalidSyntaxError("QC-S034: Expected ')' after while condition", current_tok.pos));
+    if (this->current_tok.type != TokenType::RPAREN) {
+        res.failure(new InvalidSyntaxError("QC-S034: Expected ')' after while condition", this->current_tok.pos));
         return res.to_prs();
     }
-    advance();
-
+    std::string return_type;
+    this->advance();
+    if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "returning") {
+        this->advance();
+        return_type = this->parseTypeString();
+    }
     StatementsNode* body;
     if (!this->parse_block_into(body, res)) return res.to_prs();
-
-    auto wn = new WhileNode(cond, body);
+    AnyNode default_node;
+    if (this->current_tok.type == TokenType::LPAREN) {
+        this->advance();
+        default_node = res.reg(this->text_unops());
+        if (res.error) return res.to_prs();
+        if (this->current_tok.type != TokenType::RPAREN) {
+            res.failure(new InvalidSyntaxError("QC-S303: Missing ) in fallback of returning loop", this->current_tok.pos));
+            return res.to_prs();
+        }
+        this->advance();
+    }
+    if (default_node.index() == 0 && !return_type.empty()) {
+        res.failure(new InvalidSyntaxError("QC-S304: Missing fallback in returning loop", this->current_tok.pos));
+        return res.to_prs();
+    }
+    auto wn = new WhileNode(cond, body, false, return_type, default_node);
     return res.success(wn);
 }
 Prs Parser::for_stmt() {
@@ -1481,58 +1543,30 @@ Prs Parser::for_stmt() {
         res.failure(new InvalidSyntaxError("QC-S042: Expected ')' after for header", current_tok.pos));
         return res.to_prs();
     }
+    std::string return_type;
     this->advance();
-
-    auto parse_block = [&](StatementsNode*& out_block) -> bool {
-        if (this->current_tok.type == TokenType::LBRACE) {
-            this->advance();
-            std::vector<AnyNode> stmts;
-            while (this->current_tok.type != TokenType::RBRACE && this->current_tok.type != TokenType::EOFT) {
-                Prs st = this->statement();
-                if (std::holds_alternative<Error*>(st)) {
-                    res.failure(std::get<Error*>(st));
-                    return false;
-                }
-                AnyNode any_stmt = std::visit(
-                    [](auto arg) -> AnyNode {
-                        using T = std::decay_t<decltype(arg)>;
-                        if constexpr (std::is_constructible_v<AnyNode, T>) { return AnyNode(arg); }
-                        return std::monostate{};
-                    },
-                    st);
-                stmts.push_back(any_stmt);
-            }
-            if (this->current_tok.type != TokenType::RBRACE) {
-                res.failure(new InvalidSyntaxError("QC-S043: Expected '}' after for body", this->current_tok.pos));
-                return false;
-            }
-            this->advance();
-            out_block = new StatementsNode(stmts, true);
-            return true;
-        } else {
-            Prs st = this->statement();
-            if (std::holds_alternative<Error*>(st)) {
-                res.failure(std::get<Error*>(st));
-                return false;
-            }
-            AnyNode any_stmt = std::visit(
-                [](auto arg) -> AnyNode {
-                    using T = std::decay_t<decltype(arg)>;
-                    if constexpr (std::is_constructible_v<AnyNode, T>) { return AnyNode(arg); }
-                    return std::monostate{};
-                },
-                st);
-            std::vector<AnyNode> stmts;
-            stmts.push_back(any_stmt);
-            out_block = new StatementsNode(stmts, true);
-            return true;
-        }
-    };
-
+    if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "returning") {
+        this->advance();
+        return_type = this->parseTypeString();
+    }
     StatementsNode* body;
-    if (!parse_block(body)) return res.to_prs();
-
-    auto fn = new ForNode(init, condition, update, body);
+    if (!parse_block_into(body, res)) return res.to_prs();
+    AnyNode default_node;
+    if (this->current_tok.type == TokenType::LPAREN) {
+        this->advance();
+        default_node = res.reg(this->text_unops());
+        if (res.error) return res.to_prs();
+        if (this->current_tok.type != TokenType::RPAREN) {
+            res.failure(new InvalidSyntaxError("QC-S303: Missing ) in fallback of returning loop", this->current_tok.pos));
+            return res.to_prs();
+        }
+        this->advance();
+    }
+    if (default_node.index() == 0 && !return_type.empty()) {
+        res.failure(new InvalidSyntaxError("QC-S304: Missing fallback in returning loop", this->current_tok.pos));
+        return res.to_prs();
+    }
+    auto fn = new ForNode(init, condition, update, body, return_type, default_node);
     return res.success(fn);
 }
 Prs Parser::call(AnyNode node_to_call) {
@@ -1542,25 +1576,12 @@ Prs Parser::call(AnyNode node_to_call) {
     std::list<AnyNode> args;
 
     if (this->current_tok.type != TokenType::RPAREN) {
-
-        auto parse_arg = [&]() -> AnyNode {
-            if (this->current_tok.type == TokenType::AT) {
-                this->advance();
-                AnyNode expr = res.reg(this->text_unops());
-                if (res.error) return AnyNode{};
-                return new SpreadNode(expr);
-            } else {
-                return res.reg(this->text_unops());
-            }
-        };
-
-        AnyNode arg = parse_arg();
+        AnyNode arg = res.reg(this->text_unops());
         if (res.error) return res.to_prs();
         args.push_back(arg);
-
         while (this->current_tok.type == TokenType::COMMA) {
             this->advance();
-            arg = parse_arg();
+            arg = res.reg(this->text_unops());
             if (res.error) return res.to_prs();
             args.push_back(arg);
         }
@@ -1602,32 +1623,14 @@ Prs Parser::array_literal() {
             length = res.reg(this->atom());
             if (res.error) return res.to_prs();
         } else {
-            if (this->current_tok.type == TokenType::AT) {
+            AnyNode elem = res.reg(this->text_unops());
+            if (res.error) return res.to_prs();
+            elements.push_back(elem);
+            while (this->current_tok.type == TokenType::COMMA) {
                 this->advance();
-                AnyNode spread_expr = res.reg(this->text_unops());
-                if (res.error) return res.to_prs();
-
-                elements.push_back(new SpreadNode(spread_expr));
-            } else {
                 AnyNode elem = res.reg(this->text_unops());
                 if (res.error) return res.to_prs();
                 elements.push_back(elem);
-            }
-
-            while (this->current_tok.type == TokenType::COMMA) {
-                this->advance();
-
-                if (this->current_tok.type == TokenType::AT) {
-                    this->advance();
-                    AnyNode spread_expr = res.reg(this->text_unops());
-                    if (res.error) return res.to_prs();
-
-                    elements.push_back(new SpreadNode(spread_expr));
-                } else {
-                    AnyNode elem = res.reg(this->text_unops());
-                    if (res.error) return res.to_prs();
-                    elements.push_back(elem);
-                }
             }
         }
     }
@@ -1745,14 +1748,6 @@ Prs Parser::atom() {
     } else if (tok.type == TokenType::QBOOL) {
         this->advance();
         return res.success(QBoolNode(tok));
-    } else if (tok.type == TokenType::AT) {
-        Token op = tok;
-        this->advance();
-
-        AnyNode value = res.reg(this->atom());
-        if (res.error) return res.to_prs();
-
-        return res.success(new SpreadNode(value));
     } else if (tok.type == TokenType::KEYWORD && tok.value == "nullptr") {
         this->advance();
         return res.success(NullptrNode(tok.pos));
@@ -2135,16 +2130,9 @@ Prs Parser::atom() {
                     std::vector<AnyNode> args;
                     if (this->current_tok.type != TokenType::RPAREN) {
                         while (true) {
-                            if (this->current_tok.type == TokenType::AT) {
-                                this->advance();
-                                AnyNode expr = res.reg(this->text_unops());
-                                if (res.error) return res.to_prs();
-                                args.push_back(new SpreadNode(expr));
-                            } else {
-                                AnyNode arg = res.reg(this->text_unops());
-                                if (res.error) return res.to_prs();
-                                args.push_back(arg);
-                            }
+                            AnyNode arg = res.reg(this->text_unops());
+                            if (res.error) return res.to_prs();
+                            args.push_back(arg);
                             if (this->current_tok.type != TokenType::COMMA) break;
                             this->advance();
                         }
@@ -2261,16 +2249,9 @@ Prs Parser::atom() {
 
                     if (this->current_tok.type != TokenType::RPAREN) {
                         while (true) {
-                            if (this->current_tok.type == TokenType::AT) {
-                                this->advance();
-                                AnyNode expr = res.reg(this->text_unops());
-                                if (res.error) return res.to_prs();
-                                args.push_back(new SpreadNode(expr));
-                            } else {
-                                AnyNode arg = res.reg(this->text_unops());
-                                if (res.error) return res.to_prs();
-                                args.push_back(arg);
-                            }
+                            AnyNode arg = res.reg(this->text_unops());
+                            if (res.error) return res.to_prs();
+                            args.push_back(arg);
                             if (this->current_tok.type != TokenType::COMMA) break;
                             this->advance();
                         }
@@ -2436,16 +2417,9 @@ Prs Parser::atom() {
                         std::vector<AnyNode> args;
                         if (this->current_tok.type != TokenType::RPAREN) {
                             while (true) {
-                                if (this->current_tok.type == TokenType::AT) {
-                                    this->advance();
-                                    AnyNode expr = res.reg(this->text_unops());
-                                    if (res.error) return res.to_prs();
-                                    args.push_back(new SpreadNode(expr));
-                                } else {
-                                    AnyNode arg = res.reg(this->text_unops());
-                                    if (res.error) return res.to_prs();
-                                    args.push_back(arg);
-                                }
+                                AnyNode arg = res.reg(this->text_unops());
+                                if (res.error) return res.to_prs();
+                                args.push_back(arg);
                                 if (this->current_tok.type != TokenType::COMMA) break;
                                 this->advance();
                             }
@@ -2562,16 +2536,9 @@ Prs Parser::atom() {
 
                         if (this->current_tok.type != TokenType::RPAREN) {
                             while (true) {
-                                if (this->current_tok.type == TokenType::AT) {
-                                    this->advance();
-                                    AnyNode expr = res.reg(this->text_unops());
-                                    if (res.error) return res.to_prs();
-                                    args.push_back(new SpreadNode(expr));
-                                } else {
-                                    AnyNode arg = res.reg(this->text_unops());
-                                    if (res.error) return res.to_prs();
-                                    args.push_back(arg);
-                                }
+                                AnyNode arg = res.reg(this->text_unops());
+                                if (res.error) return res.to_prs();
+                                args.push_back(arg);
                                 if (this->current_tok.type != TokenType::COMMA) break;
                                 this->advance();
                             }
@@ -2823,16 +2790,9 @@ Prs Parser::atom() {
                     std::vector<AnyNode> args;
                     if (this->current_tok.type != TokenType::RPAREN) {
                         while (true) {
-                            if (this->current_tok.type == TokenType::AT) {
-                                this->advance();
-                                AnyNode expr = res.reg(this->text_unops());
-                                if (res.error) return res.to_prs();
-                                args.push_back(new SpreadNode(expr));
-                            } else {
-                                AnyNode arg = res.reg(this->text_unops());
-                                if (res.error) return res.to_prs();
-                                args.push_back(arg);
-                            }
+                            AnyNode arg = res.reg(this->text_unops());
+                            if (res.error) return res.to_prs();
+                            args.push_back(arg);
                             if (this->current_tok.type != TokenType::COMMA) break;
                             this->advance();
                         }
@@ -2909,6 +2869,35 @@ Prs Parser::atom() {
 
         return res.success(fn_node);
     } else if (tok.type == TokenType::KEYWORD) {
+        AnyNode node = std::monostate{};
+        bool ok = false;
+        if (tok.value == "match") {
+            node = res.reg(this->match_stmt());
+            if (!res.error) ok = !std::get<MatchNode*>(node)->returning_type.empty();
+        } else if (tok.value == "while") {
+            node = res.reg(this->while_stmt());
+            if (!res.error) ok = !std::get<WhileNode*>(node)->returning_type.empty();
+        } else if (tok.value == "for") {
+            node = res.reg(this->for_stmt());
+            if (!res.error) ok = !std::get<ForNode*>(node)->returning_type.empty();
+        } else if (tok.value == "do") {
+            node = res.reg(this->dowhile_stmt());
+            if (!res.error) ok = !std::get<WhileNode*>(node)->returning_type.empty();
+        } else if (tok.value == "loop") {
+            node = res.reg(this->loop_stmt());
+            if (!res.error) ok = !std::get<WhileNode*>(node)->returning_type.empty();
+        } else if (tok.value == "foreach") {
+            node = res.reg(this->foreach_stmt());
+            if (!res.error) ok = !std::get<ForeachNode*>(node)->returning_type.empty();
+        }
+        if (node.index() != 0) {
+            if (res.error) return res.to_prs();
+            if (!ok) {
+                res.failure(new InvalidSyntaxError("QC-RLP0: You can only use returning stmts as values", tok.pos));
+                return res.to_prs();
+            }
+            return res.success(node);
+        }
         return res.success(TypeValueNode(Token(TokenType::KEYWORD, this->parseTypeString(), tok.pos)));
     }
     return res.success(std::monostate{});
@@ -3448,6 +3437,58 @@ Prs Parser::func_def_multi(std::vector<Token> return_types, std::optional<Token>
     return res.success(new FuncDefNode(return_types, func_name, params_list, body, currentNamespace, this->in_extern, this->in_foreign, generics,
                                        is_volatile, false, modifiers, is_override));
 }
+Prs Parser::foreach_stmt() {
+    ParseResult res;
+    this->advance();
+    if (this->current_tok.type != TokenType::LPAREN) {
+        res.failure(new InvalidSyntaxError("QC-S067: Expected '(' after 'foreach'", this->current_tok.pos));
+        return res.to_prs();
+    }
+    this->advance();
+    Token elem_type = this->current_tok;
+    elem_type.value = parseTypeString();
+    if (this->current_tok.type != TokenType::IDENTIFIER) {
+        res.failure(new InvalidSyntaxError("QC-S068: Expected variable name in foreach", this->current_tok.pos));
+        return res.to_prs();
+    }
+    Token elem_name = this->current_tok;
+    this->advance();
+    if (this->current_tok.type != TokenType::KEYWORD || this->current_tok.value != "in") {
+        res.failure(new InvalidSyntaxError("QC-S069: Expected 'in' in foreach", this->current_tok.pos));
+        return res.to_prs();
+    }
+    this->advance();
+    AnyNode collection = res.reg(this->text_unops());
+    if (res.error) { return res.to_prs(); }
+    if (this->current_tok.type != TokenType::RPAREN) {
+        res.failure(new InvalidSyntaxError("QC-S016: Expected ')' after foreach", this->current_tok.pos));
+        return res.to_prs();
+    }
+    std::string return_type;
+    this->advance();
+    if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "returning") {
+        this->advance();
+        return_type = this->parseTypeString();
+    }
+    StatementsNode* body;
+    if (!parse_block_into(body, res)) return res.to_prs();
+    AnyNode default_node;
+    if (this->current_tok.type == TokenType::LPAREN) {
+        this->advance();
+        default_node = res.reg(this->text_unops());
+        if (res.error) return res.to_prs();
+        if (this->current_tok.type != TokenType::RPAREN) {
+            res.failure(new InvalidSyntaxError("QC-S303: Missing ) in fallback of returning loop", this->current_tok.pos));
+            return res.to_prs();
+        }
+        this->advance();
+    }
+    if (default_node.index() == 0 && !return_type.empty()) {
+        res.failure(new InvalidSyntaxError("QC-S304: Missing fallback in returning loop", this->current_tok.pos));
+        return res.to_prs();
+    }
+    return res.success(new ForeachNode(elem_type, elem_name, collection, body, return_type, default_node));
+}
 Prs Parser::statement() {
     ParseResult res;
     Token tok = this->current_tok;
@@ -3572,41 +3613,7 @@ Prs Parser::statement() {
     if (tok.type == TokenType::KEYWORD && tok.value == "for") { return this->for_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "do") { return this->dowhile_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "loop") { return this->loop_stmt(); }
-    if (tok.type == TokenType::KEYWORD && tok.value == "foreach") {
-        this->advance();
-
-        if (this->current_tok.type != TokenType::LPAREN) {
-            res.failure(new InvalidSyntaxError("QC-S067: Expected '(' after 'foreach'", this->current_tok.pos));
-            return res.to_prs();
-        }
-        this->advance();
-
-        Token elem_type = this->current_tok;
-        elem_type.value = parseTypeString();
-        if (this->current_tok.type != TokenType::IDENTIFIER) {
-            res.failure(new InvalidSyntaxError("QC-S068: Expected variable name in foreach", this->current_tok.pos));
-            return res.to_prs();
-        }
-        Token elem_name = this->current_tok;
-        this->advance();
-
-        if (this->current_tok.type != TokenType::KEYWORD || this->current_tok.value != "in") {
-            res.failure(new InvalidSyntaxError("QC-S069: Expected 'in' in foreach", this->current_tok.pos));
-            return res.to_prs();
-        }
-        this->advance();
-
-        AnyNode collection = res.reg(this->text_unops());
-        if (res.error) { return res.to_prs(); }
-        if (this->current_tok.type != TokenType::RPAREN) {
-            res.failure(new InvalidSyntaxError("QC-S016: Expected ')' after foreach", this->current_tok.pos));
-            return res.to_prs();
-        }
-        this->advance();
-        StatementsNode* body_block = nullptr;
-        if (!parse_block_into(body_block, res)) return res.to_prs();
-        return res.success(new ForeachNode(elem_type, elem_name, collection, body_block));
-    }
+    if (tok.type == TokenType::KEYWORD && tok.value == "foreach") { return this->foreach_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "continue") {
         this->advance();
         if (current_tok.type != TokenType::SEMICOLON) {
@@ -3635,17 +3642,22 @@ Prs Parser::statement() {
     if (tok.type == TokenType::KEYWORD && tok.value == "return") { return this->return_stmt(); }
     if (tok.type == TokenType::KEYWORD && tok.value == "break") {
         this->advance();
+        AnyNode expr;
+        if (current_tok.type != TokenType::SEMICOLON) {
+            expr = res.reg(this->text_unops());
+            if (res.error) return res.to_prs();
+        }
         if (current_tok.type != TokenType::SEMICOLON) {
             res.failure(new MissingSemicolonError(current_tok.pos));
             return res.to_prs();
         }
         this->advance();
-        return res.success(new BreakNode(tok));
+        return res.success(new BreakNode(tok, expr));
     }
     if (this->current_tok.value == "panic") {
         Token mark = this->current_tok;
         this->advance();
-        AnyNode text = res.reg(this->ternary());
+        AnyNode text = res.reg(this->text_unops());
         if (current_tok.type != TokenType::SEMICOLON) {
             res.failure(new MissingSemicolonError(current_tok.pos));
             return res.to_prs();
