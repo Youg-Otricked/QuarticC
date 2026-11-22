@@ -8059,7 +8059,7 @@ llvm::Value* LLVMCompiler::emitMatch(MatchNode* match_node) {
     llvm::PHINode* oldPHI = currentMergeValue;
     currentMergeValue = nullptr;
     if (!match_node->returning_type.empty()) {
-        currentMergeValue = llvm::PHINode::Create(builder->getInt32Ty(), 2, "match.return.merge", endBB);
+        currentMergeValue = llvm::PHINode::Create(llvmTypeFor(match_node->returning_type), 2, "match.return.merge", endBB);
         currentValueBreakBB = endBB;
     }
     for (auto& section : match_node->sections) {

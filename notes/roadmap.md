@@ -1,15 +1,8 @@
-- _isErr unwrap
+- _isErr custom unwrap
 - bitfields
 - fixed point
 - imaginary numbers
 - default type generics (e.g. = void in generic types)
-- returning keyword for loops, e.g.
-int x = returning for (int i = 0; i < 10; i++) {
-    ...
-} int (x); // fallback expression for missing break
-or maybe 
-for (...) returning int {
-}(x);
 - const methods fore const obhects
 - const references
 - static & inline functions
@@ -47,12 +40,9 @@ for (...) returning int {
 - panic, assume
 - reflection, ^^ changes purposes
 - _ unsued variable
-- comptime-trycatch (catches compiel verrors)
 TOP PRIORITY:
 1. Formatter
 1. Other stuff (private/protected inheritance) + Variadic Generics, EVEN FANCIER OPERATOR OVERLOADS
-1. Remove strings, make them STL
-1. Remove try catch maybe. I'm not sure.
 2. Metadata
 ?likely? - likely marked
 ?unlikely? - marked unlikely
