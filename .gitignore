@@ -38,6 +38,20 @@ review/*
 core.*
 .*.dot
 *.dot
-*.txt
+todo.txt
+/std_outs/
 .cmake
 logs/*
+build.ninja
+.ninja_deps
+.ninja_log
+cmake_install.cmake
+compile_commands.json
+Makefile
+/.cmake/
+
+# Generated runtime & CCLS cache
+runtime_embed.cpp
+.ccls-cache/
+*.so
+*.dylib

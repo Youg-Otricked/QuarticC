@@ -1,0 +1,4 @@
+1: .qc
+2: .quarticc
+3: .cccc
+4: .ct4
