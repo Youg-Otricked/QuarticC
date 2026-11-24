@@ -113,9 +113,7 @@ target_compile_options(qc PRIVATE
 if(ENABLE_LLVM)
     separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND "${LLVM_DEFINITIONS}")
     add_definitions(${LLVM_DEFINITIONS_LIST})
-    file(STRINGS "${QC_INC_STAGE}/llvm/Config/abi-breaking.h" _abi
-     REGEX "define LLVM_ENABLE_ABI_BREAKING_CHECKS")
-    if(_abi MATCHES "ABI_BREAKING_CHECKS 1")
+    if(LLVM_ENABLE_ABI_BREAKING_CHECKS)
         target_compile_definitions(qc PRIVATE LLVM_ENABLE_ABI_BREAKING_CHECKS=1)
     else()
         target_compile_definitions(qc PRIVATE LLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1)
