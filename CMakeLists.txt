@@ -13,7 +13,10 @@ if(APPLE OR EMSCRIPTEN)
     set(CMAKE_CXX_STANDARD 20)
 endif()
 find_package(LLVM REQUIRED CONFIG)
-find_package(Clang REQUIRED CONFIG)
+find_package(Clang REQUIRED CONFIG
+    HINTS "${LLVM_CMAKE_DIR}/../clang" "${LLVM_INSTALL_PREFIX}/lib/cmake/clang"
+    NO_DEFAULT_PATH
+)
 if(LLVM_VERSION_MAJOR LESS 21)
     message(FATAL_ERROR "LLVM 21+ required, found ${LLVM_VERSION_MAJOR}")
 endif()
@@ -117,16 +120,26 @@ if(ENABLE_LLVM)
     endif()
     add_definitions(-D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS)
     target_compile_definitions(qc PRIVATE ENABLE_LLVM)
-    target_include_directories(qc BEFORE PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
-    target_link_directories(qc BEFORE PRIVATE ${LLVM_LIBRARY_DIRS})
+    target_include_directories(qc SYSTEM BEFORE PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
+    find_library(EXACT_LLVM_LIB
+        NAMES LLVM LLVM-${LLVM_VERSION_MAJOR}
+        PATHS "${LLVM_LIBRARY_DIRS}"
+        NO_DEFAULT_PATH REQUIRED
+    )
+    find_library(EXACT_CLANG_LIB
+        NAMES clang clang-${LLVM_VERSION_MAJOR}
+        PATHS "${LLVM_LIBRARY_DIRS}"
+        NO_DEFAULT_PATH REQUIRED
+    )
     set_target_properties(qc PROPERTIES
         BUILD_RPATH "${LLVM_LIBRARY_DIRS}"
         INSTALL_RPATH "${LLVM_LIBRARY_DIRS}"
+        BUILD_WITH_INSTALL_RPATH ON
     )
     target_link_libraries(qc PRIVATE
-        LLVM
+        "${EXACT_LLVM_LIB}"
+        "${EXACT_CLANG_LIB}"
         ${LLVM_SYSTEM_LIBS}
-        libclang
     )
 endif()
 target_include_directories(qc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

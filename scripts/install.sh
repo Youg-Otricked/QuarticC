@@ -568,7 +568,7 @@ else
         }
         ok "Built C^4"
         cp build/qc "$QC_HOME/bin/qc"
-        cp build/std_outs/std "$QC_HOME/lib/std"
+        cp build/std_outs/std/* -R "$QC_HOME/lib/std"
     else
         die "invalid option"
     fi
