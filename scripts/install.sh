@@ -1,11 +1,17 @@
 #!/bin/sh
+RED=$(printf '\033[0;31m')
+NC=$(printf '\033[0m')
+die() {
+    printf ' %serror:%s %s\n' "$RED" "$NC" "$*" >&2
+    exit 1
+}
 MODE=""
 FORK=""
 TAG="${QC_VERSION:-}"
 LLVM_PATH="${QC_LLVM_PATH:-}"
 while [ $# -gt 0 ]; do
     case "$1" in
-    --make-setup) MODE=--setup ;;
+    --setup) MODE=--setup ;;
     --update) MODE=--update ;;
     --version)
         TAG=$2
@@ -37,17 +43,11 @@ PM_UPDATED=""
 GREEN=$(printf '\033[0;32m')
 GLOW_GREEN=$(printf '\033[1;92m')
 BLUE=$(printf '\033[0;34m')
-RED=$(printf '\033[0;31m')
 YELLOW=$(printf '\033[1;33m')
 PURPLE=$(printf '\033[38;2;94;80;134m')
-NC=$(printf '\033[0m')
 info() { printf '%s==>%s %s\n' "$YELLOW" "$NC" "$*"; }
 ok() { printf ' %s%s%s\n' "$GLOW_GREEN" "$*" "$NC"; }
 warn() { printf ' %s! %s%s\n' "$YELLOW" "$*" "$NC" >&2; }
-die() {
-    printf ' %serror:%s %s\n' "$RED" "$NC" "$*" >&2
-    exit 1
-}
 have_tty() { [ -z "${QC_YES:-}" ] && (: </dev/tty) 2>/dev/null; }
 version_ge() {
     awk -v a="$1" -v b="$2" '
