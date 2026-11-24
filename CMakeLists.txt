@@ -120,28 +120,22 @@ if(ENABLE_LLVM)
     endif()
     add_definitions(-D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS)
     target_compile_definitions(qc PRIVATE ENABLE_LLVM)
-    foreach(inc_dir IN LISTS LLVM_INCLUDE_DIRS CLANG_INCLUDE_DIRS)
-        target_compile_options(qc PRIVATE "-I${inc_dir}")
-    endforeach()
-    find_library(EXACT_LLVM_LIB
-        NAMES LLVM LLVM-${LLVM_VERSION_MAJOR}
-        PATHS "${LLVM_LIBRARY_DIRS}"
-        NO_DEFAULT_PATH REQUIRED
-    )
-    find_library(EXACT_CLANG_LIB
-        NAMES clang clang-${LLVM_VERSION_MAJOR}
-        PATHS "${LLVM_LIBRARY_DIRS}"
-        NO_DEFAULT_PATH REQUIRED
-    )
-    set_target_properties(qc PROPERTIES
-        BUILD_RPATH "${LLVM_LIBRARY_DIRS}"
-        INSTALL_RPATH "${LLVM_LIBRARY_DIRS}"
-        BUILD_WITH_INSTALL_RPATH ON
-    )
+    set(CUSTOM_LLVM_INCLUDE "" CACHE PATH "Override LLVM/Clang include directory")
+    set(CUSTOM_LLVM_LIB "" CACHE PATH "Override LLVM/Clang library directory")
+    if(CUSTOM_LLVM_INCLUDE)
+        target_include_directories(qc BEFORE PRIVATE "${CUSTOM_LLVM_INCLUDE}")
+    else()
+        target_include_directories(qc PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
+    endif()
+    if(CUSTOM_LLVM_LIB)
+        target_link_directories(qc BEFORE PRIVATE "${CUSTOM_LLVM_LIB}")
+    else()
+        target_link_directories(qc PRIVATE ${LLVM_LIBRARY_DIRS})
+    endif()
     target_link_libraries(qc PRIVATE
-        "${EXACT_LLVM_LIB}"
-        "${EXACT_CLANG_LIB}"
+        LLVM
         ${LLVM_SYSTEM_LIBS}
+        libclang
     )
 endif()
 target_include_directories(qc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

@@ -2,6 +2,7 @@
 MODE=""
 FORK=""
 TAG="${QC_VERSION:-}"
+LLVM_PATH="${QC_LLVM_PATH:-}"
 while [ $# -gt 0 ]; do
     case "$1" in
     --update) MODE=--update ;;
@@ -11,6 +12,10 @@ while [ $# -gt 0 ]; do
         ;;
     --fork)
         FORK=$2
+        shift
+        ;;
+    --llvm-path)
+        LLVM_PATH=$2
         shift
         ;;
     build) MODE=build ;;
@@ -132,6 +137,15 @@ install_pkg() {
 }
 need_pkg() { install_pkg "$1" || die "failed to install $1 (log: $LOG)"; }
 find_llvm_config() {
+    if [ -n "$LLVM_PATH" ]; then
+        for c in "$LLVM_PATH/bin/llvm-config" "$LLVM_PATH"; do
+            if [ -x "$c" ] && [ ! -d "$c" ]; then
+                echo "$c"
+                return 0
+            fi
+        done
+        die "llvm-config not found under --llvm-path '$LLVM_PATH'"
+    fi
     for c in "llvm-config-$LLVM_VER" "$QC_HOME"/llvm-"$LLVM_VER".*/bin/llvm-config "$(brew --prefix "llvm@$LLVM_VER" 2>/dev/null)/bin/llvm-config" llvm-config; do
         if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then
             v=$("$c" --version 2>/dev/null)
@@ -376,7 +390,7 @@ compile_source() {
     dbg=$ANSWER
     build_type=Release
     [ "$dbg" = y ] && build_type=Debug
-    set -- -S . -B build -DCMAKE_BUILD_TYPE="$build_type" -DLLVM_DIR="$("$LLVM_CONFIG" --cmakedir)" -DClang_DIR="$clang_cmake" -DCMAKE_PREFIX_PATH="$("$LLVM_CONFIG" --prefix)" -DCMAKE_BUILD_RPATH="$llvm_lib" -DCMAKE_INSTALL_RPATH="$llvm_lib"
+    set -- -S . -B build -DCMAKE_BUILD_TYPE="$build_type"  -DCUSTOM_LLVM_INCLUDE="$("$LLVM_CONFIG" --includedir)" -DCUSTOM_LLVM_LIB="$llvm_lib" -DLLVM_DIR="$("$LLVM_CONFIG" --cmakedir)" -DClang_DIR="$clang_cmake" -DCMAKE_PREFIX_PATH="$("$LLVM_CONFIG" --prefix)" -DCMAKE_BUILD_RPATH="$llvm_lib" -DCMAKE_INSTALL_RPATH="$llvm_lib"
     [ "$x86" = y ] && set -- "$@" -DX86_ONLY=On
     log="${TMPDIR:-/tmp}/qc-build.log"
     CC=$CC CXX=$CXX cmake "$@" >"$log" 2>&1 || {
@@ -549,7 +563,7 @@ else
         dbg=$ANSWER
         build_type=Release
         [ "$dbg" = y ] && build_type=Debug
-        set -- -S . -B build -DCMAKE_BUILD_TYPE="$build_type" -DLLVM_DIR="$("$LLVM_CONFIG" --cmakedir)" -DClang_DIR="$clang_cmake" -DCMAKE_PREFIX_PATH="$("$LLVM_CONFIG" --prefix)" -DCMAKE_BUILD_RPATH="$llvm_lib" -DCMAKE_INSTALL_RPATH="$llvm_lib"
+        set -- -S . -B build -DCMAKE_BUILD_TYPE="$build_type" -DCUSTOM_LLVM_INCLUDE="$("$LLVM_CONFIG" --includedir)" -DCUSTOM_LLVM_LIB="$llvm_lib" -DLLVM_DIR="$("$LLVM_CONFIG" --cmakedir)" -DClang_DIR="$clang_cmake" -DCMAKE_PREFIX_PATH="$("$LLVM_CONFIG" --prefix)" -DCMAKE_BUILD_RPATH="$llvm_lib" -DCMAKE_INSTALL_RPATH="$llvm_lib"
         [ "$x86" = y ] && set -- "$@" -DX86_ONLY=On
         log="${TMPDIR:-/tmp}/qc-build.log"
         CC=$CC CXX=$CXX cmake "$@" >"$log" 2>&1 || {
