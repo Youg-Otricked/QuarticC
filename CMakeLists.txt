@@ -14,7 +14,7 @@ if(APPLE OR EMSCRIPTEN)
 endif()
 find_package(LLVM REQUIRED CONFIG)
 find_package(Clang REQUIRED CONFIG
-    HINTS "${LLVM_CMAKE_DIR}/../clang" "${LLVM_INSTALL_PREFIX}/lib/cmake/clang"
+    PATHS "${LLVM_CMAKE_DIR}/../clang" "${LLVM_INSTALL_PREFIX}/lib/cmake/clang"
     NO_DEFAULT_PATH
 )
 if(LLVM_VERSION_MAJOR LESS 21)
@@ -120,7 +120,9 @@ if(ENABLE_LLVM)
     endif()
     add_definitions(-D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS)
     target_compile_definitions(qc PRIVATE ENABLE_LLVM)
-    target_include_directories(qc BEFORE PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
+    foreach(inc_dir IN LISTS LLVM_INCLUDE_DIRS CLANG_INCLUDE_DIRS)
+        target_compile_options(qc PRIVATE "-I${inc_dir}")
+    endforeach()
     find_library(EXACT_LLVM_LIB
         NAMES LLVM LLVM-${LLVM_VERSION_MAJOR}
         PATHS "${LLVM_LIBRARY_DIRS}"
