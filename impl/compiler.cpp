@@ -5905,8 +5905,8 @@ llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
                 std::pair<std::string, std::vector<std::string>> values = memberIt->second;
                 llvm::Value* enumVal = llvm::ConstantAggregateZero::get(enumIt->second);
                 enumVal = builder->CreateInsertValue(enumVal,
-                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0), std::stoull(values.first),
-                                                                            userTypes.at(baseTypeName(resolved)).enumType.contains("int")),
+                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0), !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType) ? std::stoll(values.first) : std::stoull(values.first),
+                                                                            !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType)),
                                                      {0});
                 return enumVal;
             } else {
@@ -6072,8 +6072,8 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
                 std::pair<std::string, std::vector<std::string>> values = memberIt->second;
                 llvm::Value* enumVal = llvm::ConstantAggregateZero::get(enumIt->second);
                 enumVal = builder->CreateInsertValue(enumVal,
-                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0), std::stoull(values.first),
-                                                                            userTypes.at(baseTypeName(resolved)).enumType.contains("int")),
+                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0), !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType) ? std::stoll(values.first) : std::stoull(values.first),
+                                                                            !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType)),
                                                      {0});
                 if ((*call)->args.size() != values.second.size()) {
                     cg_error(get_pos(*varAccess), "incorrect number of tag values for enum member " + fullName, "QC-EM03");
@@ -8124,7 +8124,9 @@ llvm::Value* LLVMCompiler::emitMatch(MatchNode* match_node) {
                     exitScope();
                     return nullptr;
                 }
-                idx = std::stoull(enumMemberInfo[member_name].first);
+                std::string enum_type = baseTypeName(resolveTypeName(type_name));
+                std::string value = enumMemberInfo[member_name].first;
+                idx = !is_unsigned_type(userTypes.at(enum_type).enumType) ? std::stoll(value) : std::stoull(value);
             }
             llvm::ConstantInt* caseVal = llvm::cast<llvm::ConstantInt>(
                 llvm::ConstantInt::get(llvm::dyn_cast<llvm::StructType>(matchTy)->getElementType(0), idx));

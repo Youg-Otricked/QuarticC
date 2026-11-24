@@ -4712,7 +4712,12 @@ Prs Parser::statement() {
                 counter++;
             } else {
                 this->advance();
-                value = this->current_tok.value;
+                std::string sign = "";
+                if (this->current_tok.type == TokenType::MINUS) {
+                    sign = "-";
+                    this->advance();
+                }
+                value = sign + this->current_tok.value;
                 can_auto = false;
                 this->advance();
             }
@@ -5771,9 +5776,7 @@ Aer Parser::parse() {
         stmts.push_back(stmt);
     }
 
-    if (!has_main && !no_main) {
-        no_main = true;
-    }
+    if (!has_main && !no_main) { no_main = true; }
     for (auto& [name, ut] : user_types) {
         if (ut.kind == UserTypeKind::Class && !ut.baseClassName.empty()) {
             std::string baseKey = ut.baseClassName;

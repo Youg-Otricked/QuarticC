@@ -249,7 +249,7 @@ namespace String {
     /// ~@constraint numeric T must be a number type for conversion.
     /// @param value The number value to convert.
     /// @summary Converts a number to a Str. Caller owns the string.
-    Str toStr<T(numeric:)>(T value);
+    Str toStr<T(numeric:)>(T value) {
         if (value == 0) {
             return Str("0");
         }
