@@ -1,6 +1,6 @@
 #include<math_utils.h>
 namespace Exported {
-    #include <IO, std>
+    #include <IO, std/io.hqc>
 }
 
 int main() {

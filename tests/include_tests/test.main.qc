@@ -1,6 +1,6 @@
 namespace Exported {
     #include<ImImportant, ImUnimportant::IsImportant, ./test.a.qc>
-    #include<IO, std>
+    #include<IO, std/io.hqc>
 }
 int main() {
     IO::qout("%i, %i", ImImportant::x, ImImportant::add(123, 321));

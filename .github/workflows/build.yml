@@ -40,27 +40,27 @@ jobs:
           git config user.email "actions@github.com"
           git tag ${{ steps.get_version.outputs.version }}
           git push origin ${{ steps.get_version.outputs.version }}  
-  upload-extras:
-    needs: [tag]
-    if: needs.tag.outputs.exists != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Upload stdlib
-        uses: actions/upload-artifact@v4
-        with:
-          name: stdlib.qc
-          path: stdlib.qc
-      - name: Upload syntax
-        uses: actions/upload-artifact@v4
-        with:
-          name: syntax.qc
-          path: syntax.qc
-      - name: Upload test
-        uses: actions/upload-artifact@v4
-        with:
-          name: test.qc
-          path: test.qc
+#  upload-extras:
+#    needs: [tag]
+#    if: needs.tag.outputs.exists != 'true'
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v4
+#      - name: Upload stdlib
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: stdlib.qc
+#          path: stdlib.qc
+#      - name: Upload syntax
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: syntax.qc
+#          path: syntax.qc
+#      - name: Upload test
+#        uses: actions/upload-artifact@v4
+#       with:
+#          name: test.qc
+#          path: test.qc
 #  build-wasm:
 #    runs-on: ubuntu-latest
 #    steps:
@@ -175,7 +175,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.tag.outputs.version }}
-          files: |
-            qc-linux/qc-linux
-            qc-macos/qc-macos
-            stdlib.qc/stdlib.qc
+#          files: |
+#            qc-linux/qc-linux
+#            qc-macos/qc-macos
+#            stdlib.qc/stdlib.qc

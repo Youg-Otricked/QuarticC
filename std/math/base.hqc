@@ -1,0 +1,93 @@
+//!===----------------------------------------------------------------------===!//
+//!
+//! Part of the QuarticC programming language standard library, MIT license.
+//!
+//!===----------------------------------------------------------------------===!//
+//!
+//! Standard Library core math functions.
+
+namespace Exported {
+    #include <Errors, ../errors.qc>
+}
+namespace Math {
+    /// @name e
+    /// @summary Returns a estimation of e up to 20 digits of precision.
+    double e();
+    /// @name pi
+    /// @summary Returns a estimation of pi up to 20 digits of precision.
+    double pi();
+    /// @name max
+    /// @generics
+    /// ~@name T
+    /// ~@constraint numeric
+    /// @param a The first value.
+    /// @param b The second value.
+    /// @summary Returns the larger of a or b.
+    T max<T(numeric:)>(T a, T b) {
+        if (a > b) {
+            return a;
+        }
+        return b;
+    }
+    /// @name min
+    /// @generics
+    /// ~@name T
+    /// ~@constraint numeric
+    /// @param a The first value.
+    /// @param b The second value.
+    /// @summary Returns the smaller of a or b.
+    T min<T(numeric:)>(T a, T b) {
+        if (a > b) {
+            return b;
+        }
+        return a;
+    }
+    /// @name sqrt
+    /// @generics
+    /// ~@name T
+    /// ~@constraint numeric
+    /// @param val The value.
+    /// @summary Returns the square root of val.
+    double sqrt<T(numeric:)>(T val) {
+        return `to_double(val) #^ 0.5;
+    }
+    /// @name root
+    /// @generics
+    /// ~@name T
+    /// ~@constraint numeric
+    /// @param a The base.
+    /// @param b The root.
+    /// @summary Returns the b root of a.
+    double root<T(numeric:)>(T a, T b) {
+        double base = `to_double(a);
+        double exp  = 1.0 / `to_double(b);
+        return base #^ exp;
+    }
+    /// @name Floating
+    /// @summary A floating point primitive number
+    type Floating = float | double;
+    /// @name ceil
+    /// @param a A decimal number
+    /// @summary Returns a, rounded up to the nearest whole.
+    int ceil(Floating a);
+    /// @name floor
+    /// @param a A decimal number
+    /// @summary Returns a, rounded down to the nearest whole.
+    int floor(Floating a);
+    /// @name sin
+    /// @param x A decimal number, in radians.
+    /// @summary Returns the sine of x.
+    double sin(double x);
+    /// @name cos
+    /// @param x A decimal number, in radians.
+    /// @summary Returns the cosine of x.
+    double cos(double x);
+    /// @name tan
+    /// @param x A decimal number, in radians.
+    /// @summary Returns the tangent of x.
+    double tan(double x);
+    /// @name log
+    /// @param x A decimal number.
+    /// @summary Returns the natural logarithm of x, or Error::Codes.InvalidArgument if x is <= 0.
+    Errors::Error<double> log(double x);
+}

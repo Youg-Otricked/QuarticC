@@ -5,6 +5,7 @@
 #include <vector>
 #include <unordered_map>
 inline bool loose;
+inline bool uses_std = false;
 inline std::vector<std::string> to_link;
 inline std::vector<std::string> to_link_dir;
 inline std::unordered_map<std::string, std::string> aliases;

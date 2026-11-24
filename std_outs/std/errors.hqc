@@ -1,0 +1,14 @@
+//!===----------------------------------------------------------------------===!//
+//!
+//! Part of the QuarticC programming language standard library, MIT license.
+//!
+//!===----------------------------------------------------------------------===!//
+//!
+//! Standard Library error types. Contains the most basic core error codes.
+
+namespace Errors {
+    /// Enum of most important error codes
+    enum Codes { OK; Unknown; NotFound; InvalidArgument; OutOfBounds; Unsupported; }
+    /// Union wrapping above enum
+    type Error<T> = T|Codes;
+}

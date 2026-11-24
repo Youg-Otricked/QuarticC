@@ -1,0 +1,297 @@
+//!===----------------------------------------------------------------------===!//
+//!
+//! Part of the QuarticC programming language standard library, MIT license.
+//!
+//!===----------------------------------------------------------------------===!//
+//!
+//! Standard Library doubly-linked list container.
+
+namespace Exported {
+    #include <CoreConcepts, ../core-concepts.hqc>
+}
+namespace List {
+    /// @name Node
+    /// @generics
+    /// ~@param T
+    /// @summary Doubly-linked list node storing an element and neighbor pointers.
+    class Node<T> {
+        T data;
+        Node<T>* next;
+        Node<T>* prev;
+
+        /// @constructor
+        /// @param data Value to store in the node.
+        /// @summary Constructs a detached list node with data.
+        Node(T data) {
+            this->data = data;
+            this->next = nullptr;
+            this->prev = nullptr;
+        }
+    }
+
+    namespace Iterator {
+        /// @name It
+        /// @generics
+        /// ~@param T
+        /// @summary Bidirectional iterator for List::List.
+        class It<T> {
+            Node<T>* current;
+
+            /// @constructor
+            /// @param node Starting node for the iterator.
+            /// @summary Constructs an iterator positioned at node.
+            It(Node<T>* node) {
+                this->current = node;
+            }
+
+            /// @name _atEnd
+            /// @summary Returns true if the iterator has passed the end of the list.
+            bool _atEnd() {
+                return this->current == nullptr;
+            }
+
+            /// @name _next
+            /// @summary Returns the current element and advances to the next node. Panics if at end.
+            T _next() {
+                if (!this->current) {
+                    panic "attempted to iterate a empty list";
+                }
+                T value = this->current->data;
+                this->current = this->current->next;
+                return value;
+            }
+
+            /// @name _atStart
+            /// @summary Returns true if the iterator is at the head of the list.
+            bool _atStart() {
+                return this->current->prev == nullptr;
+            }
+
+            /// @name _prev
+            /// @summary Returns the current element and moves backward to the previous node. Panics if null.
+            T _prev() {
+                if (!this->current) {
+                    panic "attempted to iterate a empty list";
+                }
+                T value = this->current->data;
+                this->current = this->current->prev;
+                return value;
+            }
+        }
+    }
+
+    /// @name List
+    /// @generics
+    /// ~@param T
+    /// @summary Heap-allocated doubly-linked list container.
+    class List<T> {
+        Node<T>* head;
+        Node<T>* tail;
+        int size;
+
+        /// @constructor
+        /// @summary Default constructor. Initializes an empty list.
+        List() {
+            this->head = nullptr;
+            this->tail = nullptr;
+            this->size = 0;
+        }
+
+        private Node<T>* _getNode(int index) {
+            if (index < 0 || index >= this->size) {
+                return nullptr;
+            }
+            Node<T>* current;
+            if (index < this->size / 2) {
+                current = this->head;
+                for (int i = 0; i < index; i++) {
+                    current = current->next;
+                }
+            } else {
+                current = this->tail;
+                for (int i = this->size - 1; i > index; i--) {
+                    current = current->prev;
+                }
+            }
+            return current;
+        }
+
+        /// @name isEmpty
+        /// @summary Returns true if the list contains no elements.
+        bool isEmpty() {
+            return this->size == 0;
+        }
+
+        /// @name front
+        /// @summary Returns the first element in the list.
+        T front() {
+            return this->head->data;
+        }
+
+        /// @name back
+        /// @summary Returns the last element in the list.
+        T back() {
+            return this->tail->data;
+        }
+
+        /// @name pushFront
+        /// @param value Element to prepend.
+        /// @summary Inserts a new element at the front of the list.
+        void pushFront(T value) {
+            Node<T>* node = `malloc(sizeof Node<T>);
+            *node = Node<T>(value);
+            node.next = this->head;
+            if (this->head != nullptr) {
+                this->head->prev = node;
+            } else {
+                this->tail = node;
+            }
+            this->head = node;
+            this->size++;
+        }
+
+        /// @name pushBack
+        /// @param value Element to append.
+        /// @summary Inserts a new element at the back of the list.
+        void pushBack(T value) {
+            Node<T>* node = `malloc(sizeof Node<T>);
+            *node = Node<T>(value);
+            node.prev = this->tail;
+            if (this->tail != nullptr) {
+                this->tail->next = node;
+            } else {
+                this->head = node;
+            }
+            this->tail = node;
+            this->size++;
+        }
+
+        /// @name popFront
+        /// @summary Removes and frees the first node in the list.
+        void popFront() {
+            if (this->head == nullptr) {
+                return;
+            }
+            Node<T>* old = this->head;
+            this->head = this->head->next;
+            if (this->head != nullptr) {
+                this->head->prev = nullptr;
+            } else {
+                this->tail = nullptr;
+            }
+            `free(old);
+            this->size--;
+        }
+
+        /// @name popBack
+        /// @summary Removes and frees the last node in the list.
+        void popBack() {
+            if (this->tail == nullptr) {
+                return;
+            }
+            Node<T>* old = this->tail;
+            this->tail = this->tail->prev;
+            if (this->tail != nullptr) {
+                this->tail->next = nullptr;
+            } else {
+                this->head = nullptr;
+            }
+            `free(old);
+            this->size--;
+        }
+
+        /// @name clear
+        /// @summary Removes and frees all nodes in the list.
+        void clear() {
+            Node<T>* current = this->head;
+            while (current != nullptr) {
+                Node<T>* next = current->next;
+                `free(current);
+                current = next;
+            }
+            this->head = nullptr;
+            this->tail = nullptr;
+            this->size = 0;
+        }
+
+        /// @name contains
+        /// @param value Element to search for.
+        /// @summary Returns true if value exists in the list.
+        bool contains(T value) {
+            Node<T>* current = this->head;
+            while (current != nullptr) {
+                if (current->data == value) {
+                    return true;
+                }
+                current = current->next;
+            }
+            return false;
+        }
+
+        /// @name _begin
+        /// @summary Returns an iterator pointing to the head of the list.
+        Iterator::It<T> _begin() {
+            return Iterator::It<T>(this->head);
+        }
+
+        /// @name _end
+        /// @summary Returns an iterator representing the past-the-end position.
+        Iterator::It<T> _end() {
+            return Iterator::It<T>(nullptr);
+        }
+
+        /// @_destroy
+        /// @inval this
+        /// @summary Frees all nodes and invalidates the list.
+        void _destroy() {
+            this->clear();
+
+            this->head = nullptr;
+            this->tail = nullptr;
+            this->size = -1;
+        }
+
+        /// @indexing
+        /// @param index Zero-based element index.
+        /// @return Reference to the element at index.
+        /// @summary Accesses the element at index in O(n) time.
+        T& operator[](addr_t index) {
+            Node<T>* node = this->_getNode(index);
+            if (node == nullptr) {
+                return nullptr;
+            }
+            return node.data;
+        }
+
+        /// @name operator[]=
+        /// @param data Source buffer to copy from. List does not own.
+        /// @param length Number of elements in data.
+        /// @summary Replaces list contents with length elements copied from data.
+        void operator[]=(T* data, addr_t length) {
+            while (this->size != 0) this->popBack();
+            this->head = nullptr;
+            this->tail = nullptr;
+            for (int i = 0; i < length; i++) {
+                this->pushBack(data[i]);
+            }
+        }
+
+        /// @assignment
+        /// @param other Source list to copy elements from. List does not own.
+        /// @return Reference to this list.
+        /// @summary Deep-copies all elements from other into this list.
+        List<T>& operator=(List<T> other) {
+            this->clear();
+
+            Node<T>* current = other.head;
+
+            while (current != nullptr) {
+                this->pushBack(current->data);
+                current = current->next;
+            }
+
+            return this;
+        }
+    }
+    List proves CoreConcepts::Allocated;
+}

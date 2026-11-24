@@ -283,6 +283,8 @@ Options:
     Adds a directory to linking search path
   -l
     Links a .so / .o / .a file
+  -dynamic
+    Compile to a .so
 In Code:
   When writing code, you can use these same options as inline keywords at the top of your file:
   // @print-ast == -a

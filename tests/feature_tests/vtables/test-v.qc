@@ -1,5 +1,5 @@
 namespace Exported {
-    #include <IO, std>
+    #include <IO, std/io.hqc>
 }
 class NoVtable {
     NoVtable() {}

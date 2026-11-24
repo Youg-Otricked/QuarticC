@@ -1,0 +1,432 @@
+//!===----------------------------------------------------------------------===!//
+//!
+//! Part of the QuarticC programming language standard library, MIT license.
+//!
+//!===----------------------------------------------------------------------===!//
+//!
+//! Standard Library hash-based unordered set and key-value map containers.
+
+namespace Exported {
+    #include <CoreConcepts, ../core-concepts.hqc>
+}
+namespace Pair {
+    /// @name Pair
+    /// @generics
+    /// ~@param A
+    /// ~@param B
+    /// @summary Generic two-element tuple struct.
+    struct Pair<A, B> {
+        A first;
+        B second;
+    }
+    /// @name makePair
+    /// @generics
+    /// ~@param A
+    /// ~@param B
+    /// @param first First element.
+    /// @param second Second element.
+    /// @summary Constructs a Pair<A, B> from first and second.
+    Pair<A, B> makePair<A, B>(A first, B second) {
+        return Pair<A, B>{first, second};
+    }
+}
+namespace Unordered {
+    /// @name Hash
+    /// @summary Concept requiring a type to expose a hash() method returning addr_t.
+    concept Hash {
+        1_of {
+            addr_t hash();
+            addr_t hash(Self self);
+        }
+    }
+    /// @name SetNode
+    /// @generics
+    /// ~@param T
+    /// @summary Intrusive bucket linked-list node for Unordered::Set.
+    class SetNode<T> {
+        T value;
+        SetNode<T>* next;
+    }
+    /// @name MapNode
+    /// @generics
+    /// ~@param K
+    /// ~@param V
+    /// @summary Intrusive bucket linked-list node for Unordered::Map.
+    class MapNode<K, V> {
+        Pair::Pair<K, V> data;
+        MapNode<K, V>* next;
+    }
+    namespace Iterators {
+        /// @name MapIt
+        /// @generics
+        /// ~@param K
+        /// ~@param V
+        /// @summary Forward iterator yielding Pair<K, V>& entries from Unordered::Map.
+        class MapIt<K, V> {
+            MapNode<K, V>** buckets;
+            int num_buckets;
+            int bucket_index;
+            MapNode<K, V>* current;
+
+            /// @constructor
+            /// @param buckets Bucket array pointer.
+            /// @param num_buckets Total bucket count.
+            /// @param is_end True to construct a past-the-end iterator.
+            /// @summary Constructs a forward iterator over map buckets.
+            MapIt(MapNode<K, V>** buckets, int num_buckets, bool is_end) {
+                this->buckets = buckets;
+                this->num_buckets = num_buckets;
+                if (is_end) {
+                    this->bucket_index = num_buckets;
+                    this->current = nullptr;
+                } else {
+                    this->bucket_index = 0;
+                    this->current = nullptr;
+                    this->_advanceToNext();
+                }
+            }
+            private void _advanceToNext() {
+                while (this->current == nullptr && this->bucket_index < this->num_buckets) {
+                    this->current = this->buckets[this->bucket_index];
+                    if (this->current == nullptr) this->bucket_index++;
+                }
+            }
+            /// @name _atEnd
+            /// @summary Returns true if the iterator has exhausted all buckets.
+            bool _atEnd() {
+                return this->bucket_index >= this->num_buckets;
+            }
+            /// @name _next
+            /// @summary Advances the iterator and returns a reference to the current key-value pair. Panics if at end.
+            Pair::Pair<K, V>& _next() {
+                if (!this->current) {
+                    panic "cannot iterate an empty";
+                }
+                Pair::Pair<K, V>& val = this->current->data;
+                this->current = this->current->next;
+                if (this->current == nullptr) {
+                    this->bucket_index++;
+                    this->_advanceToNext();
+                }
+                return val;
+            }
+        }
+        /// @name SetIt
+        /// @generics
+        /// ~@param T
+        /// @summary Forward iterator yielding elements from Unordered::Set.
+        class SetIt<T> {
+            SetNode<T>** buckets;
+            int num_buckets;
+            int bucket_index;
+            SetNode<T>* current;
+
+            /// @constructor
+            /// @param buckets Bucket array pointer.
+            /// @param num_buckets Total bucket count.
+            /// @param is_end True to construct a past-the-end iterator.
+            /// @summary Constructs a forward iterator over set buckets.
+            SetIt(SetNode<T>** buckets, int num_buckets, bool is_end) {
+                this->buckets = buckets;
+                this->num_buckets = num_buckets;
+                if (is_end) {
+                    this->bucket_index = num_buckets;
+                    this->current = nullptr;
+                } else {
+                    this->bucket_index = 0;
+                    this->current = nullptr;
+                    this->_advanceToNext();
+                }
+            }
+            private void _advanceToNext() {
+                while (this->current == nullptr && this->bucket_index < this->num_buckets) {
+                    this->current = this->buckets[this->bucket_index];
+                    if (this->current == nullptr) this->bucket_index++;
+                }
+            }
+            /// @name _atEnd
+            /// @summary Returns true if the iterator has exhausted all buckets.
+            bool _atEnd() {
+                return this->bucket_index >= this->num_buckets;
+            }
+            /// @name _next
+            /// @summary Advances the iterator and returns the current element. Panics if at end.
+            T _next() {
+                if (!this->current) {
+                    panic "cannot iterate an empty";
+                }
+                T val = this->current->value;
+                this->current = this->current->next;
+                if (this->current == nullptr) {
+                    this->bucket_index++;
+                    this->_advanceToNext();
+                }
+                return val;
+            }
+        }
+    }
+    /// @name Set
+    /// @generics
+    /// ~@param T
+    /// ~@constraint proves Hash
+    /// @summary Chained hash set storing unique elements proving Unordered::Hash.
+    class Set<T(proves Hash:)> {
+        private int num_buckets;
+        private int count;
+        private SetNode<T>** buckets;
+        private int get_Bucket_Index(T item) {
+            return item.hash() % this->num_buckets;
+        }
+        /// @constructor
+        /// @summary Initializes an empty hash set with 8 buckets.
+        Set() {
+            this->num_buckets = 8;
+            this->count = 0;
+            this->buckets = `malloc((sizeof SetNode<T>*) * this->num_buckets);
+            for (int i = 0; i < this->num_buckets; i++) {
+                this->buckets[i] = nullptr;
+            }
+        }
+        /// @name operator[]=
+        /// @param data Array of elements to insert. Set does not own.
+        /// @param length Number of elements in data.
+        /// @summary Bulk-inserts length elements from data into the set.
+        void operator[]=(T *data, addr_t length) {
+            if (num_buckets == 0) this->Set();
+            for (int i = 0; i < length; i++) {
+                this->add(data[i]);
+            }
+        }
+        /// @name contains
+        /// @param item Element to look up.
+        /// @summary Returns true if item is present in the set. Requires T to prove CoreConcepts::Eq.
+        bool contains(T item) {
+            comptime if (!(CoreConcepts::Eq proved_by T)) {
+                `compile_error("T must prove CoreConcepts::Eq to use contains");
+                return false;
+            }
+            int index = this->get_Bucket_Index(item);
+            SetNode<T>* node = this->buckets[index];
+            while (node != nullptr) {
+                if (node->value == item) return true;
+                node = node->next;
+            }
+            return false;
+        }
+        private void resize() {
+            int old_num_buckets = this->num_buckets;
+            SetNode<T>** old_buckets = this->buckets;
+            this->num_buckets = old_num_buckets * 2;
+            this->buckets = `malloc((sizeof SetNode<T>*) * this->num_buckets);
+            for (int i = 0; i < this->num_buckets; i++) {
+                this->buckets[i] = nullptr;
+            }
+            for (int i = 0; i < old_num_buckets; i++) {
+                SetNode<T>* node = old_buckets[i];
+                while (node != nullptr) {
+                    SetNode<T>* next = node->next;
+                    int newIndex = node->value.hash() % this->num_buckets;
+                    node->next = this->buckets[newIndex];
+                    this->buckets[newIndex] = node;
+                    node = next;
+                }
+            }
+            `free(old_buckets);
+        }
+        /// @name add
+        /// @param item Element to insert if not already present.
+        /// @summary Inserts item into the set, rehashing if load factor exceeds 0.75.
+        void add(T item) {
+            if (this->contains(item)) return;
+            if (this->count + 1 > this->num_buckets * 0.75) {
+                this->resize();
+            }
+            int index = this->get_Bucket_Index(item);
+            SetNode<T>* node = `malloc(sizeof SetNode<T>);
+            node->value = item;
+            node->next = this->buckets[index];
+            this->buckets[index] = node;
+            this->count++;
+        }
+        /// @_destroy
+        /// @inval this
+        /// @summary Destroys all owned elements, frees nodes and bucket array.
+        void _destroy() {
+            for (int i = 0; i < this->num_buckets; i++) {
+                SetNode<T>* node = this->buckets[i];
+                while (node != nullptr) {
+                    SetNode<T>* next = node->next;
+                    comptime if (CoreConcepts::Allocated proved_by T) {
+                        node->value._destroy();
+                    }
+                    `free(node);
+                    node = next;
+                }
+            }
+            `free(this->buckets);
+        }
+        /// @name _begin
+        /// @summary Returns a forward iterator to the first element in the set.
+        Iterators::SetIt<T> _begin() {
+            return Iterators::SetIt<T>(this->buckets, this->num_buckets, false);
+        }
+        /// @name _end
+        /// @summary Returns a past-the-end forward iterator for the set.
+        Iterators::SetIt<T> _end() {
+            return Iterators::SetIt<T>(this->buckets, this->num_buckets, true);
+        }
+    }
+    Set proves CoreConcepts::Allocated;
+
+    /// @name Map
+    /// @generics
+    /// ~@param K
+    /// ~@constraint proves Hash
+    /// ~@param V
+    /// @summary Chained hash map mapping keys K to values V.
+    class Map<K(proves Hash:), V> {
+        private int num_buckets;
+        private int count;
+        private MapNode<K, V>** buckets;
+        private int get_Bucket_Index(K key) {
+            return key.hash() % this->num_buckets;
+        }
+        /// @constructor
+        /// @summary Initializes an empty hash map with 8 buckets.
+        Map() {
+            this->num_buckets = 8;
+            this->count = 0;
+            this->buckets = `malloc((sizeof MapNode<K, V>*) * this->num_buckets);
+            for (int i = 0; i < this->num_buckets; i++) {
+                this->buckets[i] = nullptr;
+            }
+        }
+        /// @name containsKey
+        /// @param key Key to search for.
+        /// @summary Returns true if key exists in the map.
+        bool containsKey(K key) {
+            int index = this->get_Bucket_Index(key);
+            MapNode<K, V>* node = this->buckets[index];
+            while (node != nullptr) {
+                if (node->data.first.equals(key)) return true;
+                node = node->next;
+            }
+            return false;
+        }
+        /// @name safeGet
+        /// @param key Key to look up.
+        /// @param output Reference populated with the associated value if found.
+        /// @summary Looks up key and writes its value to output, returning true if found.
+        bool safeGet(K key, V& output) {
+            int index = this->get_Bucket_Index(key);
+            MapNode<K, V>* node = this->buckets[index];
+            while (node != nullptr) {
+                if (node->data.first.equals(key)) {
+                    output = node->data.second;
+                    return true;
+                }
+                node = node->next;
+            }
+            return false;
+        }
+        /// @name set
+        /// @param key Key to insert or update.
+        /// @param value Value to associate with key.
+        /// @summary Inserts a new key-value pair or overwrites the value if key already exists.
+        void set(K key, V value) {
+            int index = this->get_Bucket_Index(key);
+            MapNode<K, V>* node = this->buckets[index];
+            while (node != nullptr) {
+                if (node->data.first.equals(key)) {
+                    node->data.second = value;
+                    return;
+                }
+                node = node->next;
+            }
+            if ((this->count + 1) * 4 > this->num_buckets * 3) {
+                this->resize();
+                index = this->get_Bucket_Index(key);
+            }
+            MapNode<K, V>* newNode = `malloc(sizeof MapNode<K, V>);
+            newNode->data.first = key;
+            newNode->data.second = value;
+            newNode->next = this->buckets[index];
+            this->buckets[index] = newNode;
+            this->count++;
+        }
+        private void resize() {
+            int old_num_buckets = this->num_buckets;
+            MapNode<K, V>** old_buckets = this->buckets;
+            this->num_buckets = old_num_buckets * 2;
+            this->buckets = `malloc((sizeof MapNode<K, V>*) * this->num_buckets);
+            for (int i = 0; i < this->num_buckets; i++) {
+                this->buckets[i] = nullptr;
+            }
+            for (int i = 0; i < old_num_buckets; i++) {
+                MapNode<K, V>* node = old_buckets[i];
+                while (node != nullptr) {
+                    MapNode<K, V>* next = node->next;
+                    int newIndex = node->data.first.hash() % this->num_buckets;
+                    node->next = this->buckets[newIndex];
+                    this->buckets[newIndex] = node;
+                    node = next;
+                }
+            }
+            `free(old_buckets);
+        }
+        /// @_destroy
+        /// @inval this
+        /// @summary Destroys all owned keys/values, frees nodes and bucket array.
+        void _destroy() {
+            for (int i = 0; i < this->num_buckets; i++) {
+                MapNode<K, V>* node = this->buckets[i];
+                while (node != nullptr) {
+                    comptime if (CoreConcepts::Allocated proved_by V) {
+                        node->data.second._destroy();
+                    }
+                    comptime if (CoreConcepts::Allocated proved_by K) {
+                        node->data.first._destroy();
+                    }
+                    MapNode<K, V>* next = node->next;
+                    `free(node);
+                    node = next;
+                }
+            }
+            `free(this->buckets);
+        }
+        /// @name operator[]=
+        /// @param data Array of key-value pairs to insert. Map does not own.
+        /// @param length Number of pairs in data.
+        /// @summary Bulk-inserts length key-value pairs into the map.
+        void operator[]=(Pair::Pair<K, V>* data, int length) {
+            if (this->num_buckets == 0) this->Map(); 
+            for (int i = 0; i < length; i++) {
+                this->set(data[i].first, data[i].second);
+            }
+        }
+        /// @indexing
+        /// @param key Key to look up.
+        /// @return Reference to the value associated with key.
+        /// @summary Returns a mutable reference to the value for key, or panics if not found.
+        V& operator[](K key) {
+            int index = this->get_Bucket_Index(key);
+            MapNode<K, V>* node = this->buckets[index];
+            while (node != nullptr) {
+                if (node->data.first.equals(key)) return node->data.second;
+                node = node->next;
+            }
+            panic "Key not found";
+        }
+        /// @name _begin
+        /// @summary Returns a forward iterator to the first entry in the map.
+        Iterators::MapIt<K, V> _begin() {
+            return Iterators::MapIt<K, V>(this->buckets, this->num_buckets, false);
+        }
+        /// @name _end
+        /// @summary Returns a past-the-end forward iterator for the map.
+        Iterators::MapIt<K, V> _end() {
+            return Iterators::MapIt<K, V>(this->buckets, this->num_buckets, true);
+        }
+    }
+    Map proves CoreConcepts::Allocated;
+}

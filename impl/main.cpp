@@ -368,6 +368,13 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
     auto base_defs = config.definitions;
     aliases = config.aliases;
     dir_aliases = config.dir_aliases;
+    const char* home = std::getenv("QC_STDLIB");
+    const char* stdlib_dynamic_library = std::getenv("QC_STDLIB_LIBRARY");
+    if (!home || !stdlib_dynamic_library) {
+        if (!config.quiet_mode) std::cout << "QC_STDLIB/QC_STDLIB_LIBRARY environment variable not set: cannot use standard library.\n";
+    } else {
+        dir_aliases["std"] = std::string(home);
+    }
     if (text.find("// @no-context") != std::string::npos) { config.use_context = false; }
 
     if (text.find("// @looser-types") != std::string::npos) { config.looser_types = true; }
@@ -499,7 +506,11 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::cout << "[DONE LEXING] " << path << '\n';
                 std::cout.flush();
             }
-            if (file_resp.error) { resp = file_resp; error = file_resp.error; return; }
+            if (file_resp.error) {
+                resp = file_resp;
+                error = file_resp.error;
+                return;
+            }
             if (config.dump_tokens && file == path && file_resp.error != nullptr) {
                 std::cout << "\n##DUMP##" << '\n'
                           << "ERROR: " << file_resp.error->pos.line << " " << file_resp.error->pos.column << " " << file_resp.error->pos.length << " "
@@ -731,8 +742,8 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 for (const auto& dep : reach[filepath]) types.insert(type_registry[dep].begin(), type_registry[dep].end());
                 LLVMCompiler comp(types, master_module, context, diBuilder, compileUnit, filepath == file);
                 comp.config = config;
-                std::vector<CTError> errs = comp.compile(file_asts[filepath].statements, visSigs, visFDefs, visTypeStr, visLen, visVars,
-                                                         visLamb, visSpec, visGlobals);
+                std::vector<CTError> errs = comp.compile(file_asts[filepath].statements, visSigs, visFDefs, visTypeStr, visLen, visVars, visLamb,
+                                                         visSpec, visGlobals);
                 if (config.progress) {
                     std::cout << "[DONE COMPILING] " << filepath << '\n';
                     std::cout.flush();
@@ -876,7 +887,15 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 std::cout.flush();
             }
             std::string final_exe = config.output_file.empty() ? config.dynamic ? "a.so" : "a.out" : config.output_file;
-            std::string link_cmd = "clang " + obj_file;
+            std::string link_cmd = "clang ";
+            if (config.dynamic) {
+#ifdef __APPLE__
+                link_cmd += "-dynamiclib ";
+#else
+                link_cmd += "-shared ";
+#endif
+            }
+            link_cmd += obj_file;
             for (const auto& path : config.link_o_files) { link_cmd += " " + path + " "; }
             link_cmd += " -o " + final_exe;
             for (const auto& path : to_link_dir) { link_cmd += " -L\"" + path + "\""; }
@@ -897,6 +916,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             }
             for (const std::string& arg : config.link_with) { link_cmd += " " + arg; }
             link_cmd += " -lm";
+            if (uses_std) link_cmd += " " + std::string(stdlib_dynamic_library);
             if (config.debug) link_cmd += " -g";
             if (!config.quiet_mode) std::cout << "Linking with command " + link_cmd << '\n';
             int link_result = system(link_cmd.c_str());

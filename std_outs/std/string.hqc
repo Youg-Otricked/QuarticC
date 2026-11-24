@@ -1,0 +1,280 @@
+//!===----------------------------------------------------------------------===!//
+//!
+//! Part of the QuarticC programming language standard library, MIT license.
+//!
+//!===----------------------------------------------------------------------===!//
+//!
+//! Standard Library string type.
+
+namespace Exported {
+    #include<CoreConcepts, ./core-concepts.hqc>
+}
+namespace String {
+    /// @name View
+    /// @summary Non-owning non null-terminated string view type. 
+    /// @field data Non null-terminated non-owning string.
+    /// @field length Length of data.
+    struct View {
+        char *data;
+        addr_t length;
+    }
+    /// @name Str
+    /// @summary Owning string class with length equality and concatenation operations.
+    /// @static
+    /// ~@field NOT_FOUND A sentinel returned to mean value not found.
+    class Str {
+        static addr_t NOT_FOUND = ~(0a);
+        private char *data;    
+        private addr_t length;
+        private addr_t capacity;
+        /// @constructor
+        /// @param data A c-string. Str does not own.
+        /// @summary Constructs the string from data.
+        Str(char *data);
+        /// @constructor
+        /// @param copies The number of times to copy letter.
+        /// @param letter The character to copy.
+        /// @summary Constructs the string with copies copies of letter.
+        Str(addr_t copies, char letter);
+        /// @constructor
+        /// @param data A heap allocated c string. Str owns.
+        /// @param length The length of the data string, excluding null terminator
+        /// @summary No allocation from heap constructor.
+        Str(char *data, addr_t length);
+        /// @assignment
+        /// @param data C-string to assign, copies data. Str does not own.
+        /// @summary Assignment from c-string. Returns this.
+        Str operator=(char* data);
+        /// @name len
+        /// @summary Gets length of string.
+        addr_t len();
+        /// @name substr
+        /// @param start Start index of the string.
+        /// @param length Length of substring.
+        /// @return Caller owns the string.
+        /// @example 
+        ///    Str my_string = "hello";
+        ///    my_string.substr(1, 4); // "ello"
+        /// @summary Extracts a substring from Str. Return result is heap allocated and caller owns.
+        Str substr(addr_t start, addr_t length);
+        /// @name subView
+        /// @param start Start index of the string.
+        /// @param length Length of substring.
+        /// @return Returns a non-owning view. Do not free this view, it is part of the heap data of the string. Str owns.
+        /// @example 
+        ///    Str my_string = "hello";
+        ///    my_string.subView(1, 4); // {data: "ello", length: 4}
+        /// @summary Extracts a substring View from Str. Return result is part of the Str's data and the Str owns.
+        View subView(addr_t start, addr_t length);
+        /// @name find
+        /// @param other The string to find. Str does not own.
+        /// @param offset = 0 Search from this point
+        /// @return The index of the substring, or NOT_FOUND.
+        /// @summary Returns the index of the substring.
+        addr_t find(Str other, addr_t offset = 0);
+        /// @name contains
+        /// @param other The string to find. Str does not own.
+        /// @summary Returns true if the string contains the substring
+        bool contains(Str other); 
+        /// @name startsWith
+        /// @param other The string to find. Str does not own.
+        /// @summary Returns true if the string starts with the substring
+        bool startsWith(Str other);
+        /// @name endsWith
+        /// @param other The string to find. Str does not own.
+        /// @summary Returns true if the string ends with the substring
+        bool endsWith(Str other);
+        /// @name isEmpty
+        /// @summary Returns true if the string is empty.
+        bool isEmpty();
+        /// @equality
+        /// @param other Str to compare with. Str does not own.
+        /// @summary Evaluates to true if the string is equal to other.
+        bool operator==(Str other);
+        /// @inequality
+        /// @param other Str to compare with. Str does not own.
+        /// @summary Evaluates to true if the string is not equal to the other.
+        bool operator!=(Str other);
+        /// @evaluation
+        /// @summary Returns true if the string isn't empty.
+        bool _eval();
+        /// @addition
+        /// @param other A c-string to concatenate with. Str does not own.
+        /// @return A new string, caller owns.
+        /// @summary Returns the result of concatenation of this with other as a new string that Str does not own.
+        Str operator+(char *other);
+        /// @additionassignment
+        /// @param other A c-string to concatenate with this. Str does not own.
+        /// @return Returns *this.
+        /// @summary Concatenates this with other, modifying this.
+        Str operator+=(char *other);
+        /// @addition
+        /// @param other A Str to concatenate with. Str does not own.
+        /// @return A new string, caller owns.
+        /// @summary Returns the result of concatenation of this with other as a new string that Str does not own.
+        Str operator+(Str other);
+        /// @additionassignment
+        /// @param other A Str to concatenate with this. Str does not own.
+        /// @return Returns *this.
+        /// @summary Concatenates this with other, modifiying this.
+        Str operator+=(Str other);
+        /// @indexing
+        /// @param index The index to index the data at.
+        /// @return A reference to the character at index.
+        /// @summary Indexes the data at index.
+        char& operator[](addr_t index);
+        /// @_destroy
+        /// @inval this
+        /// @summary Cleans up the string.
+        void _destroy();
+        /// @name insert
+        /// @param index The index to insert the substring into.
+        /// @param str The substring to insert. Str does not own.
+        /// @summary Inserts substring str into index index.
+        void insert(addr_t index, Str str);
+        /// @name erase
+        /// @param start The index to start erasing at.
+        /// @param length The amount of characters to erase.
+        /// @summary Erases length characters starting at start from the string.
+        void erase(addr_t start, addr_t length);
+        /// @name toInteger
+        /// @generics
+        /// ~@param T
+        /// ~@constraint numeric T must be a integer as it converts the string to a integer T.
+        /// @summary returns the result of converting the string to a whole number.
+        T toInteger<T(numeric:)>() {
+            if (this->length == 0) {
+                panic "cannot parse an empty string as a whole number";
+            }
+            addr_t i = 0;
+            bool negative = false;
+            if (this->data[0] == '-') {
+                negative = true;
+                i++;
+            } else if (this->data[0] == '+') {
+                i++;
+            }
+            if (i == this->length) {
+                panic "invalid whole number";
+            }
+            T value = 0;
+            for (; i < this->length; i++) {
+                char c = this->data[i];
+                if (c < '0' || c > '9') {
+                    panic "invalid character in whole number";
+                }
+                T digit = c - '0';
+                value = value * 10 + digit;
+            }
+            if (negative) {
+                value = -value;
+            }
+            return value;
+        }
+        /// @name toFloating
+        /// @generics
+        /// ~@param T
+        /// ~@constraint numeric T must be a numeric type, and should be floating point.
+        /// @summary returns the result of converting the string to a floating-point number.
+        T toFloating<T(numeric:)>() {
+            if (this->length == 0) {
+                panic "cannot parse an empty string as a floating-point number";
+            }
+            addr_t i = 0;
+            bool negative = false;
+            if (this->data[0] == '-') {
+                negative = true;
+                i++;
+            } else if (this->data[0] == '+') {
+                i++;
+            }
+            if (i == this->length) {
+                panic "invalid floating-point number";
+            }
+            T value = 0;
+            T divisor = 1;
+            bool decimal = false;
+            bool has_digit = false;
+            for (; i < this->length; i++) {
+                char c = this->data[i];
+                if (c == '.') {
+                    if (decimal) {
+                        panic "multiple decimal points in floating-point number";
+                    }
+                    decimal = true;
+                    continue;
+                }
+                if (c < '0' || c > '9') {
+                    panic "invalid character in floating-point number";
+                }
+                has_digit = true;
+                T digit = c - '0';
+                if (decimal) {
+                    divisor *= 10;
+                    value += digit / divisor;
+                } else {
+                    value = value * 10 + digit;
+                }
+            }
+            if (!has_digit) {
+                panic "invalid floating-point number";
+            }
+            if (negative) {
+                value = -value;
+            }
+            return value;
+        }
+        /// @equality
+        /// @param other c-string to compare with. Str does not own.
+        /// @summary Evaluates to true if the string is equal to other.
+        bool operator==(char *data);
+        /// @inequality
+        /// @param other c-string to compare with. Str does not own.
+        /// @summary Evaluates to true if the string is not equal to other.
+        bool operator!=(char *data);
+        /// @name toBool
+        /// @summary Evaluates to true if the string is equal to "true" and false otherwise.
+        bool toBool();
+        /// @name toQBool
+        /// @summary Evaluates to the strings value as if it were a qbool value, or none if no state was reached.
+        qbool toQBool();
+        /// @name c_str
+        /// @return The data of the string. Str owns, caller does not.
+        /// @summary Returns a non-owning data of the string.
+        char *c_str();
+    }
+    /// @name toStr
+    /// @generics
+    /// ~@param T
+    /// ~@constraint numeric T must be a number type for conversion.
+    /// @param value The number value to convert.
+    /// @summary Converts a number to a Str. Caller owns the string.
+    Str toStr<T(numeric:)>(T value);
+        if (value == 0) {
+            return Str("0");
+        }
+        bool negative = false;
+        if (value < 0) {
+            negative = true;
+            value = -value;
+        }
+        char[64] buffer = [char, 64];
+        addr_t i = 0;
+        while (value > 0) {
+            buffer[i++] = '0' + (value % 10);
+            value /= 10;
+        }
+        if (negative) {
+            buffer[i++] = '-';
+        }
+        for (addr_t j = 0; j < i / 2; j++) {
+            char temp = buffer[j];
+            buffer[j] = buffer[i - j - 1];
+            buffer[i - j - 1] = temp;
+        }
+        buffer[i] = '\0';
+        return Str(buffer);
+    }
+
+    Str proves CoreConcepts::Allocated;
+}

@@ -68,7 +68,7 @@ struct GenericType {
     bool negated = false;
     std::vector<std::string> subconstraints;
 };
-
+// Add header() methods that return how the node should be printed as a header. and add it to usertypes. UGHHHHHHHHHHHh
 class Parameter;
 std::string printAny(const AnyNode& node);
 Position get_pos(AnyNode node);

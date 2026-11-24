@@ -517,11 +517,10 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             std::string full_path;
             auto slash = path.find('/');
             std::string alias = path.substr(0, slash);
-            if (path == "std") {
-                const char* home = std::getenv("QC_STDLIB");
-                if (!home) { throw std::runtime_error("QC_STDLIB environment variable not set"); }
-                full_path = std::string(home);
-            } else if (aliases.count(path)) {
+            if (path.starts_with("std")) {
+                uses_std = true;
+            }
+            if (aliases.count(path)) {
                 full_path = resolve_path(current_file, aliases[path]);
             } else if (dir_aliases.count(alias)) {
                 std::string rest = slash == std::string::npos ? "" : path.substr(slash);

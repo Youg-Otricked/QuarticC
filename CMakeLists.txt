@@ -150,3 +150,24 @@ if(EMSCRIPTEN)
             -s NO_DISABLE_EXCEPTION_CATCHING"
     )
 endif()
+if(NOT EMSCRIPTEN)
+    set(STD_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/std")
+    set(STD_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/std_outs")
+    set(STDLIB_SRC  "${STD_SRC_DIR}/stdlib.qc")
+    set(STDLIB_OUT  "${STD_OUT_DIR}/std/libstdqc${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    file(GLOB_RECURSE STD_SOURCES CONFIGURE_DEPENDS "${STD_SRC_DIR}/*")
+    add_custom_command(
+        OUTPUT "${STDLIB_OUT}"
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${STD_OUT_DIR}/std"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${STD_OUT_DIR}/std"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${STD_SRC_DIR}" "${STD_OUT_DIR}/std"
+        COMMAND $<TARGET_FILE:qc> -dynamic "${STDLIB_SRC}" -o "${STDLIB_OUT}"
+        DEPENDS ${STD_SOURCES}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        COMMENT "Staging std/ into std_outs/ and compiling stdlib.qc..."
+        VERBATIM
+    )
+    add_custom_target(build_stdlib ALL
+        DEPENDS "${STDLIB_OUT}"
+    )
+endif()

@@ -8921,8 +8921,6 @@ std::vector<CTError> LLVMCompiler::compile(StatementsNode* root, std::unordered_
                 for (llvm::Argument& arg : realMain->args()) { user_entry_args.push_back(&arg); }
                 llvm::Value* result = builder->CreateCall(userEntry, user_entry_args, "entry_result");
                 builder->CreateRet(result);
-            } else {
-                cg_error(Position(Position::INVALID_FILE_ID, 0, 0, 0), "entrypoint function '" + entrypointName + "' not defined", "QC-S276");
             }
         }
     }

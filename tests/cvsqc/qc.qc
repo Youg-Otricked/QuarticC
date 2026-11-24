@@ -1,6 +1,5 @@
-
 namespace Exported {
-    #include <IO, std>
+    #include <IO, std/io.hqc>
 }
 struct variadic {
     void** items;

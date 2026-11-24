@@ -5772,8 +5772,7 @@ Aer Parser::parse() {
     }
 
     if (!has_main && !no_main) {
-        return Aer{nullptr, new Error("Missing the entrypoint function", "Program must have an 'int entrypointname()' function",
-                                      Position(Position::INVALID_FILE_ID, 0, 0, 0))};
+        no_main = true;
     }
     for (auto& [name, ut] : user_types) {
         if (ut.kind == UserTypeKind::Class && !ut.baseClassName.empty()) {

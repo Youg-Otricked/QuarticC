@@ -1,0 +1,26 @@
+//!===----------------------------------------------------------------------===!//
+//!
+//! Part of the QuarticC programming language standard library, MIT license.
+//!
+//!===----------------------------------------------------------------------===!//
+//!
+//! Standard Library I/O functions.
+
+namespace IO {
+    /// @name output
+    /// @summary the file descriptor to write to. Defaults to 1 (stdout).
+    int output = 1;
+    /// @name qout
+    /// @param fmt_string The format text
+    /// @param args The argument list.
+    /// @summary printf-style formatted printer.
+    void qout(char *fmt_string, ...args);
+    /// @name getWord
+    /// @return heap allocated char*. Caller owns.
+    /// @summary Returns a heap allocated char *, whose content is up to the next space in input.
+    char *getWord();
+    /// @name getLine
+    /// @return heap allocated char*. Caller owns.
+    /// @summary Returns a heap allocated char *, whose content is up to the next newline in input.
+    char *getLine();
+}
