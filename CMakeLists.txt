@@ -120,7 +120,7 @@ if(ENABLE_LLVM)
     endif()
     add_definitions(-D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS)
     target_compile_definitions(qc PRIVATE ENABLE_LLVM)
-    target_include_directories(qc SYSTEM BEFORE PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
+    target_include_directories(qc BEFORE PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
     find_library(EXACT_LLVM_LIB
         NAMES LLVM LLVM-${LLVM_VERSION_MAJOR}
         PATHS "${LLVM_LIBRARY_DIRS}"
