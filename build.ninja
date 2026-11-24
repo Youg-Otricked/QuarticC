@@ -87,7 +87,7 @@ build cmake_object_order_depends_target_qc: phony || runtime.ll runtime_embed.cp
 
 build CMakeFiles/qc.dir/impl/fmt.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/fmt.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/fmt.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -98,7 +98,7 @@ build CMakeFiles/qc.dir/impl/fmt.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/l
 
 build CMakeFiles/qc.dir/impl/translate.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/translate.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/translate.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -109,7 +109,7 @@ build CMakeFiles/qc.dir/impl/translate.cpp.o: CXX_COMPILER__qc_unscanned_Debug /
 
 build CMakeFiles/qc.dir/impl/parser.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/parser.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/parser.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -120,7 +120,7 @@ build CMakeFiles/qc.dir/impl/parser.cpp.o: CXX_COMPILER__qc_unscanned_Debug /hom
 
 build CMakeFiles/qc.dir/impl/main.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/main.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/main.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -131,7 +131,7 @@ build CMakeFiles/qc.dir/impl/main.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/
 
 build CMakeFiles/qc.dir/impl/lexer.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/lexer.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/lexer.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -142,7 +142,7 @@ build CMakeFiles/qc.dir/impl/lexer.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home
 
 build CMakeFiles/qc.dir/impl/nodes.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/nodes.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/nodes.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -153,7 +153,7 @@ build CMakeFiles/qc.dir/impl/nodes.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home
 
 build CMakeFiles/qc.dir/impl/token.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/token.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/token.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -164,7 +164,7 @@ build CMakeFiles/qc.dir/impl/token.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home
 
 build CMakeFiles/qc.dir/impl/errors.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/errors.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/errors.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -175,7 +175,7 @@ build CMakeFiles/qc.dir/impl/errors.cpp.o: CXX_COMPILER__qc_unscanned_Debug /hom
 
 build CMakeFiles/qc.dir/impl/preproccesser.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/preproccesser.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/preproccesser.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -186,7 +186,7 @@ build CMakeFiles/qc.dir/impl/preproccesser.cpp.o: CXX_COMPILER__qc_unscanned_Deb
 
 build CMakeFiles/qc.dir/impl/compiler.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/compiler.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/compiler.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -197,7 +197,7 @@ build CMakeFiles/qc.dir/impl/compiler.cpp.o: CXX_COMPILER__qc_unscanned_Debug /h
 
 build CMakeFiles/qc.dir/impl/compiler_run.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/impl/compiler_run.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/impl/compiler_run.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"
@@ -208,7 +208,7 @@ build CMakeFiles/qc.dir/impl/compiler_run.cpp.o: CXX_COMPILER__qc_unscanned_Debu
 
 build CMakeFiles/qc.dir/runtime_embed.cpp.o: CXX_COMPILER__qc_unscanned_Debug /home/luca/C^4/runtime_embed.cpp || cmake_object_order_depends_target_qc
   CONFIG = Debug
-  DEFINES = -DENABLE_LLVM -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+  DEFINES = -DENABLE_LLVM -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1 -DX86_ONLY -D_DEBUG -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_USE_CXX11_ABI=1 -D_GNU_SOURCE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
   DEP_FILE = CMakeFiles/qc.dir/runtime_embed.cpp.o.d
   FLAGS = -Wframe-larger-than=1000 -g -std=gnu++23 --std=c++23 -fstandalone-debug
   INCLUDES = -I"/home/luca/C^4/intf" -I"/home/luca/C^4"

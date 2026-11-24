@@ -12,8 +12,8 @@ project(qc LANGUAGES CXX C)
 if(APPLE OR EMSCRIPTEN)
     set(CMAKE_CXX_STANDARD 20)
 endif()
-find_package(Clang REQUIRED CONFIG)
 find_package(LLVM REQUIRED CONFIG)
+find_package(Clang REQUIRED CONFIG)
 if(LLVM_VERSION_MAJOR LESS 21)
     message(FATAL_ERROR "LLVM 21+ required, found ${LLVM_VERSION_MAJOR}")
 endif()
@@ -117,9 +117,12 @@ if(ENABLE_LLVM)
     endif()
     add_definitions(-D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS)
     target_compile_definitions(qc PRIVATE ENABLE_LLVM)
-    target_include_directories(qc PRIVATE ${LLVM_INCLUDE_DIRS})
-    target_link_directories(qc PRIVATE ${LLVM_LIBRARY_DIRS})
-    include_directories(${CLANG_INCLUDE_DIRS})
+    target_include_directories(qc BEFORE PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
+    target_link_directories(qc BEFORE PRIVATE ${LLVM_LIBRARY_DIRS})
+    set_target_properties(qc PROPERTIES
+        BUILD_RPATH "${LLVM_LIBRARY_DIRS}"
+        INSTALL_RPATH "${LLVM_LIBRARY_DIRS}"
+    )
     target_link_libraries(qc PRIVATE
         LLVM
         ${LLVM_SYSTEM_LIBS}
