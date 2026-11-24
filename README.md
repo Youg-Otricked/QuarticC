@@ -259,7 +259,7 @@ MIT License - See [LICENSE](./LICENSE.txt) for details
 
 ```cpp
 namespace Exported {
-    #include <IO, std>
+    #include <IO, std/io.hqc>
 }
 int main() {
     int* ptr = `malloc(sizeof "int");
@@ -277,11 +277,11 @@ namespace Exported {
 Exported namespaces are merged during include resolution.
 See the include-system docs for full details.
 */
-    #include <Math, std> // std is an alias for ~/.qc/lib/stdlib.qc. This line imports the Math namespace from the standard library.
+    #include <Math, std/math/core.hqc> // std is an alias for ~/.qc/lib/std. This line imports the Math namespace from the standard library.
 }
 
 int main() {
-    return Math::Max(1234, 432); // Using the math namespace.
+    return Math::max<int>(1234, 432); // Using the math namespace.
 }
 ```
 
@@ -401,7 +401,7 @@ QuarticC uses a classic multi-pass compilation pipeline:
 
 ```cpp
 namespace Exported {
-    #include <IO, std>
+    #include <IO, std/io.hqc>
 }
 int, char *GetStatus() {
     return 200, "Success";
@@ -419,7 +419,7 @@ Union types and aliases use the exact same syntax.
 
 ```cpp
 int main() {
-    // Union type. No narrowing. Compiled to LLVM. I SPENT HOURS ON THIS.
+    // Union type.
     type IdT = int | char *
     IdT id = 101;
     id = "A101"; // Valid
@@ -904,7 +904,7 @@ C^4's concepts are like a combination of Typescript interfaces, Rust traits, and
 
 ```qc
 namespace Exported {
-    #include <IO, std>
+    #include <IO, std/io.hqc>
 }
 concept Printable {
     1_of {
@@ -1011,7 +1011,8 @@ Example one would be equivelent to `int x = 123` or `int x = -1` depending on my
 
 ```qc
 namespace Exported {
-    #include<Vector, IO, std>
+    #include<Vector, std/collections/vector.hqc>
+    #include <IO, std/io.hqc>
 }
 int main() {
     Vector::Vec<int> my_vec = [1, 2, 3];
@@ -1114,8 +1115,6 @@ Vector
 List
 Array
 Math
-Utils
-OSInterop
 Unordered
 String
 Owned
