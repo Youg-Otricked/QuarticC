@@ -5,6 +5,7 @@ TAG="${QC_VERSION:-}"
 LLVM_PATH="${QC_LLVM_PATH:-}"
 while [ $# -gt 0 ]; do
     case "$1" in
+    --make-setup) MODE=--setup ;;
     --update) MODE=--update ;;
     --version)
         TAG=$2
@@ -390,7 +391,7 @@ compile_source() {
     dbg=$ANSWER
     build_type=Release
     [ "$dbg" = y ] && build_type=Debug
-    set -- -S . -B build -DCMAKE_BUILD_TYPE="$build_type"  -DCUSTOM_LLVM_INCLUDE="$("$LLVM_CONFIG" --includedir)" -DCUSTOM_LLVM_LIB="$llvm_lib" -DLLVM_DIR="$("$LLVM_CONFIG" --cmakedir)" -DClang_DIR="$clang_cmake" -DCMAKE_PREFIX_PATH="$("$LLVM_CONFIG" --prefix)" -DCMAKE_BUILD_RPATH="$llvm_lib" -DCMAKE_INSTALL_RPATH="$llvm_lib"
+    set -- -S . -B build -DCMAKE_BUILD_TYPE="$build_type" -DCUSTOM_LLVM_INCLUDE="$("$LLVM_CONFIG" --includedir)" -DCUSTOM_LLVM_LIB="$llvm_lib" -DLLVM_DIR="$("$LLVM_CONFIG" --cmakedir)" -DClang_DIR="$clang_cmake" -DCMAKE_PREFIX_PATH="$("$LLVM_CONFIG" --prefix)" -DCMAKE_BUILD_RPATH="$llvm_lib" -DCMAKE_INSTALL_RPATH="$llvm_lib"
     [ "$x86" = y ] && set -- "$@" -DX86_ONLY=On
     log="${TMPDIR:-/tmp}/qc-build.log"
     CC=$CC CXX=$CXX cmake "$@" >"$log" 2>&1 || {
@@ -582,7 +583,58 @@ else
         }
         ok "Built C^4"
         cp build/qc "$QC_HOME/bin/qc"
+        mkdir -p "$QC_HOME/lib/std"
         cp build/std_outs/std/* -R "$QC_HOME/lib/std"
+    elif [ "$MODE" = "--setup" ]; then
+        mkdir -p "$QC_HOME/bin" "$QC_HOME/lib/std"
+        lib_ext="so"
+        [ "$os" = Darwin ] && lib_ext="dylib"
+        if [ -d "$QC_HOME/lib/std" ]; then
+            rm -rf "$QC_HOME/lib/std.bak"
+            cp -R "$QC_HOME/lib/std" "$QC_HOME/lib/std.bak"
+            warn "existing std saved as $QC_HOME/lib/std.bak"
+        elif [ -f "$QC_HOME/lib/stdlib.qc" ]; then
+            mv "$QC_HOME/lib/stdlib.qc" "$QC_HOME/lib/stdlib.qc.bak"
+            warn "legacy stdlib.qc saved as stdlib.qc.bak"
+        fi
+        cat >"$QC_HOME/env" <<EOF
+#!/bin/sh
+# QuarticC env
+case ":\${PATH}:" in *":$QC_HOME/bin:"*) ;; *) export PATH="$QC_HOME/bin:\$PATH" ;; esac
+export QC_INSTALL="$QC_HOME/bin/qc"
+export QC_STDLIB="$QC_HOME/lib/std"
+export QC_STDLIB_LIBRARY="$QC_HOME/lib/std/libstdqc.$lib_ext"
+EOF
+        cat >"$QC_HOME/env.fish" <<EOF
+# QuarticC env
+fish_add_path -g "$QC_HOME/bin"
+set -gx QC_INSTALL "$QC_HOME/bin/qc"
+set -gx QC_STDLIB "$QC_HOME/lib/std"
+set -gx QC_STDLIB_LIBRARY "$QC_HOME/lib/std/libstdqc.$lib_ext"
+EOF
+        src=". \"$QC_HOME/env\""
+        cur=$(basename "${SHELL:-sh}")
+        zrc="${ZDOTDIR:-$HOME}/.zshrc"
+        add_line "$HOME/.profile" "$src"
+        if [ "$cur" = bash ] || [ -f "$HOME/.bashrc" ]; then
+            add_line "$HOME/.bashrc" "$src"
+        fi
+        if [ "$os" = Darwin ] && { [ "$cur" = bash ] || [ -f "$HOME/.bash_profile" ]; }; then
+            add_line "$HOME/.bash_profile" "$src"
+        fi
+        if [ "$cur" = zsh ] || [ -f "$zrc" ]; then
+            add_line "$zrc" "$src"
+        fi
+        if [ "$cur" = fish ] || command -v fish >/dev/null 2>&1; then
+            add_line "$HOME/.config/fish/config.fish" "source \"$QC_HOME/env.fish\""
+        fi
+        case "$cur" in
+        bash | zsh | fish | sh | dash | ash) ;;
+        *) warn "unrecognised shell \"$cur\": add $QC_HOME/bin to your PATH manually" ;;
+        esac
+        ok "Finished setup"
+        printf '\n%ssetup path & file structure!%s Restart your shell, or run:\n  . "%s/env"\n\n%sThank you for using C^4!%s\n' \
+            "$GLOW_GREEN" "$NC" "$QC_HOME" "$GLOW_GREEN" "$NC"
     else
         die "invalid option"
     fi
