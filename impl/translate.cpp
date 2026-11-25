@@ -1,4 +1,5 @@
 #include "translate.h"
+#include "lexer.h"
 #include "compiler.h"
 static std::string clang_resource_dir() {
     static std::string dir;
@@ -749,7 +750,7 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
             ctx->skipped_bits = false;
             CXString field_spelling = clang_getCursorSpelling(child);
             const char* field_name = clang_getCString(field_spelling);
-            std::string fname = field_name ? field_name : "";
+            std::string fname = field_name ? is_keyword(field_name) ? std::string("_") + field_name : field_name : "";
             clang_disposeString(field_spelling);
             if (fname.empty()) fname = "__anonymous_field_" + std::to_string(ctx->anon_fields++);
             ctx->lines->push_back(ctx->self->translateType(field_type) + " " + fname + ";");

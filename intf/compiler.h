@@ -928,12 +928,12 @@ class LLVMCompiler {
             } else if (c == '>') {
                 --angleDepth;
                 token += c;
-            } else if (c == '*' && angleDepth == 0) {
+            } else if ((c == '*' || c == '&') && angleDepth == 0) {
                 if (!token.empty()) {
                     tokens.push_back(token);
                     token.clear();
                 }
-                tokens.emplace_back("*");
+                tokens.emplace_back(1, c);
             } else {
                 token += c;
             }
@@ -942,9 +942,9 @@ class LLVMCompiler {
         bool afterPointer = false;
         for (const std::string& t : tokens) {
             if (t == "const") { continue; }
-            if (t == "*") {
+            if (t == "*" || t == "&") {
                 afterPointer = true;
-                n += "*";
+                n += t;
                 continue;
             }
             if (!afterPointer) {
@@ -1197,14 +1197,16 @@ class LLVMCompiler {
                 auto enumIt = enumTypes.find(resolved);
                 if (enumIt != enumTypes.end()) return resolved;
             }
-            std::string currentType = resolveTypeName(getExpressionType(*((*propAcc)->base), false));
+            std::string currentType = resolveTypeName(getExpressionType(*((*propAcc)->base), false), false);
             if (currentType.ends_with("*") || currentType.ends_with("&")) { currentType.pop_back(); }
             std::string fieldName = (*propAcc)->property_name.value;
             if (std::all_of(fieldName.begin(), fieldName.end(), [](unsigned char c) -> bool { return std::isdigit(c); })) {
                 size_t fieldIdx = std::stoull(fieldName);
                 return getTupleFieldType(currentType, fieldIdx);
             }
-            if (rawUnionTypes.count(currentType) || genericRawUnions.count(currentType)) { return getUnionFieldType(currentType, fieldName); }
+            if (rawUnionTypes.count(currentType) || genericRawUnions.count(baseTypeName(currentType))) {
+                return getUnionFieldType(baseTypeName(currentType), fieldName);
+            }
             std::vector<std::string> savedNamespaceStack = namespaceStack;
             while (!currentType.empty() && userTypes.contains(baseTypeName(currentType))) {
                 namespaceStack.clear();
@@ -1475,7 +1477,7 @@ class LLVMCompiler {
                 auto intTy = userTypes.find(baseTypeName(resolved));
                 if (intTy != userTypes.end()) { return resolved; }
             }
-            std::string baseType = resolveTypeName(getExpressionType((*methCall)->base, false));
+            std::string baseType = resolveTypeName(getExpressionType((*methCall)->base, false), false);
             if (baseType.ends_with("*") || baseType.ends_with("&")) baseType.pop_back();
             auto originalGenericMap = currentGenericTypeStrings;
             std::vector<std::string> actualArgs = genericParamsFromName(baseType);
@@ -1501,7 +1503,7 @@ class LLVMCompiler {
                 bool methodFound = false;
                 for (auto& m : info.classMethods) {
                     if (m.name_tok.value == methodName && !m.return_types.empty() && m.params.size() == (*methCall)->args.size()) {
-                        std::string ret = resolveTypeName(m.return_types[0].value);
+                        std::string ret = resolveTypeName(m.return_types[0].value, false);
                         if (ret.ends_with("&") && strip) ret.pop_back();
                         foundReturnType = substituteGenerics(ret);
                         methodFound = true;
@@ -3257,12 +3259,28 @@ class LLVMCompiler {
         }
     }
     std::string fixMangling(std::string type) { return buildMangledName(baseTypeName(type), genericParamsFromName(type), true); }
-    std::vector<llvm::Value*> reconcileArgs(llvm::Function* func, llvm::Value* thisPtr, const std::vector<llvm::Value*>& args) {
+    std::vector<llvm::Value*> reconcileArgs(llvm::Function* func, llvm::Value* thisPtr, const std::vector<llvm::Value*>& args,
+                                            const std::vector<std::string>& paramTypes = {}, const std::vector<std::string>& argTypes = {}) {
         std::vector<llvm::Value*> reconciled = {thisPtr};
         auto* funcTy = func->getFunctionType();
         for (size_t i = 0; i < args.size(); i++) {
             llvm::Type* expected = funcTy->getParamType(i + 1);
             llvm::Value* actual = args[i];
+            if (i < paramTypes.size() && i < argTypes.size() && paramTypes[i] != "...") {
+                std::string expStr = resolveTypeName(paramTypes[i], false);
+                std::string actStr = resolveTypeName(argTypes[i], false);
+                bool expRef = expStr.ends_with("&");
+                bool actRef = actStr.ends_with("&");
+                if (actRef && !expRef) {
+                    std::string baseStr = actStr.substr(0, actStr.size() - 1);
+                    llvm::Type* loadTy = llvmTypeFor(baseStr);
+                    if (loadTy) { actual = builder->CreateLoad(loadTy, actual, "ref_to_val"); }
+                } else if (!actRef && expRef) {
+                    llvm::AllocaInst* refTmp = createEntryAlloca("val_to_ref_tmp", actual->getType());
+                    builder->CreateStore(actual, refTmp);
+                    actual = refTmp;
+                }
+            }
             if (actual->getType()->isPointerTy() && expected->isStructTy()) {
                 actual = builder->CreateLoad(expected, actual);
                 reconciled.push_back(actual);
@@ -3410,6 +3428,19 @@ class LLVMCompiler {
             auto typeIt = userTypes.find(baseName);
             if (functionDefs.count(name)) { return classMethodFromFuncDef(functionDefs[name], resolveTypeName(currentClass, false), methodName); }
             if (typeIt != userTypes.end()) {
+                // Build namespace stack for currentClass (e.g., "CQB::CI::Job" -> {"CQB", "CI"})
+                std::vector<std::string> classNs;
+                size_t nsEnd = currentClass.rfind("::");
+                if (nsEnd != std::string::npos) {
+                    std::string nsPath = currentClass.substr(0, nsEnd);
+                    size_t start = 0, pos;
+                    while ((pos = nsPath.find("::", start)) != std::string::npos) {
+                        classNs.push_back(nsPath.substr(start, pos - start));
+                        start = pos + 2;
+                    }
+                    classNs.push_back(nsPath.substr(start));
+                }
+
                 ClassMethodInfo* bestMatch = nullptr;
                 int bestScore = 999999;
                 for (auto& method : typeIt->second.classMethods) {
@@ -3434,11 +3465,17 @@ class LLVMCompiler {
                             currentScore += 2;
                             continue;
                         }
+                        std::vector<std::string> savedNs = namespaceStack;
+                        namespaceStack = classNs;
                         std::string expected = resolveTypeName(method.params[i].type.value, false);
+                        namespaceStack = std::move(savedNs);
+
                         std::string actual = resolveTypeName(argTypes[i], false);
                         if (expected == actual) {
                             currentScore += 0;
                         } else if (expected.ends_with("&") && expected.substr(0, expected.size() - 1) == actual) {
+                            currentScore += 1;
+                        } else if (actual.ends_with("&") && actual.substr(0, actual.size() - 1) == expected) {
                             currentScore += 1;
                         } else if ((expected.ends_with("*") || expected.ends_with("[]")) &&
                                    (actual.ends_with("*") || actual.ends_with("[]") || actual == "nullptr")) {

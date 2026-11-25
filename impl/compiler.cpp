@@ -2669,13 +2669,25 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                     }
 
                     if (!ctorMethodName.empty()) {
+                        std::string mangledName = buildMangledName(qcType, genericParams);
+                        std::vector<std::string> arg_types;
+                        for (auto& argNode : (*call)->arg_nodes) { arg_types.push_back(resolveTypeName(getExpressionType(argNode, false), false)); }
+                        ClassMethodInfo* ctorInfo = findMethodInfo(mangledName, ctorMethodName, arg_types);
+
                         std::vector<llvm::Value*> args;
+                        size_t i = 0;
                         for (auto& argNode : (*call)->arg_nodes) {
                             llvm::Value* arg = emitExpr(argNode);
                             if (!arg) return nullptr;
+                            if (ctorInfo && ctorInfo->params.size() > i && ctorInfo->params[i].type.value != "...") {
+                                if (arg_types[i].ends_with("&") && !resolveTypeName(ctorInfo->params[i].type.value, false).ends_with("&")) {
+                                    arg_types[i].pop_back();
+                                    arg = builder->CreateLoad(llvmTypeFor(arg_types[i]), arg, "strip_ref");
+                                }
+                            }
                             args.push_back(arg);
+                            i++;
                         }
-                        std::string mangledName = buildMangledName(qcType, genericParams);
                         llvm::Function* ctor = findMethodOverload(mangledName, ctorMethodName, args);
                         if (ctor) {
                             std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, args);
@@ -2747,11 +2759,18 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                     rhs = builder->CreateLoad(classTy, rhs, "strip_ref");
                 }
             }
+
             if (rhs->getType() != classTy) {
                 std::string mangledName = buildMangledName(qcType, genericParams);
-                if (llvm::Function* ctor = findMethodOverload(mangledName, baseTypeName(mangledName).substr(baseTypeName(mangledName).rfind(':') + 1),
-                                                              {rhs})) {
-                    std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, {rhs});
+                std::string ctorName = baseTypeName(mangledName).substr(baseTypeName(mangledName).rfind(':') + 1);
+                std::string rhsType = resolveTypeName(getExpressionType((*va)->value_node, false), false);
+
+                if (llvm::Function* ctor = findMethodOverload(mangledName, ctorName, {rhs})) {
+                    ClassMethodInfo* ctorInfo = findMethodInfo(mangledName, ctorName, {rhsType});
+                    std::vector<std::string> paramTypes;
+                    if (ctorInfo && !ctorInfo->params.empty()) { paramTypes.push_back(ctorInfo->params[0].type.value); }
+
+                    std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, {rhs}, paramTypes, {rhsType});
                     builder->CreateCall(ctor, allArgs);
                     auto vtableIt = vtables.find(mangledName);
                     if (vtableIt != vtables.end()) {
@@ -2921,7 +2940,6 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
             bool handled = false;
             if (auto varAccess = std::get_if<VarAccessNode*>(&(*call)->node_to_call)) {
                 std::string calledName = (*varAccess)->var_name_tok.value;
-
                 if (calledName == qcType) {
                     std::string ctorMethodName = "";
                     for (auto& method : userTypeIt->second.classMethods) {
@@ -2930,13 +2948,25 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                             break;
                         }
                     }
-
                     if (!ctorMethodName.empty()) {
+                        std::string mangledName = qcType;
+                        std::vector<std::string> arg_types;
+                        for (auto& argNode : (*call)->arg_nodes) { arg_types.push_back(resolveTypeName(getExpressionType(argNode, false), false)); }
+                        ClassMethodInfo* ctorInfo = findMethodInfo(mangledName, ctorMethodName, arg_types);
+
                         std::vector<llvm::Value*> args;
+                        size_t i = 0;
                         for (auto& argNode : (*call)->arg_nodes) {
                             llvm::Value* arg = emitExpr(argNode);
                             if (!arg) return nullptr;
+                            if (ctorInfo && ctorInfo->params.size() > i && ctorInfo->params[i].type.value != "...") {
+                                if (arg_types[i].ends_with("&") && !resolveTypeName(ctorInfo->params[i].type.value, false).ends_with("&")) {
+                                    arg_types[i].pop_back();
+                                    arg = builder->CreateLoad(llvmTypeFor(arg_types[i]), arg, "strip_ref");
+                                }
+                            }
                             args.push_back(arg);
+                            i++;
                         }
                         llvm::Function* ctor = findMethodOverload(qcType, ctorMethodName, args);
 
@@ -3003,10 +3033,16 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                     }
                 }
                 if (rhs->getType() != classTy) {
-                    if (llvm::Function* ctor = findMethodOverload(qcType, baseTypeName(qcType).substr(baseTypeName(qcType).rfind(':') + 1), {rhs})) {
-                        std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, {rhs});
+                    std::string mangledName = qcType;
+                    std::string ctorName = baseTypeName(mangledName).substr(baseTypeName(mangledName).rfind(':') + 1);
+                    std::string rhsType = resolveTypeName(getExpressionType((*va)->value_node, false), false);
+                    if (llvm::Function* ctor = findMethodOverload(mangledName, ctorName, {rhs})) {
+                        ClassMethodInfo* ctorInfo = findMethodInfo(mangledName, ctorName, {rhsType});
+                        std::vector<std::string> paramTypes;
+                        if (ctorInfo && !ctorInfo->params.empty()) { paramTypes.push_back(ctorInfo->params[0].type.value); }
+                        std::vector<llvm::Value*> allArgs = reconcileArgs(ctor, instance, {rhs}, paramTypes, {rhsType});
                         builder->CreateCall(ctor, allArgs);
-                        auto vtableIt = vtables.find(qcType);
+                        auto vtableIt = vtables.find(mangledName);
                         if (vtableIt != vtables.end()) {
                             llvm::Value* vptrField = builder->CreateStructGEP(classTy, instance, 0, "vptr_field");
                             builder->CreateStore(vtableIt->second, vptrField);
@@ -4627,20 +4663,28 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
             }
             llvm::AllocaInst* temp = createEntryAlloca("temp_" + resolvedName, classTy);
             std::string ctorName = "";
-            ClassMethodInfo* ctorInfo = nullptr;
+            std::vector<std::string> arg_types;
+            for (auto& argNode : call.arg_nodes) { arg_types.push_back(resolveTypeName(getExpressionType(argNode, false), false)); }
             for (auto& method : classIt->second.classMethods) {
                 if (method.is_constructor) {
                     ctorName = method.name_tok.value;
-                    ctorInfo = &method;
                     break;
                 }
             }
+            ClassMethodInfo* ctorInfo = findMethodInfo(resolvedName, ctorName, arg_types);
             if (!ctorName.empty()) {
                 std::vector<llvm::Value*> ctorArgs;
+                int i = 0;
                 for (auto& argNode : call.arg_nodes) {
                     llvm::Value* arg = emitExpr(argNode);
                     if (!arg) return nullptr;
+                    if (ctorInfo && ctorInfo->params.size() > i)
+                        if (arg_types[i].ends_with("&") && !resolveTypeName(ctorInfo->params[i].type.value, false).ends_with("&")) {
+                            arg_types[i].pop_back();
+                            arg = builder->CreateLoad(llvmTypeFor(arg_types[i]), arg, "constructor_strip_ref");
+                        }
                     ctorArgs.push_back(arg);
+                    i++;
                 }
                 llvm::Function* ctor = findMethodOverload(resolvedName, ctorName, ctorArgs);
                 if (!ctor) {
@@ -5905,7 +5949,10 @@ llvm::Value* LLVMCompiler::emitPropAcc(PropertyAccessNode* const* propAccess) {
                 std::pair<std::string, std::vector<std::string>> values = memberIt->second;
                 llvm::Value* enumVal = llvm::ConstantAggregateZero::get(enumIt->second);
                 enumVal = builder->CreateInsertValue(enumVal,
-                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0), !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType) ? std::stoll(values.first) : std::stoull(values.first),
+                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0),
+                                                                            !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType)
+                                                                                ? std::stoll(values.first)
+                                                                                : std::stoull(values.first),
                                                                             !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType)),
                                                      {0});
                 return enumVal;
@@ -6072,7 +6119,10 @@ llvm::Value* LLVMCompiler::emitMthdCall(MethodCallNode* const* methodCall) {
                 std::pair<std::string, std::vector<std::string>> values = memberIt->second;
                 llvm::Value* enumVal = llvm::ConstantAggregateZero::get(enumIt->second);
                 enumVal = builder->CreateInsertValue(enumVal,
-                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0), !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType) ? std::stoll(values.first) : std::stoull(values.first),
+                                                     llvm::ConstantInt::get(enumIt->second->getElementType(0),
+                                                                            !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType)
+                                                                                ? std::stoll(values.first)
+                                                                                : std::stoull(values.first),
                                                                             !is_unsigned_type(userTypes.at(baseTypeName(resolved)).enumType)),
                                                      {0});
                 if ((*call)->args.size() != values.second.size()) {
@@ -8179,9 +8229,7 @@ llvm::Value* LLVMCompiler::emitMatch(MatchNode* match_node) {
         llvm::Value* val = nullptr;
         emitStmt(match_node->sections[i].body, &val);
         if (val) {
-            if (val->getType() != currentMergeValue->getType()) {
-                val = castValue(val, currentMergeValue->getType());
-            }
+            if (val->getType() != currentMergeValue->getType()) { val = castValue(val, currentMergeValue->getType()); }
             if (val->getType() != currentMergeValue->getType()) {
                 cg_error(get_pos(match_node), "match value type must be the same as match returning type", "QC-RLP2");
                 return nullptr;
@@ -8345,7 +8393,8 @@ void LLVMCompiler::emitStmt(AnyNode node, llvm::Value** stmt_out) {
               std::holds_alternative<VarAssignNode*>(node) || std::holds_alternative<FuncDefNode*>(node) ||
               std::holds_alternative<TupleValueNode*>(node) || std::holds_alternative<ArrayDeclNode*>(node) ||
               std::holds_alternative<ArrayLiteralNode*>(node) || std::holds_alternative<NamespaceNode*>(node) ||
-              std::holds_alternative<TypeValueNode>(node) || std::holds_alternative<FitsNode>(node) || std::holds_alternative<std::monostate>(node))) {
+              std::holds_alternative<TypeValueNode>(node) || std::holds_alternative<FitsNode>(node) ||
+              std::holds_alternative<std::monostate>(node))) {
             cg_error(get_pos(node), "invalid node type for a global statement", "QC-GLBL");
             return;
         }

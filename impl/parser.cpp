@@ -5674,11 +5674,12 @@ Prs Parser::statement() {
                 value = res.reg(this->qout_expr());
                 if (res.error) return res.to_prs();
             } else {
-                if (is_const) {
+                if (is_const && !in_extern && !in_foreign) {
                     res.failure(new InvalidSyntaxError("QC-S102: QC-CN07: const variables must be initialized", name_tok.pos));
                     return res.to_prs();
+                } else {
+                    value = default_value_for_type(type_tok, name_tok.pos);
                 }
-                value = default_value_for_type(type_tok, name_tok.pos);
             }
             if (this->current_tok.type != TokenType::SEMICOLON) {
                 res.failure(new MissingSemicolonError(this->current_tok.pos));
