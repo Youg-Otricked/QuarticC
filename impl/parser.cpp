@@ -1308,7 +1308,6 @@ Prs Parser::loop_stmt() {
     this->advance();
     Position& cond_pos = this->current_tok.pos;
     std::string return_type;
-    this->advance();
     if (this->current_tok.type == TokenType::KEYWORD && this->current_tok.value == "returning") {
         this->advance();
         return_type = this->parseTypeString();
@@ -1316,7 +1315,7 @@ Prs Parser::loop_stmt() {
     StatementsNode* body;
     if (!parse_block_into(body, res)) return res.to_prs();
     AnyNode default_node;
-    if (this->current_tok.type == TokenType::LPAREN) {
+    if (this->current_tok.type == TokenType::LPAREN && !return_type.empty()) {
         this->advance();
         default_node = res.reg(this->text_unops());
         if (res.error) return res.to_prs();
@@ -1365,7 +1364,7 @@ Prs Parser::dowhile_stmt() {
         return_type = this->parseTypeString();
     }
     AnyNode default_node;
-    if (this->current_tok.type == TokenType::LPAREN) {
+    if (this->current_tok.type == TokenType::LPAREN && !return_type.empty()) {
         this->advance();
         default_node = res.reg(this->text_unops());
         if (res.error) return res.to_prs();
@@ -1415,7 +1414,7 @@ Prs Parser::while_stmt() {
     StatementsNode* body;
     if (!this->parse_block_into(body, res)) return res.to_prs();
     AnyNode default_node;
-    if (this->current_tok.type == TokenType::LPAREN) {
+    if (this->current_tok.type == TokenType::LPAREN && !return_type.empty()) {
         this->advance();
         default_node = res.reg(this->text_unops());
         if (res.error) return res.to_prs();
@@ -1552,7 +1551,7 @@ Prs Parser::for_stmt() {
     StatementsNode* body;
     if (!parse_block_into(body, res)) return res.to_prs();
     AnyNode default_node;
-    if (this->current_tok.type == TokenType::LPAREN) {
+    if (this->current_tok.type == TokenType::LPAREN && !return_type.empty()) {
         this->advance();
         default_node = res.reg(this->text_unops());
         if (res.error) return res.to_prs();
@@ -3473,7 +3472,7 @@ Prs Parser::foreach_stmt() {
     StatementsNode* body;
     if (!parse_block_into(body, res)) return res.to_prs();
     AnyNode default_node;
-    if (this->current_tok.type == TokenType::LPAREN) {
+    if (this->current_tok.type == TokenType::LPAREN && !return_type.empty()) {
         this->advance();
         default_node = res.reg(this->text_unops());
         if (res.error) return res.to_prs();
