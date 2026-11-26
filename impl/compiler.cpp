@@ -3222,10 +3222,14 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
         } else if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(existingAlloc)) {
             llvm::Value* rhs = emitExpr((*va)->value_node);
             if (rhs) {
-                if (auto* constantRHS = llvm::dyn_cast<llvm::Constant>(rhs)) {
-                    gv->setInitializer(constantRHS);
+                if (llvm::Constant* constantRHS = llvm::dyn_cast<llvm::Constant>(rhs)) {
+                    auto* srcType = constantRHS->getType();
+                    auto* dstType = gv->getValueType();
+                    auto opcode = llvm::CastInst::getCastOpcode(constantRHS, false, dstType, false);
+                    gv->setInitializer(llvm::ConstantExpr::getCast(opcode, constantRHS, dstType));
                 } else {
-                    builder->CreateStore(rhs, gv);
+                    llvm::Value *casted = castValue(rhs, gv->getValueType());
+                    builder->CreateStore(gv, casted ? casted : rhs);
                 }
             }
             return nullptr;
@@ -6435,8 +6439,9 @@ llvm::Value* LLVMCompiler::emitFieldAssign(FieldAssignNode* const* fieldAssign) 
     if (auto propPtr = std::get_if<PropertyAccessNode*>(&tempVariant)) { (*fieldAssign)->base = *(*propPtr)->base; }
     if (!fieldPtr) return nullptr;
     llvm::Type* destTy = llvmTypeFor(fieldTypeStr);
-    valueVal = castValue(valueVal, destTy);
-    builder->CreateStore(valueVal, fieldPtr);
+    llvm::Value *old = valueVal;
+    valueVal = castValue(valueVal, destTy, "", "", get_pos((*fieldAssign)));
+    builder->CreateStore(valueVal ? valueVal : old, fieldPtr);
     return valueVal;
 }
 llvm::Value* LLVMCompiler::emitExpr(const AnyNode& node) {

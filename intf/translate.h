@@ -3,6 +3,7 @@
 #include "errors.h"
 #include <clang-c/Index.h>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 struct TranslateCtx {
@@ -14,6 +15,7 @@ struct TranslateCtx {
 };
 class Translator {
   public:
+    std::unordered_set<std::string> function_names;
     std::unordered_map<std::string, std::string> macro_values;
     explicit Translator(TranslateCtx* ctx) : ctx(ctx) {}
     bool speculative = false;

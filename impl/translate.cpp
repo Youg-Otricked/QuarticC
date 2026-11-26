@@ -1,6 +1,6 @@
 #include "translate.h"
-#include "lexer.h"
 #include "compiler.h"
+#include "lexer.h"
 static std::string clang_resource_dir() {
     static std::string dir;
     static bool loaded = false;
@@ -109,6 +109,17 @@ int Translator::translate_header() {
         }
         clang_disposeDiagnostic(d);
     }
+    clang_visitChildren(
+        clang_getTranslationUnitCursor(tu),
+        [](CXCursor c, CXCursor, CXClientData data) {
+            if (clang_getCursorKind(c) != CXCursor_FunctionDecl) return CXChildVisit_Continue;
+            auto* names = static_cast<std::unordered_set<std::string>*>(data);
+            CXString s = clang_getCursorSpelling(c);
+            names->insert(clang_getCString(s));
+            clang_disposeString(s);
+            return CXChildVisit_Continue;
+        },
+        &function_names);
     if (!had_error) clang_visitChildren(clang_getTranslationUnitCursor(tu), visit_trampoline, this);
     clang_disposeTranslationUnit(tu);
     clang_disposeIndex(idx);
@@ -697,6 +708,7 @@ void Translator::onRecord(CXCursor c, const std::string& name_override) {
     bool is_union = kind == CXCursor_UnionDecl;
     std::string name = name_override;
     if (name.empty()) name = isAnon(c) ? anonName(c) : str(clang_getCursorSpelling(c));
+    if (function_names.count(name)) name = (is_union ? "union_" : "struct_") + name;
     if (!mark_decl_emitted("struct:" + name)) return;
     if (!mark_type_emitted(name)) return;
     CXType type = clang_getCursorType(c);
@@ -788,6 +800,7 @@ void Translator::onEnum(CXCursor c, const std::string& name_override) {
     CXString spelling = clang_getCursorSpelling(c);
     std::string name = name_override;
     if (name.empty()) name = isAnon(c) ? anonName(c) : str(clang_getCursorSpelling(c));
+    if (function_names.count(name)) name = "enum_" + name;
     clang_disposeString(spelling);
     CXType underlying = clang_getEnumDeclIntegerType(c);
     if (!mark_decl_emitted("enum:" + name)) return;
@@ -1004,12 +1017,21 @@ std::string Translator::translateType(CXType t) {
         CXCursor decl = clang_getTypeDeclaration(t);
         onRecord(decl);
         if (isAnon(decl)) return anonName(decl);
-        return str(clang_getCursorSpelling(decl));
+        std::string name = str(clang_getCursorSpelling(decl));
+        if (function_names.count(name)) {
+            if (clang_getCursorKind(decl) == CXCursor_UnionDecl)
+                name = "union_" + name;
+            else
+                name = "struct_" + name;
+        }
+        return name;
     }
     case CXType_Enum: {
         CXCursor decl = clang_getTypeDeclaration(t);
         if (isAnon(decl)) return anonName(decl);
-        return str(clang_getCursorSpelling(decl));
+        std::string name = str(clang_getCursorSpelling(decl));
+        if (function_names.count(name)) name = "enum_" + name;
+        return name;
     }
     case CXType_Typedef: {
         CXCursor decl = clang_getTypeDeclaration(t);

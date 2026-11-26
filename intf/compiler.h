@@ -1936,6 +1936,9 @@ class LLVMCompiler {
             if (srcTy->isFloatTy() && destTy->isDoubleTy()) {
                 warn("implicit-extend", pos, "implicit extension in assignment", "QC-W012");
                 rhs = builder->CreateFPExt(rhs, destTy, "f2d");
+            } else if (destTy->isPointerTy() && srcTy->isIntegerTy() &&
+                       (rhs == llvm::ConstantInt::get(srcTy, 1) || rhs == llvm::ConstantInt::get(srcTy, 0))) {
+                rhs = llvm::ConstantExpr::getIntToPtr(llvm::cast<llvm::Constant>(rhs), destTy);
             } else if (srcTy->isArrayTy() && destTy->isPointerTy()) {
                 rhs = this->decayArrayToPointer(rhs);
             } else if (srcTy->isPointerTy() && destTy->isArrayTy()) {
@@ -3318,6 +3321,9 @@ class LLVMCompiler {
                 }
             } else if (expected->isPointerTy() && actual->getType()->isArrayTy()) {
                 reconciled.push_back(decayArrayToPointer(actual));
+            } else if (expected->isPointerTy() && actual->getType()->isIntegerTy() &&
+                       (actual == llvm::ConstantInt::get(actual->getType(), 1) || actual == llvm::ConstantInt::get(actual->getType(), 0))) {
+                reconciled.push_back(llvm::ConstantExpr::getIntToPtr(llvm::cast<llvm::Constant>(actual), expected));
             } else {
                 reconciled.push_back(castValue(actual, expected));
             }

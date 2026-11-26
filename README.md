@@ -90,12 +90,12 @@ Development toward future critical versions may begin before the current
 critical version is complete. Multiple critical generations may therefore
 be in development simultaneously.
 
-Modern versioning places a p before patch and allows Mi to grow beyond 9. Versions below x1.5.3p4 have digit one past the second . be Mi and the rest be patch.
+Modern versioning places a p before patch and allows Mi to grow beyond 9. Versions below x1.5.3p5 have digit one past the second . be Mi and the rest be patch.
 Unlike semantic versioning, QuarticC versions describe the scale and category of language evolution rather than API compatibility.
 
 # Development Status
 
-Current Version: x1.5.3p4 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
+Current Version: x1.5.3p5 = "Deprecations, Formatter, More STL, Debug Symbols,Other QOL"
 
 # Current Version Highlights
 

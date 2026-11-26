@@ -517,13 +517,14 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             std::string full_path;
             auto slash = path.find('/');
             std::string alias = path.substr(0, slash);
-            if (path.starts_with("std")) {
+            if (path.starts_with("std/")) {
                 uses_std = true;
             }
             if (aliases.count(path)) {
                 full_path = resolve_path(current_file, aliases[path]);
             } else if (dir_aliases.count(alias)) {
                 std::string rest = slash == std::string::npos ? "" : path.substr(slash);
+                if (rest == "") throw std::runtime_error("Cannot include from just a directory");
                 full_path = resolve_path(current_file, (std::filesystem::path(dir_aliases[alias]) / rest.substr(1)).string());
             } else {
                 full_path = resolve_path(current_file, path);

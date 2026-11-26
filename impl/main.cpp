@@ -600,7 +600,8 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
         // compiler
 #ifdef ENABLE_LLVM
         if (config.compile_mode) {
-            llvm::LLVMContext context;
+            llvm::LLVMContext* ctx = new llvm::LLVMContext();
+            llvm::LLVMContext& context = *ctx;
             auto master_module = new llvm::Module("master_module", context);
             auto* diBuilder = config.debug_symbols ? new llvm::DIBuilder(*master_module) : nullptr;
             auto* dfile = config.debug_symbols ? diBuilder->createFile(file, "") : nullptr;
@@ -764,7 +765,9 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
                 db_globals[filepath] = comp.globals;
             }
             for (Diagnostic& diagnostic : diagnostics) {
-                if (diagnostic.level != "Warning") { return Mer{ast, resp, "Program exited with code: 1", diagnostics}; }
+                if (diagnostic.level != "Warning") {
+                    return Mer{ast, resp, "Program exited with code: 1", diagnostics};
+                }
             }
             std::string base_name = config.output_file.empty() ? "out" : removeExtension(config.output_file);
             size_t last_slash = base_name.find_last_of("/\\");
@@ -859,8 +862,10 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             }
 #endif
             master_module->print(out, nullptr);
+            if (config.debug) out.flush();
             if (config.compile_only) {
                 message += ". Compiled to " + ll_file;
+                delete ctx;
                 return Mer{ast, resp, message, diagnostics};
             }
             if (config.progress) {
@@ -869,6 +874,7 @@ Mer run(std::string file, std::string text, RunConfig config = {}) {
             }
             if (config.dynamic) master_module->addModuleFlag(llvm::Module::Error, "PIC Level", 2);
             int llc_result = emitObjectFile(*master_module, obj_file, config.debug, config.target);
+            delete ctx;
             if (llc_result != 0) {
                 diagnostics.push_back({new CTError("Failed to compile IR to object file", Position(Position::INVALID_FILE_ID, 0, 0, 0))});
                 return Mer{ast, resp, message, diagnostics};
