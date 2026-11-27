@@ -1073,6 +1073,15 @@ class LLVMCompiler {
         if (elements.size() <= idx) return "unknown";
         return elements[idx];
     }
+    llvm::Value* coerceTo(llvm::Value* v, llvm::Type* dst, bool srcSigned) {
+        llvm::Type* src = v->getType();
+        if (src == dst) return v;
+        if (src->isIntegerTy() && dst->isIntegerTy()) return builder->CreateIntCast(v, dst, srcSigned, "coerce");
+        if (src->isFloatingPointTy() && dst->isFloatingPointTy()) return builder->CreateFPCast(v, dst, "coerce");
+        if (src->isIntegerTy() && dst->isFloatingPointTy()) return srcSigned ? builder->CreateSIToFP(v, dst) : builder->CreateUIToFP(v, dst);
+        if (src->isFloatingPointTy() && dst->isIntegerTy()) return builder->CreateFPToSI(v, dst);
+        return v;
+    }
     std::string getExpressionType(const AnyNode& node, bool strip = true) {
         if (auto mapLit = std::get_if<MapLiteralNode*>(&node)) {
             if (!(*mapLit)->struct_type.empty()) { return (*mapLit)->struct_type; }
@@ -1106,6 +1115,12 @@ class LLVMCompiler {
             }
             std::string leftType = getExpressionType((*binOp)->left_node);
             std::string rightType = getExpressionType((*binOp)->right_node);
+            auto isPtrLike = [](const std::string& t) {
+                return t.ends_with("*") || t.ends_with("]") || t == "@nullptr";
+            };
+            if ((*binOp)->op_tok.type == TokenType::MINUS && isPtrLike(leftType) && isPtrLike(rightType)) {
+                return "addr_t";
+            }
             if (leftType == "char" && rightType == "char") return "int";
             if (leftType == rightType) return leftType;
             if (leftType == "double" || rightType == "double") return "double";

@@ -76,6 +76,10 @@ static CommentMask build_comment_mask(const std::string& source) {
                 i++;
             } else if (current == '"') {
                 state = ParserState::String;
+            } else if (current == '\'') {
+                size_t j = i + 1;
+                while (j < n && source[j] != '\'' && source[j] != '\n') { if (source[j] == '\\') j++; j++; }
+                i = std::min(j, n - 1);
             }
             break;
         case ParserState::String:

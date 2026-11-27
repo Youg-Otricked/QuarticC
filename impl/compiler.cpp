@@ -2132,15 +2132,14 @@ llvm::Value* LLVMCompiler::emitBinOp(BinOpNode* const* bin) {
                     return nullptr;
                 }
                 std::string baseType = (lType == "@nullptr") ? rType : lType;
-                if (baseType == "@nullptr") { return builder->getInt32(0); }
+                if (baseType == "@nullptr") { return builder->getIntN(pointerSizeBits, 0); }
                 if (baseType.ends_with("]")) {
                     auto pos = baseType.rfind("[");
                     if (pos != std::string::npos) baseType.erase(pos);
                     baseType += "*";
                 }
                 baseType.pop_back();
-                llvm::Value* diff = builder->CreatePtrDiff(llvmTypeFor(baseType), L, R, "ptr_diff");
-                return builder->CreateTrunc(diff, builder->getInt32Ty());
+                return builder->CreatePtrDiff(llvmTypeFor(baseType), L, R, "ptr_diff");
             } else if (lType.ends_with("*") && rType == "int") {
                 std::string baseType = lType;
                 baseType.pop_back();
@@ -3228,7 +3227,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
                     auto opcode = llvm::CastInst::getCastOpcode(constantRHS, false, dstType, false);
                     gv->setInitializer(llvm::ConstantExpr::getCast(opcode, constantRHS, dstType));
                 } else {
-                    llvm::Value *casted = castValue(rhs, gv->getValueType());
+                    llvm::Value* casted = castValue(rhs, gv->getValueType());
                     builder->CreateStore(gv, casted ? casted : rhs);
                 }
             }
@@ -6439,7 +6438,7 @@ llvm::Value* LLVMCompiler::emitFieldAssign(FieldAssignNode* const* fieldAssign) 
     if (auto propPtr = std::get_if<PropertyAccessNode*>(&tempVariant)) { (*fieldAssign)->base = *(*propPtr)->base; }
     if (!fieldPtr) return nullptr;
     llvm::Type* destTy = llvmTypeFor(fieldTypeStr);
-    llvm::Value *old = valueVal;
+    llvm::Value* old = valueVal;
     valueVal = castValue(valueVal, destTy, "", "", get_pos((*fieldAssign)));
     builder->CreateStore(valueVal ? valueVal : old, fieldPtr);
     return valueVal;
@@ -7672,75 +7671,85 @@ void LLVMCompiler::emitArrDecl(ArrayDeclNode* arrDecl) {
 }
 void LLVMCompiler::emitArrAssign(ArrayAssignNode* arrAssign) {
     setDebugLocation(arrAssign->getPos());
-    if (auto arrAcc = safe_get<ArrayAccessNode>(arrAssign->array_access)) {
-        std::string ptrTy = getExpressionType(arrAcc->base);
-        if (ptrTy.ends_with("*") || ptrTy == "@nullptr") {
-            if (ptrTy == "@nullptr") {
-                warn("null-deref", get_pos(arrAcc), "attempted to dereference nullptr", "QC-W008");
-                return;
-            }
-            if (ptrTy == "void*") {
-                cg_error(get_pos(arrAcc), "you cannot dereference or indice void*", "QC-S273");
-                return;
-            }
-            std::string valueTy = getExpressionType(arrAcc->indices[0]);
-            if (llvm::Type* ty = llvmTypeFor(valueTy); !ty || !ty->isIntegerTy()) {
-                cg_error(get_pos(arrAcc->indices[0]),
-                         "attempted to index a pointer with a "
-                         "non-integer value.",
-                         "QC-S239");
-                return;
-            }
-            llvm::Value* value = emitExpr(arrAcc->indices[0]);
-            if (!value) {
-                cg_error(get_pos(arrAcc->indices[0]), "failed to emit index for pointer index.", "QC-S274");
-                return;
-            }
-            ptrTy.pop_back();
-            llvm::Value* addr = builder->CreateGEP(llvmTypeFor(ptrTy), emitExpr(arrAcc->base), value, "ptr_arr_asi");
-            llvm::Value* valToStore = emitExpr(arrAssign->value);
-            builder->CreateStore(valToStore, addr);
+    auto arrAcc = safe_get<ArrayAccessNode>(arrAssign->array_access);
+    if (!arrAcc) return;
+    std::string ptrTy = getExpressionType(arrAcc->base);
+    std::string rhsTy = getExpressionType(arrAssign->value);
+    bool rhsSigned = !is_unsigned_type(rhsTy);
+    if (ptrTy.ends_with("*") || ptrTy == "@nullptr") {
+        if (ptrTy == "@nullptr") {
+            warn("null-deref", get_pos(arrAcc), "attempted to dereference nullptr", "QC-W008");
             return;
         }
-        if (genericiseOrFindClass(ptrTy)) {
-            llvm::Value* obj = emitLValue(arrAcc->base, true);
-            llvm::Value* idx = emitExpr(arrAcc->indices[0]);
-            llvm::Value* ref = emitVirtualOrDirectCall(ptrTy, "operator[]", obj, {idx});
-            if (!ref) {
-                cg_error(get_pos(arrAcc->base), ptrTy + " does not have operator[]", "QC-S240");
-                addMethodNotes(ptrTy, "operator[]", {idx}, get_pos(arrAcc->base));
-                return;
-            }
-            llvm::Value* val = emitExpr(arrAssign->value);
-            builder->CreateStore(val, ref);
+        if (ptrTy == "void*") {
+            cg_error(get_pos(arrAcc), "you cannot dereference or indice void*", "QC-S273");
             return;
         }
-        if (auto varAcc = safe_get<VarAccessNode>(arrAcc->base)) {
-            std::string name = varAcc->var_name_tok.value;
-            llvm::Value* alloc = getVarAddress(name);
-            if (!alloc) {
-                cg_error(get_pos(arrAcc->base), "unknown array: " + name, "QC-S242");
-                return;
+        std::string valueTy = getExpressionType(arrAcc->indices[0]);
+        if (llvm::Type* ty = llvmTypeFor(valueTy); !ty || !ty->isIntegerTy()) {
+            cg_error(get_pos(arrAcc->indices[0]), "attempted to index a pointer with a non-integer value.", "QC-S239");
+            return;
+        }
+        llvm::Value* value = emitExpr(arrAcc->indices[0]);
+        if (!value) {
+            cg_error(get_pos(arrAcc->indices[0]), "failed to emit index for pointer index.", "QC-S274");
+            return;
+        }
+        ptrTy.pop_back();
+        llvm::Type* elemTy = llvmTypeFor(ptrTy);
+        llvm::Value* addr = builder->CreateGEP(elemTy, emitExpr(arrAcc->base), value, "ptr_arr_asi");
+        llvm::Value* valToStore = emitExpr(arrAssign->value);
+        if (!valToStore) return;
+        builder->CreateStore(coerceTo(valToStore, elemTy, rhsSigned), addr);
+        return;
+    }
+    if (genericiseOrFindClass(ptrTy)) {
+        llvm::Value* obj = emitLValue(arrAcc->base, true);
+        llvm::Value* idx = emitExpr(arrAcc->indices[0]);
+        llvm::Value* ref = emitVirtualOrDirectCall(ptrTy, "operator[]", obj, {idx});
+        if (!ref) {
+            cg_error(get_pos(arrAcc->base), ptrTy + " does not have operator[]", "QC-S240");
+            addMethodNotes(ptrTy, "operator[]", {idx}, get_pos(arrAcc->base));
+            return;
+        }
+        llvm::Value* val = emitExpr(arrAssign->value);
+        if (!val) return;
+        builder->CreateStore(val, ref);
+        return;
+    }
+    if (auto varAcc = safe_get<VarAccessNode>(arrAcc->base)) {
+        std::string name = varAcc->var_name_tok.value;
+        llvm::Value* alloc = getVarAddress(name);
+        if (!alloc) {
+            cg_error(get_pos(arrAcc->base), "unknown array: " + name, "QC-S242");
+            return;
+        }
+        llvm::Type* arrTy = getPointeeType(name);
+        llvm::Value* indexVal = emitExpr(arrAcc->indices[0]);
+        if (!indexVal) return;
+        llvm::Value* valueVal = emitExpr(arrAssign->value);
+        if (!valueVal) return;
+        bool vol = hasVolatileVar(name) ? findVolatileVar(name)->second : false;
+        if (arrTy->isPointerTy()) {
+            std::string et = ptrTy;
+            if (et.ends_with("]")) {
+                size_t pos = et.rfind("[");
+                if (pos != std::string::npos) et.erase(pos);
+            } else if (et.ends_with("*")) {
+                et.pop_back();
             }
-            llvm::Value* arrAlloc = alloc;
-            llvm::Type* arrTy = getPointeeType(name);
-            llvm::Value* indexVal = emitExpr(arrAcc->indices[0]);
-            if (!indexVal) return;
-            llvm::Value* valueVal = emitExpr(arrAssign->value);
-            if (!valueVal) return;
-            if (arrTy->isPointerTy()) {
-                llvm::Value* ptr = builder->CreateLoad(arrTy, arrAlloc, hasVolatileVar(name) ? findVolatileVar(name)->second : false, "arr_ptr");
-                llvm::Type* elemTy = valueVal->getType();
-                llvm::Value* elemPtr = builder->CreateGEP(elemTy, ptr, indexVal, "arr_elem_ptr");
-                builder->CreateStore(valueVal, elemPtr, hasVolatileVar(name) ? findVolatileVar(name)->second : false);
-            } else if (arrTy->isArrayTy()) {
-                std::vector<llvm::Value*> indices = {builder->getInt32(0), indexVal};
-                llvm::Value* elemPtr = builder->CreateInBoundsGEP(arrTy, arrAlloc, indices, "arr_elem_ptr");
-                builder->CreateStore(valueVal, elemPtr, hasVolatileVar(name) ? findVolatileVar(name)->second : false);
-            }
+            llvm::Type* elemTy = llvmTypeFor(et);
+            if (!elemTy) elemTy = valueVal->getType();
+            llvm::Value* ptr = builder->CreateLoad(arrTy, alloc, vol, "arr_ptr");
+            llvm::Value* elemPtr = builder->CreateGEP(elemTy, ptr, indexVal, "arr_elem_ptr");
+            builder->CreateStore(coerceTo(valueVal, elemTy, rhsSigned), elemPtr, vol);
+        } else if (arrTy->isArrayTy()) {
+            llvm::Type* elemTy = arrTy->getArrayElementType();
+            std::vector<llvm::Value*> indices = {builder->getInt32(0), indexVal};
+            llvm::Value* elemPtr = builder->CreateInBoundsGEP(arrTy, alloc, indices, "arr_elem_ptr");
+            builder->CreateStore(coerceTo(valueVal, elemTy, rhsSigned), elemPtr, vol);
         }
     }
-    return;
 }
 llvm::Value* LLVMCompiler::emitForeach(ForeachNode* foreach) {
     setDebugLocation(foreach->getPos());

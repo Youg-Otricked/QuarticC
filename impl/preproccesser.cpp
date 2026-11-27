@@ -77,6 +77,14 @@ static std::string find_c_header(const std::string& relative_guess, const std::s
     return relative_guess;
 }
 bool first_pass = true;
+static bool is_quote(const std::string& s, size_t i) {
+    if (s[i] != '"') return false;
+    size_t b = 0;
+    while (b < i && s[i - 1 - b] == '\\') b++;
+    if (b % 2) return false;
+    if (i > 0 && i + 1 < s.size() && s[i - 1] == '\'' && s[i + 1] == '\'') return false;
+    return true;
+}
 PreprocessResult preprocess_includes(std::string& source, const std::string& current_file, const std::vector<std::string>& c_args, bool fci) {
     CommentMask cm = build_comment_mask(source);
     if (first_pass) file_og_line_counts[current_file] = cm.og_line_count;
@@ -93,7 +101,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     if (ep_pos != std::string::npos) {
         bool in_string = false;
         for (size_t check = 0; check < ep_pos; check++) {
-            if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
+            if (is_quote(source, check)) { in_string = !in_string; }
         }
         if (inside_comment(cm, ep_pos)) { in_string = true; }
         if (!in_string) {
@@ -106,7 +114,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     if (nomain_pos != std::string::npos) {
         bool in_string = false;
         for (size_t check = 0; check < nomain_pos; check++) {
-            if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
+            if (is_quote(source, check)) { in_string = !in_string; }
         }
         if (inside_comment(cm, nomain_pos)) { in_string = true; }
         if (!in_string) { no_main = true; }
@@ -273,7 +281,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
         if (directive_pos == std::string::npos) break;
         bool in_string = false;
         for (size_t check = 0; check < directive_pos; check++) {
-            if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
+            if (is_quote(source, check)) { in_string = !in_string; }
         }
         if (inside_comment(cm, pos)) { in_string = true; }
         if (directive_pos == if_pos) {
@@ -345,6 +353,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
             pos = directive_pos + keyword_len;
         }
     }
+    cm = build_comment_mask(source);
     pos = 0;
     std::string result;
     result.reserve(source.size());
@@ -352,13 +361,13 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     size_t i = 0;
     while (i < source.size()) {
         char c = source[i];
-        if (c == '"' && (i == 0 || source[i - 1] != '\\')) {
+        if (is_quote(source, i)) {
             in_string = !in_string;
             result += c;
             i++;
             continue;
         }
-        if (inside_comment(cm, i)) { in_string = true; }
+        if (!in_string && inside_comment(cm, i)) { result += c; i++; continue; }
         if (!in_string && (std::isalpha((unsigned char)c) || c == '_')) {
             size_t start = i;
             while (i < source.size() && (std::isalnum((unsigned char)source[i]) || source[i] == '_')) { i++; }
@@ -380,7 +389,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     while ((pos = source.find("#link", pos)) != std::string::npos) {
         bool in_string = false;
         for (size_t check = 0; check < pos; check++) {
-            if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
+            if (is_quote(source, check)) { in_string = !in_string; }
         }
 
         if (inside_comment(cm, pos)) { in_string = true; }
@@ -426,7 +435,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     while ((pos = source.find("#searchdir", pos)) != std::string::npos) {
         bool in_string = false;
         for (size_t check = 0; check < pos; check++) {
-            if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
+            if (is_quote(source, check)) { in_string = !in_string; }
         }
 
         if (inside_comment(cm, pos)) { in_string = true; }
@@ -470,7 +479,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     while ((pos = source.find("#include", pos)) != std::string::npos) {
         bool in_string = false;
         for (size_t check = 0; check < pos; check++) {
-            if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
+            if (is_quote(source, check)) { in_string = !in_string; }
         }
         if (inside_comment(cm, pos)) { in_string = true; }
         if (in_string) {
@@ -542,7 +551,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     while ((pos = source.find("#include", pos)) != std::string::npos) {
         bool in_string = false;
         for (size_t check = 0; check < pos; check++) {
-            if (source[check] == '"' && (check == 0 || source[check - 1] != '\\')) { in_string = !in_string; }
+            if (is_quote(source, check)) { in_string = !in_string; }
         }
         if (inside_comment(cm, pos)) { in_string = true; }
         if (in_string) {
@@ -559,7 +568,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     while ((pos = result2.find("#link", pos)) != std::string::npos) {
         bool in_str = false;
         for (size_t check = 0; check < pos; check++) {
-            if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
+            if (is_quote(result2, check)) { in_str = !in_str; }
         }
         if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
@@ -574,7 +583,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     while ((pos = result2.find("#searchdir", pos)) != std::string::npos) {
         bool in_str = false;
         for (size_t check = 0; check < pos; check++) {
-            if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
+            if (is_quote(result2, check)) { in_str = !in_str; }
         }
         if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
@@ -589,7 +598,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     while ((pos = result2.find("#entrypoint", pos)) != std::string::npos) {
         bool in_str = false;
         for (size_t check = 0; check < pos; check++) {
-            if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
+            if (is_quote(result2, check)) { in_str = !in_str; }
         }
         if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
@@ -604,7 +613,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     while ((pos = result2.find("#depends", pos)) != std::string::npos) {
         bool in_str = false;
         for (size_t check = 0; check < pos; check++) {
-            if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
+            if (is_quote(result2, check)) { in_str = !in_str; }
         }
         if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
@@ -619,7 +628,7 @@ PreprocessResult preprocess_includes(std::string& source, const std::string& cur
     while ((pos = result2.find("#nomain", pos)) != std::string::npos) {
         bool in_str = false;
         for (size_t check = 0; check < pos; check++) {
-            if (result2[check] == '"' && (check == 0 || result2[check - 1] != '\\')) { in_str = !in_str; }
+            if (is_quote(result2, check)) { in_str = !in_str; }
         }
         if (inside_comment(cm, pos)) { in_str = true; }
         if (!in_str) {
