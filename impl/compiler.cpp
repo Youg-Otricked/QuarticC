@@ -3257,6 +3257,7 @@ llvm::Value* LLVMCompiler::emitVarAssign(VarAssignNode* const* va) {
     }
 
     llvm::Type* srcTy = rhs->getType();
+    if (!destTy) return nullptr;
     if (srcTy != destTy) {
         if (srcTy->isPointerTy() && !destTy->isPointerTy()) {
             llvm::Type* newbase = llvmTypeFor(getExpressionType((*va)->value_node));
@@ -4808,6 +4809,11 @@ llvm::Value* LLVMCompiler::emitCall(CallNode* const* callPtr) {
                 llvm::Value* dest_ptr = emitExpr(call.arg_nodes.front());
                 llvm::Value* size = emitExpr(call.arg_nodes.back());
                 llvm::Value* src_ptr = emitExpr(*std::next(call.arg_nodes.begin(), 1));
+                if (!src_ptr || !dest_ptr || !size) return nullptr;
+                if (!src_ptr->getType()->isPointerTy() || !dest_ptr->getType()->isPointerTy()) {
+                    cg_error(get_pos(&call), "`memcpy argument one and two must be pointers", "QC-T051");
+                    return nullptr;
+                }
                 builder->CreateMemCpyInline(dest_ptr, llvm::MaybeAlign(), src_ptr, llvm::MaybeAlign(), size, false);
                 return nullptr;
             }
@@ -5888,6 +5894,10 @@ llvm::Value* LLVMCompiler::emitArrAcc(ArrayAccessNode* arrAcc) {
             std::string baseType = it->second;
             llvm::Type* elemTy = llvmTypeFor(baseType);
             llvm::Value* elemPtr = builder->CreateGEP(elemTy, ptr, indexVal, "arr_elem_ptr");
+            if (!elemPtr || !elemPtr->getType()->isPointerTy()) {
+                cg_error(get_pos(varAcc), "cannot indice a non-pointer", "QC-T051");
+                return nullptr;
+            }
             return builder->CreateLoad(elemTy, elemPtr, resolveVolatileVar(name), "arr_elem");
         } else if (arrTy->isArrayTy()) {
             std::vector<llvm::Value*> indices = {builder->getInt32(0)};
@@ -6993,7 +7003,10 @@ void LLVMCompiler::emitRet(ReturnNode* ret) {
 
                         result = builder->CreateInsertValue(result, fieldVal, i);
                     }
-
+                    if (currentFunction->getReturnType() != result->getType()) {
+                        cg_error(get_pos(ret), "cannot return value of different type from funciton return type");
+                        return;
+                    }
                     builder->CreateRet(result);
                     return;
                 }
@@ -7075,6 +7088,10 @@ void LLVMCompiler::emitRet(ReturnNode* ret) {
     if (srcTy->isFloatingPointTy() && destTy->isIntegerTy()) {
         warn("implicit-int-float", get_pos(ret), "implicit cast between integer and decimal type in return", "QC-W013");
         v = builder->CreateFPToSI(v, destTy, "arg_fptosi");
+    }
+    if (destTy != v->getType()) {
+        cg_error(get_pos(ret), "cannot implicitly cast this type to function return type");
+        return;
     }
     builder->CreateRet(v);
     return;
@@ -7205,6 +7222,7 @@ void LLVMCompiler::emitIf(IfNode* if_node) {
         for (size_t i = 0; i < elifBlocks.size(); i++) {
             builder->SetInsertPoint(elifBlocks[i].first);
             llvm::Value* elifCond = emitExpr(if_node->elif_branches[i].first);
+            if (!elifCond) return;
             elifCond = normalizeValue(elifCond, if_node->elif_branches[i].first);
             elifCond = toTruthiness(elifCond, get_pos(if_node->elif_branches[i].first));
             comptimeValue = llvm::dyn_cast<llvm::ConstantInt>(elifCond);

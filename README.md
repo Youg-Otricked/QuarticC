@@ -68,7 +68,7 @@ QuarticC uses the following versioning scheme:
 `cMa.Mo.MiP`
 , where `c` is critical, for massive additions, such as the compiler being added, `Ma` being major versions, tracking large collections of features, `Mo` being moderate versions, tracking collections of similar features, `Mi` being minor versions, which track individual feature milestones within the current moderate version's theme, and `P` being the patch version.
 For the version
-`x1.2.34`
+`x1.2.3p4`
 `c` = `x`
 `Ma` = `1`
 `Mo` = `2`

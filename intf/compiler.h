@@ -2543,7 +2543,9 @@ class LLVMCompiler {
                 if (!base) return nullptr;
                 llvm::Value* idx = emitExpr((*arrAcc)->indices[0]);
                 if (!idx) return nullptr;
-                return builder->CreateGEP(llvmTypeFor(ptrTy), base, idx, "lval_ptr_arr_addr");
+                llvm::Type *ty = llvmTypeFor(ptrTy);
+                if (!ty) return nullptr;
+                return builder->CreateGEP(ty, base, idx, "lval_ptr_arr_addr");
             }
             if (ptrTy.ends_with("[]")) {
                 llvm::Value* slot = emitLValue((*arrAcc)->base);
@@ -5645,10 +5647,17 @@ class LLVMCompiler {
             std::string fullName = current.empty() ? name : current + "::" + name;
             auto git = globals.find(fullName);
             if (git != globals.end()) return git->second;
-
             if (current.empty()) break;
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
+        }
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            auto git = globals.find(stripped);
+            if (git != globals.end()) return git->second;
+            pos = stripped.find("::");
         }
         auto git = globals.find(name);
         if (git != globals.end()) return git->second;
@@ -5664,10 +5673,17 @@ class LLVMCompiler {
             std::string fullName = current.empty() ? name : current + "::" + name;
             auto it = lambdaTypes.find(fullName);
             if (it != lambdaTypes.end()) return it->second;
-
             if (current.empty()) break;
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
+        }
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            auto it = lambdaTypes.find(stripped);
+            if (it != lambdaTypes.end()) return it->second;
+            pos = stripped.find("::");
         }
         auto it = lambdaTypes.find(name);
         if (it != lambdaTypes.end()) return it->second;
@@ -5688,6 +5704,15 @@ class LLVMCompiler {
             if (current.empty()) break;
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
+        }
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            if (hasLocal(stripped)) return findLocal(stripped)->second;
+            auto git = globals.find(stripped);
+            if (git != globals.end()) { return git->second; }
+            pos = stripped.find("::");
         }
         if (hasLocal(name)) return findLocal(name)->second;
         if (globals.count(name)) return globals[name];
@@ -5722,6 +5747,13 @@ class LLVMCompiler {
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
         }
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            if (hasConst(stripped)) return findConst(stripped)->second;
+            pos = stripped.find("::");
+        }
         if (hasConst(name)) return findConst(name)->second;
         return std::vector<uint8_t>();
     }
@@ -5737,7 +5769,13 @@ class LLVMCompiler {
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
         }
-        if (hasVarType(name)) return findVarType(name)->second;
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            if (hasVarType(stripped)) return findVarType(stripped)->second;
+            pos = stripped.find("::");
+        }
         return "";
     }
     bool resolveVolatileVar(const std::string& name) {
@@ -5748,6 +5786,13 @@ class LLVMCompiler {
             if (current.empty()) break;
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
+        }
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            if (hasVolatileVar(stripped)) return findVolatileVar(stripped)->second;
+            pos = stripped.find("::");
         }
         if (hasVolatileVar(name)) return findVolatileVar(name)->second;
         return false;
@@ -5761,6 +5806,13 @@ class LLVMCompiler {
             size_t pos = current.rfind("::");
             current = pos == std::string::npos ? "" : current.substr(0, pos);
         }
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            if (hasArrayType(stripped)) { return findArrayType(stripped)->second; }
+            pos = stripped.find("::");
+        }
         if (hasArrayType(name)) { return findArrayType(name)->second; }
         return std::nullopt;
     }
@@ -5768,18 +5820,6 @@ class LLVMCompiler {
         llvm::Value* addr = resolveVariable(name);
         if (resolveVarType(name).ends_with("&")) { return builder->CreateLoad(builder->getPtrTy(), addr); }
         return addr;
-    }
-    std::string resolveMetadataName(const std::string& name) {
-        if (name.find("::") != std::string::npos) return name;
-
-        std::string current = getCurrentNamespace();
-        while (true) {
-            std::string fullName = current.empty() ? name : current + "::" + name;
-            if (current.empty()) break;
-            size_t pos = current.rfind("::");
-            current = (pos == std::string::npos) ? "" : current.substr(0, pos);
-        }
-        return name;
     }
     llvm::Function* resolveFunction(const std::string& name) {
         if (name.find("::") != std::string::npos) {
@@ -5798,6 +5838,16 @@ class LLVMCompiler {
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
         }
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            llvm::Function* fn = module->getFunction(stripped);
+            if (fn) return fn;
+            auto fi = functions.find(stripped);
+            if (fi != functions.end()) return fi->second;
+            pos = stripped.find("::");
+        }
         return nullptr;
     }
     FuncDefNode* resolveFuncDef(const std::string& name) {
@@ -5812,6 +5862,13 @@ class LLVMCompiler {
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
         }
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            if (auto fi = functionDefs.find(stripped); fi != functionDefs.end()) return fi->second;
+            pos = stripped.find("::");
+        }
         return nullptr;
     }
     auto resolveFuncDefIt(const std::string& name) {
@@ -5825,6 +5882,13 @@ class LLVMCompiler {
             if (current.empty()) break;
             size_t pos = current.rfind("::");
             current = (pos == std::string::npos) ? "" : current.substr(0, pos);
+        }
+        std::string stripped = name;
+        size_t pos = stripped.find("::");
+        while (pos != std::string::npos) {
+            stripped = stripped.substr(pos + 2);
+            if (auto fi = functionDefs.find(stripped); fi != functionDefs.end()) return fi;
+            pos = stripped.find("::");
         }
         return functionDefs.end();
     }
